@@ -1,0 +1,4 @@
+interface:
+  display_name: "Local Worklog Orchestrator"
+  short_description: "Draft and manage canonical local worklogs"
+  default_prompt: "Use $worklog-orchestrator to draft or inspect local `workledger worklogs *` records from session evidence."

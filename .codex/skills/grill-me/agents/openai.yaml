@@ -1,0 +1,5 @@
+interface:
+  display_name: Grill Me
+  short_description: Stress-test plans branch by branch and persist decisions when hooks are enabled.
+  icon: question
+  color: '#7C3AED'
