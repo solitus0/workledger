@@ -2,8 +2,6 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
   pull_request:
 
 permissions:
@@ -26,11 +24,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Tidy modules
+        run: go mod tidy
+
+      - name: Verify tidy diff
+        run: git diff --exit-code
+
       - name: Vet
         run: go vet ./...
-
-      - name: Build
-        run: go build ./cmd/workledger
 
       - name: Test
         run: go test ./...

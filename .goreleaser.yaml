@@ -6,9 +6,12 @@ builds:
   - id: workledger
     main: ./cmd/workledger
     binary: workledger
+    env:
+      - CGO_ENABLED=0
     goos:
       - darwin
       - linux
+      - windows
     goarch:
       - amd64
       - arm64
@@ -21,9 +24,26 @@ archives:
       - workledger
     formats:
       - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE
 
 checksum:
-  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^tests:"
+      - "^chore:"
+      - "^Merge"
 
 snapshot:
   version_template: "{{ incpatch .Version }}-devel"
@@ -32,3 +52,24 @@ release:
   github:
     owner: solitus0
     name: workledger
+
+brews:
+  - ids:
+      - workledger
+    name: workledger
+    homepage: https://github.com/solitus0/workledger
+    description: Local-first CLI for managing canonical worklogs
+    license: MIT
+    directory: Formula
+    repository:
+      owner: solitus0
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} {{ .Tag }}"
+    install: |
+      bin.install "workledger"
+    test: |
+      system "#{bin}/workledger", "--version"

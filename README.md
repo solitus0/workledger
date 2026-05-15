@@ -28,9 +28,27 @@ Deferred or out of scope in the current spec:
 - `workledger tui`
 - tombstone-specific top-level commands
 
-## Installation
+## Install
 
-From a repository checkout:
+### Homebrew
+
+```sh
+brew install solitus0/tap/workledger
+```
+
+### GitHub Releases
+
+Download the matching binary from the releases page:
+
+https://github.com/solitus0/workledger/releases
+
+### Go install
+
+```sh
+go install github.com/solitus0/workledger/cmd/workledger@latest
+```
+
+### From source
 
 ```sh
 go build -o workledger ./cmd/workledger
