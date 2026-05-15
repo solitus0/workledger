@@ -1,0 +1,4027 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/mattn/go-isatty"
+	"github.com/spf13/cobra"
+
+	clockifyadapter "github.com/solitus0/workledger/internal/adapter/clockify"
+	jiracloudadapter "github.com/solitus0/workledger/internal/adapter/jiracloud"
+	jiradcadapter "github.com/solitus0/workledger/internal/adapter/jiradatacenter"
+	"github.com/solitus0/workledger/internal/config"
+	"github.com/solitus0/workledger/internal/progress"
+	"github.com/solitus0/workledger/internal/reconcile"
+	reconcilemodel "github.com/solitus0/workledger/internal/reconcile/model"
+	sqlitestore "github.com/solitus0/workledger/internal/store/sqlite"
+	"github.com/solitus0/workledger/internal/totals"
+	"github.com/solitus0/workledger/internal/worklogs"
+)
+
+const listDescriptionMaxWidth = 80
+
+var Version = "dev"
+
+type exitError struct {
+	code int
+}
+
+func (e exitError) Error() string {
+	return fmt.Sprintf("exit %d", e.code)
+}
+
+type app struct {
+	stdout io.Writer
+	stderr io.Writer
+}
+
+func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	a := &app{stdout: stdout, stderr: stderr}
+	cmd := a.newRootCommand()
+	cmd.SetArgs(args)
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		var exitErr exitError
+		if errors.As(err, &exitErr) {
+			return exitErr.code
+		}
+
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+
+	return 0
+}
+
+func (a *app) newRootCommand() *cobra.Command {
+	var showVersion bool
+
+	root := &cobra.Command{
+		Use:           "workledger",
+		Short:         "Manage canonical local worklogs",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if showVersion {
+				return a.runVersion(cmd)
+			}
+			return cmd.Help()
+		},
+	}
+
+	root.PersistentFlags().String("output", "", "Output mode: table or json")
+	root.Flags().BoolVarP(&showVersion, "version", "v", false, "Print version")
+	root.CompletionOptions.HiddenDefaultCmd = true
+
+	root.AddCommand(a.newVersionCommand())
+	root.AddCommand(a.newInitCommand())
+	root.AddCommand(a.newConfigCommand())
+	root.AddCommand(a.newSetupCommand())
+	root.AddCommand(a.newWorklogsCommand())
+	root.AddCommand(a.newTotalsCommand())
+	root.AddCommand(a.newStatusCommand())
+	root.AddCommand(a.newDoctorCommand())
+	root.AddCommand(a.newRoutingCommand())
+	root.AddCommand(a.newRouteCommand())
+	root.AddCommand(a.newClockifyCommand())
+	root.AddCommand(a.newIssueMetadataCommand())
+	root.AddCommand(a.newPlanCommand())
+
+	return root
+}
+
+func (a *app) newVersionCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return a.runVersion(cmd)
+		},
+	}
+}
+
+func (a *app) runVersion(cmd *cobra.Command) error {
+	mode := outputMode(cmd)
+	if mode == "json" {
+		return a.writeJSON(map[string]string{"version": Version})
+	}
+	_, _ = fmt.Fprintln(a.stdout, Version)
+	return nil
+}
+
+func (a *app) newInitCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "init",
+		Short: "Bootstrap local config and SQLite storage",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			configPath, err := config.ConfigPath()
+			if err != nil {
+				return a.fail(mode, 1, "unexpected_error", "resolve config path", nil)
+			}
+
+			if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+			if err := config.TightenDir(filepath.Dir(configPath)); err != nil {
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+
+			configStatus := "reused"
+			if _, err := os.Stat(configPath); errors.Is(err, os.ErrNotExist) {
+				clockifyCfg, err := a.bootstrapClockifyConfig(cmd.Context())
+				if err != nil {
+					return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+				}
+				if err := os.WriteFile(configPath, config.DefaultConfigBytes(clockifyCfg), 0o600); err != nil {
+					return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+				}
+				configStatus = "created"
+			}
+			if err := config.TightenFile(configPath); err != nil {
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+
+			effective, validationIssues, err := config.ValidateExisting()
+			if err != nil {
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+			if len(validationIssues) > 0 {
+				return a.fail(mode, 2, "validation_error", "config validation failed", validationIssues)
+			}
+
+			if err := os.MkdirAll(filepath.Dir(effective.SQLitePath), 0o700); err != nil {
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+			if err := config.TightenDir(filepath.Dir(effective.SQLitePath)); err != nil {
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+
+			store, sqliteStatus, err := sqlitestore.Bootstrap(effective.SQLitePath)
+			if err != nil {
+				var bootstrapErr *sqlitestore.BootstrapError
+				if errors.As(err, &bootstrapErr) {
+					return a.failUnrecoverableSQLiteInit(mode, bootstrapErr.Path)
+				}
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+			defer store.Close()
+
+			if err := config.TightenFile(effective.SQLitePath); err != nil {
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+
+			payload := map[string]any{
+				"config":      configStatus,
+				"sqlite":      string(sqliteStatus),
+				"config_path": effective.ConfigPath,
+				"sqlite_path": effective.SQLitePath,
+			}
+			if mode == "json" {
+				return a.writeJSON(payload)
+			}
+
+			_, _ = fmt.Fprintf(
+				a.stdout,
+				"Local worklogs are ready.\n\nConfig:\n  Status: %s\n  Path: %s\n\nClockify:\n  Status: %s\n\nDatabase:\n  Path: %s\n\nNext:\n  workledger worklogs add\n\nOptional adapter setup:\n  workledger setup jira-cloud --instance <name>\n  workledger setup jira-data-center --instance <name>\n  workledger setup clockify\n\nValidate anytime:\n  workledger config validate\n",
+				initConfigStatusLabel(configStatus),
+				effective.ConfigPath,
+				initClockifyStatusLabel(configStatus, effective.File.Clockify),
+				effective.SQLitePath,
+			)
+			return nil
+		},
+	}
+}
+
+func initConfigStatusLabel(status string) string {
+	switch status {
+	case "created":
+		return "created new config"
+	case "reused":
+		return "reused existing valid config"
+	default:
+		return status
+	}
+}
+
+func initClockifyStatusLabel(configStatus string, clockifyCfg *config.ClockifyConfig) string {
+	if configStatus == "reused" {
+		return "kept existing config"
+	}
+	if clockifyCfg != nil && strings.TrimSpace(clockifyCfg.Auth.APIKeyEnv) == "CLOCKIFY_API_KEY" {
+		return "auto-configured from discovered CLOCKIFY_API_KEY"
+	}
+	return "not auto-configured from CLOCKIFY_API_KEY"
+}
+
+func (a *app) newConfigCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Config commands",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "validate",
+		Short: "Validate config",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			effective, issues, err := config.ValidateExisting()
+			if err != nil {
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+			if len(issues) > 0 {
+				return a.fail(mode, 2, "validation_error", "config validation failed", issues)
+			}
+
+			payload := map[string]any{
+				"valid":       true,
+				"config_path": effective.ConfigPath,
+				"effective": map[string]any{
+					"default_output": effective.DefaultOutput,
+					"storage": map[string]any{
+						"sqlite_path": effective.SQLitePath,
+					},
+					"worklogs": map[string]any{
+						"minimum_duration_seconds":    effective.MinimumDurationSeconds,
+						"daily_minimum_quota_seconds": effective.DailyMinimumQuotaSeconds,
+						"daily_lunch":                 effective.DailyLunch,
+					},
+				},
+			}
+			if effective.LocalTimezoneConfig != nil {
+				payload["effective"].(map[string]any)["local_timezone"] = *effective.LocalTimezoneConfig
+			}
+
+			if mode == "json" {
+				return a.writeJSON(payload)
+			}
+			_, _ = fmt.Fprintln(a.stdout, "config is valid")
+			return nil
+		},
+	})
+
+	cmd.AddCommand(a.newConfigEnvCommand())
+	cmd.AddCommand(a.newConfigSummaryCommand())
+
+	return cmd
+}
+
+func (a *app) newWorklogsCommand() *cobra.Command {
+	worklogsCmd := &cobra.Command{
+		Use:   "worklogs",
+		Short: "Manage local worklogs",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+
+	worklogsCmd.AddCommand(a.newWorklogsListCommand())
+	worklogsCmd.AddCommand(a.newWorklogsSearchCommand())
+	worklogsCmd.AddCommand(a.newWorklogsContextCommand())
+	worklogsCmd.AddCommand(a.newWorklogsShiftCommand())
+	worklogsCmd.AddCommand(a.newWorklogsApplyCommand())
+	worklogsCmd.AddCommand(a.newWorklogsAddCommand())
+	worklogsCmd.AddCommand(a.newWorklogsUpdateCommand())
+	worklogsCmd.AddCommand(a.newWorklogsDeleteCommand())
+	worklogsCmd.AddCommand(a.newWorklogsRestoreCommand())
+
+	return worklogsCmd
+}
+
+func (a *app) newWorklogsListCommand() *cobra.Command {
+	var issue string
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+	var onlyDeleted bool
+	var fields string
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List local worklogs",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			effective, service, cleanup, err := a.loadService(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			fieldList := splitFields(fields)
+			active, deleted, effectiveFilters, err := service.List(effective, worklogs.ListFilters{
+				Issue:        issue,
+				Today:        today,
+				Yesterday:    yesterday,
+				CurrentWeek:  currentWeek,
+				LastWeek:     lastWeek,
+				CurrentMonth: currentMonth,
+				LastMonth:    lastMonth,
+				From:         from,
+				To:           to,
+				OnlyDeleted:  onlyDeleted,
+				Fields:       fieldList,
+			})
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+
+			if mode == "json" {
+				return a.renderListJSON(effective, worklogs.ListFilters{
+					Issue:        issue,
+					Today:        today,
+					Yesterday:    yesterday,
+					CurrentWeek:  currentWeek,
+					LastWeek:     lastWeek,
+					CurrentMonth: currentMonth,
+					LastMonth:    lastMonth,
+					From:         from,
+					To:           to,
+					OnlyDeleted:  onlyDeleted,
+					Fields:       fieldList,
+				}, effectiveFilters, active, deleted)
+			}
+
+			if onlyDeleted {
+				if err := renderTable(a.stdout, []string{"ID", "ISSUE", "DELETED"}, deletedRows(deleted)); err != nil {
+					return err
+				}
+				return renderListTotalsFooter(a.stdout, len(deleted), sumDeletedDurationSeconds(deleted), "tombstones")
+			}
+			columns := []string{"id", "issue_key", "started_at", "duration_seconds", "description"}
+			if len(effectiveFilters.Fields) > 0 {
+				columns = effectiveFilters.Fields
+			}
+			if err := renderTable(a.stdout, tableHeaders(columns), activeRows(active, effective.Location, columns, listDescriptionMaxWidth)); err != nil {
+				return err
+			}
+			return renderListTotalsFooter(a.stdout, len(active), sumActiveDurationSeconds(active), "worklogs")
+		},
+	}
+
+	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
+	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
+	cmd.Flags().StringVar(&from, "from", "", "From date")
+	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().BoolVar(&onlyDeleted, "only-deleted", false, "List deleted tombstones")
+	cmd.Flags().StringVar(&fields, "fields", "", "Comma-separated field list")
+	return cmd
+}
+
+func (a *app) newWorklogsSearchCommand() *cobra.Command {
+	var issue string
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+	var onlyDeleted bool
+	var fields string
+
+	cmd := &cobra.Command{
+		Use:   "search <query>",
+		Short: "Search local worklogs by description",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode := outputMode(cmd)
+			effective, service, cleanup, err := a.loadService(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			fieldList := splitFields(fields)
+			rawFilters := worklogs.ListFilters{
+				Issue:        issue,
+				Today:        today,
+				Yesterday:    yesterday,
+				CurrentWeek:  currentWeek,
+				LastWeek:     lastWeek,
+				CurrentMonth: currentMonth,
+				LastMonth:    lastMonth,
+				From:         from,
+				To:           to,
+				OnlyDeleted:  onlyDeleted,
+				Fields:       fieldList,
+			}
+			active, deleted, effectiveFilters, normalizedQuery, err := service.Search(effective, worklogs.SearchInput{
+				Query:       args[0],
+				ListFilters: rawFilters,
+			})
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+
+			if mode == "json" {
+				return a.renderSearchJSON(effective, args[0], rawFilters, effectiveFilters, normalizedQuery, active, deleted)
+			}
+
+			if onlyDeleted {
+				if err := renderTable(a.stdout, []string{"ID", "ISSUE", "DELETED"}, deletedRows(deleted)); err != nil {
+					return err
+				}
+				return renderListTotalsFooter(a.stdout, len(deleted), sumDeletedDurationSeconds(deleted), "tombstones")
+			}
+			columns := []string{"id", "issue_key", "started_at", "duration_seconds", "description"}
+			if len(effectiveFilters.Fields) > 0 {
+				columns = effectiveFilters.Fields
+			}
+			if err := renderTable(a.stdout, tableHeaders(columns), activeRows(active, effective.Location, columns, listDescriptionMaxWidth)); err != nil {
+				return err
+			}
+			return renderListTotalsFooter(a.stdout, len(active), sumActiveDurationSeconds(active), "worklogs")
+		},
+	}
+
+	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
+	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
+	cmd.Flags().StringVar(&from, "from", "", "From date")
+	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().BoolVar(&onlyDeleted, "only-deleted", false, "Search deleted tombstones")
+	cmd.Flags().StringVar(&fields, "fields", "", "Comma-separated field list")
+	return cmd
+}
+
+func (a *app) newWorklogsContextCommand() *cobra.Command {
+	var issues []string
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+	var dayStart string
+	var dayEnd string
+	var lunch string
+	var noLunch bool
+
+	cmd := &cobra.Command{
+		Use:   "context",
+		Short: "Inspect planning context for local worklogs",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			effective, service, cleanup, err := a.loadService(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			result, err := service.Context(effective, worklogs.ContextInput{
+				Issues:       issues,
+				Today:        today,
+				Yesterday:    yesterday,
+				CurrentWeek:  currentWeek,
+				LastWeek:     lastWeek,
+				CurrentMonth: currentMonth,
+				LastMonth:    lastMonth,
+				From:         from,
+				To:           to,
+				DayStart:     dayStart,
+				DayEnd:       dayEnd,
+				Lunch:        lunch,
+				NoLunch:      noLunch,
+			})
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+
+			if mode == "json" {
+				return a.renderContextJSON(worklogs.ContextInput{
+					Issues:       issues,
+					Today:        today,
+					Yesterday:    yesterday,
+					CurrentWeek:  currentWeek,
+					LastWeek:     lastWeek,
+					CurrentMonth: currentMonth,
+					LastMonth:    lastMonth,
+					From:         from,
+					To:           to,
+					DayStart:     dayStart,
+					DayEnd:       dayEnd,
+					Lunch:        lunch,
+					NoLunch:      noLunch,
+				}, result, effective.Location)
+			}
+
+			return renderTable(a.stdout, []string{"DATE", "WORKLOGS", "BOOKED", "UNTIL_QUOTA", "COLLISIONS"}, contextRows(result))
+		},
+	}
+
+	cmd.Flags().StringArrayVar(&issues, "issue", nil, "Planning issue key")
+	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
+	cmd.Flags().StringVar(&from, "from", "", "From date")
+	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&dayStart, "day-start", "", "Workday start clock")
+	cmd.Flags().StringVar(&dayEnd, "day-end", "", "Workday end clock")
+	cmd.Flags().StringVar(&lunch, "lunch", "", "Lunch exclusion window")
+	cmd.Flags().BoolVar(&noLunch, "no-lunch", false, "Disable lunch exclusion")
+	return cmd
+}
+
+func (a *app) newWorklogsShiftCommand() *cobra.Command {
+	var issue string
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+	var by string
+	var dry bool
+
+	cmd := &cobra.Command{
+		Use:   "shift",
+		Short: "Shift local worklog timestamps",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			effective, service, cleanup, err := a.loadService(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			result, err := service.Shift(effective, worklogs.ListFilters{
+				Issue:        issue,
+				Today:        today,
+				Yesterday:    yesterday,
+				CurrentWeek:  currentWeek,
+				LastWeek:     lastWeek,
+				CurrentMonth: currentMonth,
+				LastMonth:    lastMonth,
+				From:         from,
+				To:           to,
+			}, by, dry)
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+
+			if mode == "json" {
+				return a.renderShiftJSON(worklogs.ListFilters{
+					Issue:        issue,
+					Today:        today,
+					Yesterday:    yesterday,
+					CurrentWeek:  currentWeek,
+					LastWeek:     lastWeek,
+					CurrentMonth: currentMonth,
+					LastMonth:    lastMonth,
+					From:         from,
+					To:           to,
+				}, result, effective.Location)
+			}
+
+			if dry {
+				return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED_BEFORE", "STARTED_AFTER", "DURATION", "DESCRIPTION"}, shiftPreviewRows(result.PreviewItems))
+			}
+
+			return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows(result.Items, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+		},
+	}
+
+	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
+	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
+	cmd.Flags().StringVar(&from, "from", "", "From date")
+	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&by, "by", "", "Signed Go duration, e.g. 15m, 1h30m, -45m")
+	cmd.Flags().BoolVar(&dry, "dry", false, "Preview shifted worklogs")
+	return cmd
+}
+
+func (a *app) newWorklogsApplyCommand() *cobra.Command {
+	var filePath string
+	var stdin bool
+	var dry bool
+	var force bool
+
+	cmd := &cobra.Command{
+		Use:   "apply",
+		Short: "Apply raw batch worklog additions",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			effective, service, cleanup, err := a.loadService(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			if (filePath == "" && !stdin) || (filePath != "" && stdin) {
+				return a.fail(mode, 2, "validation_error", "apply requires exactly one of file or stdin", nil)
+			}
+
+			var data []byte
+			if stdin {
+				data, err = io.ReadAll(cmd.InOrStdin())
+			} else {
+				data, err = os.ReadFile(filePath)
+			}
+			if err != nil {
+				return a.fail(mode, 2, "validation_error", err.Error(), nil)
+			}
+
+			payload, err := worklogs.ParseRawApplyPayload(data)
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+
+			result, err := service.Apply(effective, payload, force, dry)
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+
+			if mode == "json" {
+				return a.renderApplyJSON(result, effective.Location)
+			}
+
+			return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows(result.Records, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+		},
+	}
+
+	cmd.Flags().StringVar(&filePath, "file", "", "Path to raw apply payload JSON")
+	cmd.Flags().BoolVar(&stdin, "stdin", false, "Read raw apply payload JSON from stdin")
+	cmd.Flags().BoolVar(&dry, "dry", false, "Validate without writing")
+	cmd.Flags().BoolVar(&force, "force", false, "Bypass duplicate and overlap validation")
+	return cmd
+}
+
+func (a *app) newWorklogsAddCommand() *cobra.Command {
+	var issue string
+	var started string
+	var startedUTC string
+	var duration string
+	var description string
+	var force bool
+
+	cmd := &cobra.Command{
+		Use:   "add",
+		Short: "Add a local worklog",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			effective, service, cleanup, err := a.loadService(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			record, err := service.Add(effective, worklogs.AddInput{
+				IssueKey:    issue,
+				Started:     started,
+				StartedUTC:  startedUTC,
+				Duration:    duration,
+				Description: description,
+				Force:       force,
+			})
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+
+			if mode == "json" {
+				return a.writeJSON(worklogRecordJSON(record, effective.Location))
+			}
+			return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+		},
+	}
+
+	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
+	cmd.Flags().StringVar(&started, "started", "", "Local started timestamp")
+	cmd.Flags().StringVar(&startedUTC, "started-utc", "", "UTC started timestamp")
+	cmd.Flags().StringVar(&duration, "duration", "", "Worklog duration")
+	cmd.Flags().StringVar(&description, "description", "", "Description")
+	cmd.Flags().BoolVar(&force, "force", false, "Bypass duplicate and overlap validation")
+	return cmd
+}
+
+func (a *app) newWorklogsUpdateCommand() *cobra.Command {
+	var issue string
+	var started string
+	var startedUTC string
+	var duration string
+	var description string
+	var force bool
+
+	cmd := &cobra.Command{
+		Use:   "update <id>",
+		Short: "Update a local worklog",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode := outputMode(cmd)
+			effective, service, cleanup, err := a.loadService(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			patch := worklogs.PatchInput{Force: force}
+			if cmd.Flags().Changed("issue") {
+				patch.IssueKey = &issue
+			}
+			if cmd.Flags().Changed("started") {
+				patch.Started = &started
+			}
+			if cmd.Flags().Changed("started-utc") {
+				patch.StartedUTC = &startedUTC
+			}
+			if cmd.Flags().Changed("duration") {
+				patch.Duration = &duration
+			}
+			if cmd.Flags().Changed("description") {
+				patch.Description = &description
+			}
+
+			record, err := service.Update(effective, args[0], patch)
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+
+			if mode == "json" {
+				return a.writeJSON(worklogRecordJSON(record, effective.Location))
+			}
+			return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+		},
+	}
+
+	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
+	cmd.Flags().StringVar(&started, "started", "", "Local started timestamp")
+	cmd.Flags().StringVar(&startedUTC, "started-utc", "", "UTC started timestamp")
+	cmd.Flags().StringVar(&duration, "duration", "", "Worklog duration")
+	cmd.Flags().StringVar(&description, "description", "", "Description")
+	cmd.Flags().BoolVar(&force, "force", false, "Bypass duplicate and overlap validation")
+	return cmd
+}
+
+func (a *app) newWorklogsDeleteCommand() *cobra.Command {
+	var issue string
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+	var dry bool
+	var yes bool
+	var hardDelete bool
+
+	cmd := &cobra.Command{
+		Use:   "delete [id]",
+		Short: "Delete local worklogs",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode := outputMode(cmd)
+			effective, service, cleanup, err := a.loadService(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			if len(args) == 1 {
+				if dry || yes || issue != "" || today || yesterday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != "" {
+					return a.fail(mode, 2, "validation_error", "single delete cannot be combined with batch delete flags", nil)
+				}
+				record, err := service.Delete(args[0], hardDelete)
+				if err != nil {
+					return a.handleWorklogError(mode, effective, err)
+				}
+				if mode == "json" {
+					return a.writeJSON(map[string]any{
+						"id":          record.ID,
+						"issue_key":   record.IssueKey,
+						"deleted_at":  record.DeletedAt.Format(time.RFC3339),
+						"hard_delete": record.HardDelete,
+					})
+				}
+				return renderTable(a.stdout, []string{"ID", "ISSUE", "DELETED", "HARD"}, deleteResultRows([]worklogs.DeleteResult{record}))
+			}
+
+			if dry && yes {
+				return a.fail(mode, 2, "validation_error", "dry and yes are mutually exclusive", nil)
+			}
+			if !dry && !yes {
+				return a.fail(mode, 2, "validation_error", "filtered batch delete requires yes or dry", nil)
+			}
+
+			result, err := service.DeleteBatch(effective, worklogs.ListFilters{
+				Issue:        issue,
+				Today:        today,
+				Yesterday:    yesterday,
+				CurrentWeek:  currentWeek,
+				LastWeek:     lastWeek,
+				CurrentMonth: currentMonth,
+				LastMonth:    lastMonth,
+				From:         from,
+				To:           to,
+			}, dry, hardDelete)
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+
+			if mode == "json" {
+				return a.renderDeleteBatchJSON(worklogs.ListFilters{
+					Issue:        issue,
+					Today:        today,
+					Yesterday:    yesterday,
+					CurrentWeek:  currentWeek,
+					LastWeek:     lastWeek,
+					CurrentMonth: currentMonth,
+					LastMonth:    lastMonth,
+					From:         from,
+					To:           to,
+				}, result, effective.Location)
+			}
+
+			if dry {
+				return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows(result.Items, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+			}
+			rows := make([][]string, 0, len(result.Deleted))
+			for _, id := range result.Deleted {
+				rows = append(rows, []string{id, strconv.FormatBool(result.HardDelete)})
+			}
+			return renderTable(a.stdout, []string{"ID", "HARD"}, rows)
+		},
+	}
+
+	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
+	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
+	cmd.Flags().StringVar(&from, "from", "", "From date")
+	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().BoolVar(&dry, "dry", false, "Preview matching deletes")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Execute filtered batch delete")
+	cmd.Flags().BoolVar(&hardDelete, "hard", false, "Delete without creating tombstones")
+	return cmd
+}
+
+func (a *app) newWorklogsRestoreCommand() *cobra.Command {
+	var issue string
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+	var dry bool
+	var yes bool
+	var force bool
+
+	cmd := &cobra.Command{
+		Use:   "restore",
+		Short: "Restore deleted local worklogs",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			effective, service, cleanup, err := a.loadService(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			if dry && yes {
+				return a.fail(mode, 2, "validation_error", "dry and yes are mutually exclusive", nil)
+			}
+			if !dry && !yes {
+				return a.fail(mode, 2, "validation_error", "worklogs restore requires yes or dry", nil)
+			}
+
+			raw := worklogs.ListFilters{
+				Issue:        issue,
+				Today:        today,
+				Yesterday:    yesterday,
+				CurrentWeek:  currentWeek,
+				LastWeek:     lastWeek,
+				CurrentMonth: currentMonth,
+				LastMonth:    lastMonth,
+				From:         from,
+				To:           to,
+			}
+			result, err := service.RestoreBatch(effective, raw, dry, force)
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+
+			if mode == "json" {
+				return a.renderRestoreBatchJSON(raw, result, effective.Location)
+			}
+
+			if dry {
+				return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION", "DELETED"}, restorePreviewRows(result.Items, effective.Location))
+			}
+			rows := make([][]string, 0, len(result.Restored))
+			for _, item := range result.Items {
+				rows = append(rows, []string{item.Record.ID, item.Record.IssueKey})
+			}
+			return renderTable(a.stdout, []string{"ID", "ISSUE"}, rows)
+		},
+	}
+
+	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
+	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
+	cmd.Flags().StringVar(&from, "from", "", "From date")
+	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().BoolVar(&dry, "dry", false, "Preview matching restores")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Execute filtered batch restore")
+	cmd.Flags().BoolVar(&force, "force", false, "Restore even when duplicate or overlap conflicts exist")
+	return cmd
+}
+
+func (a *app) newStatusCommand() *cobra.Command {
+	var adapter string
+	var instance string
+
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Check adapter status",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			effective, err := config.LoadEffective()
+			if err != nil {
+				if errors.Is(err, config.ErrConfigNotFound) {
+					return a.fail(mode, 2, "validation_error", "config file does not exist; run workledger init", nil)
+				}
+				var validationErr config.ValidationErrors
+				if errors.As(err, &validationErr) {
+					return a.fail(mode, 2, "validation_error", "config validation failed", validationErr.Issues)
+				}
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+
+			var rows []statusRow
+			exitCode := 0
+			switch adapter {
+			case "":
+				rows, exitCode = a.collectAllStatusRows(cmd.Context(), effective)
+			case "clockify":
+				var err error
+				rows, err = a.collectClockifyStatusRows(cmd.Context(), effective, instance)
+				if err != nil {
+					var requestErr *clockifyadapter.RequestError
+					if errors.As(err, &requestErr) {
+						return a.handleClockifyError(mode, err)
+					}
+					return a.fail(mode, 2, "validation_error", err.Error(), nil)
+				}
+			case "jira-cloud":
+				var err error
+				rows, err = a.collectJiraCloudStatusRows(cmd.Context(), effective, instance)
+				if err != nil {
+					return a.handleJiraCloudError(mode, err)
+				}
+			case "jira-data-center":
+				var err error
+				rows, err = a.collectJiraDataStatusRows(cmd.Context(), effective, instance)
+				if err != nil {
+					return a.handleJiraDataError(mode, err)
+				}
+			default:
+				return a.fail(mode, 2, "validation_error", "supported adapters are clockify, jira-cloud, and jira-data-center", nil)
+			}
+
+			if mode == "json" {
+				if err := a.renderStatusJSON(rows); err != nil {
+					return err
+				}
+			} else {
+				if err := renderTable(a.stdout, statusTableHeaders(), statusTableRows(rows)); err != nil {
+					return err
+				}
+			}
+			if exitCode != 0 {
+				return exitError{code: exitCode}
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&adapter, "adapter", "", "Adapter family")
+	cmd.Flags().StringVar(&instance, "instance", "", "Adapter instance")
+	return cmd
+}
+
+type statusRow struct {
+	Adapter     string
+	Instance    string
+	Status      string
+	BaseURL     string
+	WorkspaceID string
+	UserID      string
+	User        string
+}
+
+func (a *app) collectAllStatusRows(ctx context.Context, effective config.EffectiveConfig) ([]statusRow, int) {
+	rows := make([]statusRow, 0)
+	exitCode := 0
+
+	clockifyRows, err := a.collectClockifyStatusRows(ctx, effective, "")
+	if err != nil {
+		rows = append(rows, failedClockifyStatusRow(effective, err))
+		exitCode = firstStatusExitCode(exitCode, statusExitCodeForClockify(err))
+	} else {
+		rows = append(rows, clockifyRows...)
+	}
+
+	jiraCloudRows, jiraCloudExitCode := a.collectJiraCloudStatusRowsTolerant(ctx, effective)
+	rows = append(rows, jiraCloudRows...)
+	exitCode = firstStatusExitCode(exitCode, jiraCloudExitCode)
+
+	jiraDataRows, jiraDataExitCode := a.collectJiraDataStatusRowsTolerant(ctx, effective)
+	rows = append(rows, jiraDataRows...)
+	exitCode = firstStatusExitCode(exitCode, jiraDataExitCode)
+
+	return rows, exitCode
+}
+
+func (a *app) collectClockifyStatusRows(ctx context.Context, effective config.EffectiveConfig, instanceName string) ([]statusRow, error) {
+	if effective.File.Clockify == nil {
+		return nil, nil
+	}
+
+	resolvedInstance, clockifyCfg, err := config.ResolveClockifyInstance(effective, instanceName)
+	if err != nil {
+		return nil, err
+	}
+
+	client := clockifyadapter.NewClient(clockifyCfg.Auth.APIKey)
+	user, err := client.CurrentUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if user.ID != clockifyCfg.UserID {
+		return nil, errors.New("configured clockify.user_id does not match authenticated user")
+	}
+	if clockifyCfg.WorkspaceID != user.ActiveWorkspace && clockifyCfg.WorkspaceID != user.DefaultWorkspace {
+		return nil, errors.New("configured clockify.workspace_id is not visible for the authenticated user")
+	}
+	windowFrom, windowTo, err := parsePlanWindow(effective, false, false, true, false, false, false, "", "")
+	if err != nil {
+		return nil, err
+	}
+	_, err = client.ListUserTimeEntries(ctx, clockifyCfg.WorkspaceID, clockifyCfg.UserID, windowFrom, windowTo)
+	if err != nil {
+		return nil, err
+	}
+	_, err = client.ListTags(ctx, clockifyCfg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	return []statusRow{{
+		Adapter:     "clockify",
+		Instance:    resolvedInstance,
+		Status:      "OK",
+		WorkspaceID: clockifyCfg.WorkspaceID,
+		UserID:      clockifyCfg.UserID,
+	}}, nil
+}
+
+func (a *app) collectJiraCloudStatusRows(ctx context.Context, effective config.EffectiveConfig, instanceName string) ([]statusRow, error) {
+	if effective.File.JiraCloud == nil || len(effective.File.JiraCloud.Instances) == 0 {
+		return nil, nil
+	}
+
+	names, err := resolveJiraCloudStatusInstanceNames(effective, instanceName)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]statusRow, 0, len(names))
+	for _, name := range names {
+		_, instance, err := config.ResolveJiraCloudInstance(effective, name)
+		if err != nil {
+			return nil, err
+		}
+		client := jiracloudadapter.NewClient(instance.BaseURL, instance.Auth.Email, instance.Auth.Token)
+		user, err := client.CurrentUser(ctx)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, statusRow{
+			Adapter:  "jira-cloud",
+			Instance: name,
+			Status:   "OK",
+			BaseURL:  instance.BaseURL,
+			User:     firstNonEmpty(user.DisplayName, user.EmailAddress, user.Name, user.Key, user.AccountID),
+		})
+	}
+
+	return rows, nil
+}
+
+func (a *app) collectJiraCloudStatusRowsTolerant(ctx context.Context, effective config.EffectiveConfig) ([]statusRow, int) {
+	if effective.File.JiraCloud == nil || len(effective.File.JiraCloud.Instances) == 0 {
+		return nil, 0
+	}
+
+	names := sortedJiraCloudInstanceNames(effective.File.JiraCloud.Instances)
+	rows := make([]statusRow, 0, len(names))
+	exitCode := 0
+	for _, name := range names {
+		_, instance, err := config.ResolveJiraCloudInstance(effective, name)
+		if err != nil {
+			rows = append(rows, statusRow{
+				Adapter:  "jira-cloud",
+				Instance: name,
+				Status:   err.Error(),
+			})
+			exitCode = firstStatusExitCode(exitCode, 2)
+			continue
+		}
+		client := jiracloudadapter.NewClient(instance.BaseURL, instance.Auth.Email, instance.Auth.Token)
+		user, err := client.CurrentUser(ctx)
+		if err != nil {
+			rows = append(rows, statusRow{
+				Adapter:  "jira-cloud",
+				Instance: name,
+				Status:   err.Error(),
+				BaseURL:  instance.BaseURL,
+			})
+			exitCode = firstStatusExitCode(exitCode, statusExitCodeForJiraCloud(err))
+			continue
+		}
+		rows = append(rows, statusRow{
+			Adapter:  "jira-cloud",
+			Instance: name,
+			Status:   "OK",
+			BaseURL:  instance.BaseURL,
+			User:     firstNonEmpty(user.DisplayName, user.EmailAddress, user.Name, user.Key, user.AccountID),
+		})
+	}
+
+	return rows, exitCode
+}
+
+func (a *app) collectJiraDataStatusRows(ctx context.Context, effective config.EffectiveConfig, instanceName string) ([]statusRow, error) {
+	if effective.File.JiraData == nil || len(effective.File.JiraData.Instances) == 0 {
+		return nil, nil
+	}
+
+	names, err := resolveJiraDataStatusInstanceNames(effective, instanceName)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]statusRow, 0, len(names))
+	for _, name := range names {
+		_, instance, err := config.ResolveJiraDataInstance(effective, name)
+		if err != nil {
+			return nil, err
+		}
+		client := jiradcadapter.NewClient(instance.BaseURL, instance.Auth.Bearer.Token)
+		user, err := client.CurrentUser(ctx)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, statusRow{
+			Adapter:  "jira-data-center",
+			Instance: name,
+			Status:   "OK",
+			BaseURL:  instance.BaseURL,
+			User:     firstNonEmpty(user.DisplayName, user.EmailAddress, user.Name, user.Key, user.AccountID),
+		})
+	}
+
+	return rows, nil
+}
+
+func (a *app) collectJiraDataStatusRowsTolerant(ctx context.Context, effective config.EffectiveConfig) ([]statusRow, int) {
+	if effective.File.JiraData == nil || len(effective.File.JiraData.Instances) == 0 {
+		return nil, 0
+	}
+
+	names := sortedJiraDataInstanceNames(effective.File.JiraData.Instances)
+	rows := make([]statusRow, 0, len(names))
+	exitCode := 0
+	for _, name := range names {
+		_, instance, err := config.ResolveJiraDataInstance(effective, name)
+		if err != nil {
+			rows = append(rows, statusRow{
+				Adapter:  "jira-data-center",
+				Instance: name,
+				Status:   err.Error(),
+			})
+			exitCode = firstStatusExitCode(exitCode, 2)
+			continue
+		}
+		client := jiradcadapter.NewClient(instance.BaseURL, instance.Auth.Bearer.Token)
+		user, err := client.CurrentUser(ctx)
+		if err != nil {
+			rows = append(rows, statusRow{
+				Adapter:  "jira-data-center",
+				Instance: name,
+				Status:   err.Error(),
+				BaseURL:  instance.BaseURL,
+			})
+			exitCode = firstStatusExitCode(exitCode, statusExitCodeForJiraData(err))
+			continue
+		}
+		rows = append(rows, statusRow{
+			Adapter:  "jira-data-center",
+			Instance: name,
+			Status:   "OK",
+			BaseURL:  instance.BaseURL,
+			User:     firstNonEmpty(user.DisplayName, user.EmailAddress, user.Name, user.Key, user.AccountID),
+		})
+	}
+
+	return rows, exitCode
+}
+
+func (a *app) renderStatusJSON(rows []statusRow) error {
+	items := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, map[string]any{
+			"adapter":      row.Adapter,
+			"instance":     emptyToNil(row.Instance),
+			"status":       row.Status,
+			"base_url":     emptyToNil(row.BaseURL),
+			"workspace_id": emptyToNil(row.WorkspaceID),
+			"user_id":      emptyToNil(row.UserID),
+			"user":         emptyToNil(row.User),
+		})
+	}
+
+	return a.writeJSON(map[string]any{"items": items})
+}
+
+func statusTableHeaders() []string {
+	return []string{"ADAPTER", "INSTANCE", "BASE_URL", "USER", "STATUS"}
+}
+
+func statusTableRows(rows []statusRow) [][]string {
+	items := make([][]string, 0, len(rows))
+	for _, row := range rows {
+		instance := row.Instance
+		user := row.User
+		if row.Adapter == "clockify" {
+			user = row.UserID
+		}
+		items = append(items, []string{
+			row.Adapter,
+			instance,
+			row.BaseURL,
+			user,
+			row.Status,
+		})
+	}
+	return items
+}
+
+func sortedJiraCloudInstanceNames(instances map[string]config.JiraCloudInstance) []string {
+	names := make([]string, 0, len(instances))
+	for name := range instances {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func sortedJiraDataInstanceNames(instances map[string]config.JiraDataCenterInstance) []string {
+	names := make([]string, 0, len(instances))
+	for name := range instances {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func resolveJiraCloudStatusInstanceNames(effective config.EffectiveConfig, instanceName string) ([]string, error) {
+	if instanceName == "" {
+		return sortedJiraCloudInstanceNames(effective.File.JiraCloud.Instances), nil
+	}
+
+	resolved, _, err := config.ResolveJiraCloudInstance(effective, instanceName)
+	if err != nil {
+		return nil, err
+	}
+	return []string{resolved}, nil
+}
+
+func resolveJiraDataStatusInstanceNames(effective config.EffectiveConfig, instanceName string) ([]string, error) {
+	if instanceName == "" {
+		return sortedJiraDataInstanceNames(effective.File.JiraData.Instances), nil
+	}
+
+	resolved, _, err := config.ResolveJiraDataInstance(effective, instanceName)
+	if err != nil {
+		return nil, err
+	}
+	return []string{resolved}, nil
+}
+
+func failedClockifyStatusRow(effective config.EffectiveConfig, err error) statusRow {
+	row := statusRow{
+		Adapter:  "clockify",
+		Instance: config.ClockifyInstanceName,
+		Status:   err.Error(),
+	}
+	if effective.File.Clockify != nil {
+		row.WorkspaceID = effective.File.Clockify.WorkspaceID
+		row.UserID = effective.File.Clockify.UserID
+	}
+	return row
+}
+
+func firstStatusExitCode(current, next int) int {
+	if current != 0 {
+		return current
+	}
+	return next
+}
+
+func statusExitCodeForClockify(err error) int {
+	var requestErr *clockifyadapter.RequestError
+	if errors.As(err, &requestErr) {
+		if requestErr.StatusCode == http.StatusUnauthorized || requestErr.StatusCode == http.StatusForbidden {
+			return 4
+		}
+		return 5
+	}
+	return 2
+}
+
+func statusExitCodeForJiraData(err error) int {
+	var requestErr *jiradcadapter.RequestError
+	if errors.As(err, &requestErr) {
+		switch requestErr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return 4
+		case http.StatusNotFound:
+			return 3
+		default:
+			return 5
+		}
+	}
+	return 1
+}
+
+func statusExitCodeForJiraCloud(err error) int {
+	var requestErr *jiracloudadapter.RequestError
+	if errors.As(err, &requestErr) {
+		switch requestErr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return 4
+		case http.StatusNotFound:
+			return 3
+		default:
+			return 5
+		}
+	}
+	return 1
+}
+
+func totalsStatusForClockifyError(err error) string {
+	var requestErr *clockifyadapter.RequestError
+	if errors.As(err, &requestErr) {
+		if requestErr.StatusCode == http.StatusUnauthorized || requestErr.StatusCode == http.StatusForbidden {
+			return "auth_error"
+		}
+		return "external_error"
+	}
+	return "unexpected_error"
+}
+
+func totalsExitCodeForJiraData(err error) int {
+	var requestErr *jiradcadapter.RequestError
+	if errors.As(err, &requestErr) {
+		switch requestErr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return 4
+		case http.StatusNotFound:
+			return 3
+		default:
+			return 5
+		}
+	}
+	return 1
+}
+
+func totalsStatusForJiraDataError(err error) string {
+	var requestErr *jiradcadapter.RequestError
+	if errors.As(err, &requestErr) {
+		switch requestErr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return "auth_error"
+		case http.StatusNotFound:
+			return "not_found"
+		default:
+			return "remote_error"
+		}
+	}
+	return "unexpected_error"
+}
+
+func totalsExitCodeForJiraCloud(err error) int {
+	var requestErr *jiracloudadapter.RequestError
+	if errors.As(err, &requestErr) {
+		switch requestErr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return 4
+		case http.StatusNotFound:
+			return 3
+		default:
+			return 5
+		}
+	}
+	return 1
+}
+
+func totalsStatusForJiraCloudError(err error) string {
+	var requestErr *jiracloudadapter.RequestError
+	if errors.As(err, &requestErr) {
+		switch requestErr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return "auth_error"
+		case http.StatusNotFound:
+			return "not_found"
+		default:
+			return "remote_error"
+		}
+	}
+	return "unexpected_error"
+}
+
+func (a *app) newIssueMetadataCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "issue-metadata",
+		Short: "Manage issue metadata",
+		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	}
+	cmd.AddCommand(a.newIssueMetadataListCommand())
+	cmd.AddCommand(a.newIssueMetadataRefreshCommand())
+	return cmd
+}
+
+func (a *app) newIssueMetadataListCommand() *cobra.Command {
+	var issue string
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List cached issue metadata",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			effective, service, cleanup, err := a.loadService(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			raw := worklogs.ListFilters{
+				Issue:        issue,
+				Today:        today,
+				Yesterday:    yesterday,
+				CurrentWeek:  currentWeek,
+				LastWeek:     lastWeek,
+				CurrentMonth: currentMonth,
+				LastMonth:    lastMonth,
+				From:         from,
+				To:           to,
+			}
+
+			var (
+				items   []worklogs.IssueMetadata
+				filters worklogs.EffectiveFilters
+			)
+			if issue != "" && !hasSelector(raw) && !worklogs.IsValidIssueKey(issue) {
+				return a.fail(mode, 2, "validation_error", "issue must match <PROJECTKEY>-<NUMBER>", nil)
+			}
+			if worklogs.IsValidIssueKey(issue) && !hasSelector(raw) {
+				filters.Timezone = effective.TimezoneName
+				filters.IssueKey = &issue
+				item, err := service.ShowIssueMetadata(issue)
+				if err != nil {
+					return a.handleIssueMetadataError(mode, err)
+				}
+				items = []worklogs.IssueMetadata{item}
+			} else {
+				active, _, effectiveFilters, err := service.List(effective, raw)
+				if err != nil {
+					return a.handleWorklogError(mode, effective, err)
+				}
+				items, err = service.ListIssueMetadata(issueKeys(active))
+				if err != nil {
+					return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+				}
+				filters = effectiveFilters
+			}
+
+			if mode == "json" {
+				return a.renderIssueMetadataListJSON(raw, filters, items, effective.Location)
+			}
+			return renderTable(a.stdout, []string{"ISSUE", "MAX_ESTIMATE_SECONDS", "SOURCE_ADAPTER", "SOURCE_INSTANCE", "REFRESHED_AT"}, issueMetadataRows(items))
+		},
+	}
+
+	cmd.Flags().StringVar(&issue, "issue", "", "Filter to one issue")
+	cmd.Flags().BoolVar(&today, "today", false, "Use today")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Use the previous month")
+	cmd.Flags().StringVar(&from, "from", "", "From date")
+	cmd.Flags().StringVar(&to, "to", "", "To date")
+	return cmd
+}
+
+func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
+	var adapter string
+	var field string
+	var instance string
+	var issue string
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+
+	cmd := &cobra.Command{
+		Use:   "refresh",
+		Short: "Refresh local issue metadata from an adapter",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			if field != "max-estimate" {
+				return a.fail(mode, 2, "validation_error", "only --field=max-estimate is supported in this slice", nil)
+			}
+			effective, service, cleanup, err := a.loadService(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			items, _, _, err := service.List(effective, worklogs.ListFilters{
+				Issue:        issue,
+				Today:        today,
+				Yesterday:    yesterday,
+				CurrentWeek:  currentWeek,
+				LastWeek:     lastWeek,
+				CurrentMonth: currentMonth,
+				LastMonth:    lastMonth,
+				From:         from,
+				To:           to,
+			})
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+			var resolvedInstance string
+			var refreshed []map[string]any
+			issueKeys := issueKeys(items)
+			switch adapter {
+			case "jira-data-center":
+				resolvedInstance, err = resolveJiraDataInstanceName(effective, instance)
+				if err != nil {
+					return a.fail(mode, 2, "validation_error", err.Error(), nil)
+				}
+				if len(issueKeys) == 0 {
+					if mode == "json" {
+						return a.writeJSON(map[string]any{"adapter": adapter, "instance": resolvedInstance, "field": field, "updated": 0, "issues": []any{}})
+					}
+					_, _ = fmt.Fprintln(a.stdout, "updated=0")
+					return nil
+				}
+				if effective.File.JiraData != nil {
+					if cfg, ok := effective.File.JiraData.Instances[resolvedInstance]; ok && cfg.Routing != nil {
+						issuePrefixes, err := config.JiraDataIssuePrefixes(effective, resolvedInstance)
+						if err != nil {
+							return a.fail(mode, 2, "validation_error", err.Error(), nil)
+						}
+						issueKeys = filterIssueKeysByPrefixes(issueKeys, issuePrefixes)
+					}
+				}
+				if len(issueKeys) == 0 {
+					if mode == "json" {
+						return a.writeJSON(map[string]any{"adapter": adapter, "instance": resolvedInstance, "field": field, "updated": 0, "issues": []any{}})
+					}
+					_, _ = fmt.Fprintln(a.stdout, "updated=0")
+					return nil
+				}
+				_, cfg, err := config.ResolveJiraDataInstance(effective, resolvedInstance)
+				if err != nil {
+					return a.fail(mode, 2, "validation_error", err.Error(), nil)
+				}
+				client := jiradcadapter.NewClient(cfg.BaseURL, cfg.Auth.Bearer.Token)
+				refreshed = make([]map[string]any, 0, len(issueKeys))
+				for _, key := range issueKeys {
+					issueItem, err := client.GetIssue(cmd.Context(), key, []string{"timetracking"})
+					if err != nil {
+						return a.handleJiraDataError(mode, err)
+					}
+					var estimate *int64
+					if issueItem.Fields.Timetracking != nil {
+						estimate = issueItem.Fields.Timetracking.OriginalEstimateSeconds
+					}
+					if err := service.UpsertIssueMetadata(key, estimate, "jira-data-center", resolvedInstance, time.Now().UTC()); err != nil {
+						return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+					}
+					refreshed = append(refreshed, map[string]any{"issue_key": key, "max_estimate_seconds": int64PtrToAny(estimate)})
+				}
+			case "jira-cloud":
+				resolvedInstance, err = resolveJiraCloudInstanceName(effective, instance)
+				if err != nil {
+					return a.fail(mode, 2, "validation_error", err.Error(), nil)
+				}
+				if len(issueKeys) == 0 {
+					if mode == "json" {
+						return a.writeJSON(map[string]any{"adapter": adapter, "instance": resolvedInstance, "field": field, "updated": 0, "issues": []any{}})
+					}
+					_, _ = fmt.Fprintln(a.stdout, "updated=0")
+					return nil
+				}
+				if effective.File.JiraCloud != nil {
+					if cfg, ok := effective.File.JiraCloud.Instances[resolvedInstance]; ok && cfg.Routing != nil {
+						issuePrefixes, err := config.JiraCloudIssuePrefixes(effective, resolvedInstance)
+						if err != nil {
+							return a.fail(mode, 2, "validation_error", err.Error(), nil)
+						}
+						issueKeys = filterIssueKeysByPrefixes(issueKeys, issuePrefixes)
+					}
+				}
+				if len(issueKeys) == 0 {
+					if mode == "json" {
+						return a.writeJSON(map[string]any{"adapter": adapter, "instance": resolvedInstance, "field": field, "updated": 0, "issues": []any{}})
+					}
+					_, _ = fmt.Fprintln(a.stdout, "updated=0")
+					return nil
+				}
+				_, cfg, err := config.ResolveJiraCloudInstance(effective, resolvedInstance)
+				if err != nil {
+					return a.fail(mode, 2, "validation_error", err.Error(), nil)
+				}
+				client := jiracloudadapter.NewClient(cfg.BaseURL, cfg.Auth.Email, cfg.Auth.Token)
+				refreshed = make([]map[string]any, 0, len(issueKeys))
+				for _, key := range issueKeys {
+					issueItem, err := client.GetIssue(cmd.Context(), key, []string{"timetracking"})
+					if err != nil {
+						return a.handleJiraCloudError(mode, err)
+					}
+					var estimate *int64
+					if issueItem.Fields.Timetracking != nil {
+						estimate = issueItem.Fields.Timetracking.OriginalEstimateSeconds
+					}
+					if err := service.UpsertIssueMetadata(key, estimate, "jira-cloud", resolvedInstance, time.Now().UTC()); err != nil {
+						return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+					}
+					refreshed = append(refreshed, map[string]any{"issue_key": key, "max_estimate_seconds": int64PtrToAny(estimate)})
+				}
+			default:
+				return a.fail(mode, 2, "validation_error", "supported adapters are jira-cloud and jira-data-center", nil)
+			}
+			if mode == "json" {
+				return a.writeJSON(map[string]any{"adapter": adapter, "instance": resolvedInstance, "field": field, "updated": len(refreshed), "issues": refreshed})
+			}
+			return renderTable(a.stdout, []string{"ISSUE", "MAX_ESTIMATE_SECONDS"}, issueMetadataRefreshRows(refreshed))
+		},
+	}
+	cmd.Flags().StringVar(&adapter, "adapter", "", "Adapter family")
+	cmd.Flags().StringVar(&field, "field", "", "Metadata field")
+	cmd.Flags().StringVar(&instance, "instance", "", "Jira instance")
+	cmd.Flags().StringVar(&issue, "issue", "", "Filter to one issue")
+	cmd.Flags().BoolVar(&today, "today", false, "Use today")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Use the previous month")
+	cmd.Flags().StringVar(&from, "from", "", "From date")
+	cmd.Flags().StringVar(&to, "to", "", "To date")
+	return cmd
+}
+
+func (a *app) newTotalsCommand() *cobra.Command {
+	var adapter string
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+	var instance string
+	var details bool
+	var progressMode string
+
+	cmd := &cobra.Command{
+		Use:   "totals",
+		Short: "Summarize local totals or compare with remote adapter totals",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+
+			effective, store, cleanup, err := a.loadStore(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to)
+			if err != nil {
+				return a.fail(mode, 2, "validation_error", err.Error(), nil)
+			}
+
+			service := totals.NewService(store)
+			var result totals.Result
+			resolvedInstance := ""
+			reporter, err := a.progressReporter(progressMode)
+			if err != nil {
+				return a.fail(mode, 2, "validation_error", err.Error(), nil)
+			}
+			opts := totals.Options{Reporter: reporter}
+			switch adapter {
+			case "":
+				items, exitCode := service.CollectAll(cmd.Context(), effective, windowFrom, windowTo, opts)
+				if mode == "json" {
+					if err := a.renderAllTotalsJSON(effective, windowFrom, windowTo, items); err != nil {
+						return err
+					}
+				} else {
+					if err := a.renderAllTotalsTable(effective, windowFrom, windowTo, items); err != nil {
+						return err
+					}
+				}
+				if exitCode != 0 {
+					return exitError{code: exitCode}
+				}
+				return nil
+			case "clockify":
+				resolvedInstance, _, err = config.ResolveClockifyInstance(effective, instance)
+				if err != nil {
+					return a.fail(mode, 2, "validation_error", err.Error(), nil)
+				}
+				result, err = service.CompareClockifyRemote(cmd.Context(), effective, windowFrom, windowTo, opts)
+				if err != nil {
+					if totals.IsValidationError(err) {
+						return a.fail(mode, 2, "validation_error", err.Error(), nil)
+					}
+					return a.handleClockifyError(mode, err)
+				}
+			case "jira-data-center":
+				resolvedInstance, result, err = service.CompareJiraDataRemote(cmd.Context(), effective, instance, windowFrom, windowTo, opts)
+				if err != nil {
+					if totals.IsValidationError(err) {
+						return a.fail(mode, 2, "validation_error", err.Error(), nil)
+					}
+					return a.handleJiraDataError(mode, err)
+				}
+			case "jira-cloud":
+				resolvedInstance, result, err = service.CompareJiraCloudRemote(cmd.Context(), effective, instance, windowFrom, windowTo, opts)
+				if err != nil {
+					if totals.IsValidationError(err) {
+						return a.fail(mode, 2, "validation_error", err.Error(), nil)
+					}
+					return a.handleJiraCloudError(mode, err)
+				}
+			default:
+				return a.fail(mode, 2, "validation_error", "supported adapters are clockify, jira-cloud, and jira-data-center", nil)
+			}
+
+			if mode == "json" {
+				return a.renderTotalsJSON(adapter, resolvedInstance, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, effective, windowFrom, windowTo, result)
+			}
+			return a.renderTotalsTable(adapter, resolvedInstance, details, effective, windowFrom, windowTo, result)
+		},
+	}
+
+	cmd.Flags().StringVar(&adapter, "adapter", "", "Adapter family")
+	cmd.Flags().StringVar(&instance, "instance", "", "Adapter instance")
+	cmd.Flags().BoolVar(&today, "today", false, "Use today")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Use the previous month")
+	cmd.Flags().StringVar(&from, "from", "", "From date")
+	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().BoolVar(&details, "details", false, "Show per-day totals")
+	cmd.Flags().StringVar(&progressMode, "progress", string(progress.ModeAuto), "Progress mode: auto, bar, plain, or off")
+	return cmd
+}
+
+type totalsCollectionItem = totals.CollectionItem
+
+func (a *app) collectAllTotalsItems(ctx context.Context, effective config.EffectiveConfig, service *totals.Service, windowFrom, windowTo time.Time) ([]totalsCollectionItem, int) {
+	items := make([]totalsCollectionItem, 0)
+	exitCode := 0
+
+	clockifyItem := a.collectClockifyTotalsItem(ctx, effective, service, windowFrom, windowTo)
+	if clockifyItem != nil {
+		items = append(items, *clockifyItem)
+		exitCode = firstStatusExitCode(exitCode, clockifyItem.Code)
+	}
+
+	jiraCloudItems := a.collectJiraCloudTotalsItems(ctx, effective, service, windowFrom, windowTo)
+	for _, item := range jiraCloudItems {
+		items = append(items, item)
+		exitCode = firstStatusExitCode(exitCode, item.Code)
+	}
+
+	jiraDataItems := a.collectJiraDataTotalsItems(ctx, effective, service, windowFrom, windowTo)
+	for _, item := range jiraDataItems {
+		items = append(items, item)
+		exitCode = firstStatusExitCode(exitCode, item.Code)
+	}
+
+	return items, exitCode
+}
+
+func (a *app) collectClockifyTotalsItem(ctx context.Context, effective config.EffectiveConfig, service *totals.Service, windowFrom, windowTo time.Time) *totalsCollectionItem {
+	if effective.File.Clockify == nil {
+		return nil
+	}
+
+	item := totalsCollectionItem{Adapter: "clockify", Instance: config.ClockifyInstanceName}
+	_, clockifyCfg, err := config.ResolveClockifyInstance(effective, "")
+	if err != nil {
+		if effective.File.Clockify != nil {
+			item.Display = effective.File.Clockify.WorkspaceID
+		}
+		item.Code = 2
+		item.Status = "validation_error"
+		item.Message = err.Error()
+		return &item
+	}
+	item.Display = clockifyCfg.WorkspaceID
+	client := clockifyadapter.NewClient(clockifyCfg.Auth.APIKey)
+	user, err := client.CurrentUser(ctx)
+	if err != nil {
+		item.Code = statusExitCodeForClockify(err)
+		item.Status = totalsStatusForClockifyError(err)
+		item.Message = err.Error()
+		return &item
+	}
+	if user.ID != clockifyCfg.UserID {
+		item.Code = 2
+		item.Status = "validation_error"
+		item.Message = "configured clockify.user_id does not match authenticated user"
+		return &item
+	}
+	if clockifyCfg.WorkspaceID != user.ActiveWorkspace && clockifyCfg.WorkspaceID != user.DefaultWorkspace {
+		item.Code = 2
+		item.Status = "validation_error"
+		item.Message = "configured clockify.workspace_id is not visible for the authenticated user"
+		return &item
+	}
+	entries, err := client.ListUserTimeEntries(ctx, clockifyCfg.WorkspaceID, clockifyCfg.UserID, windowFrom, windowTo)
+	if err != nil {
+		item.Code = statusExitCodeForClockify(err)
+		item.Status = totalsStatusForClockifyError(err)
+		item.Message = err.Error()
+		return &item
+	}
+	result, err := service.CompareClockify(ctx, effective, windowFrom, windowTo, entries)
+	if err != nil {
+		item.Code = 1
+		item.Status = "unexpected_error"
+		item.Message = err.Error()
+		return &item
+	}
+	item.Result = &result
+	return &item
+}
+
+func (a *app) collectJiraCloudTotalsItems(ctx context.Context, effective config.EffectiveConfig, service *totals.Service, windowFrom, windowTo time.Time) []totalsCollectionItem {
+	if effective.File.JiraCloud == nil || len(effective.File.JiraCloud.Instances) == 0 {
+		return nil
+	}
+
+	names := sortedJiraCloudInstanceNames(effective.File.JiraCloud.Instances)
+	items := make([]totalsCollectionItem, 0, len(names))
+	for _, name := range names {
+		item := totalsCollectionItem{Adapter: "jira-cloud", Instance: name}
+		issuePrefixes, err := config.JiraCloudIssuePrefixesForTotals(effective, name)
+		if err != nil {
+			item.Code = 2
+			item.Status = "validation_error"
+			item.Message = err.Error()
+			items = append(items, item)
+			continue
+		}
+		excludedIssues, err := config.JiraExcludedIssuesForInstance(effective, "jira-cloud", name)
+		if err != nil {
+			item.Code = 2
+			item.Status = "validation_error"
+			item.Message = err.Error()
+			items = append(items, item)
+			continue
+		}
+		rows, err := a.loadJiraCloudTotalsRows(ctx, effective, name, windowFrom, windowTo, issuePrefixes, excludedIssues)
+		if err != nil {
+			item.Code = totalsExitCodeForJiraCloud(err)
+			item.Status = totalsStatusForJiraCloudError(err)
+			item.Message = err.Error()
+			items = append(items, item)
+			continue
+		}
+		result, err := service.CompareJiraDataWithExclusions(ctx, effective, windowFrom, windowTo, rows, issuePrefixes, toExactSet(excludedIssues))
+		if err != nil {
+			item.Code = 1
+			item.Status = "unexpected_error"
+			item.Message = err.Error()
+			items = append(items, item)
+			continue
+		}
+		item.Result = &result
+		items = append(items, item)
+	}
+	return items
+}
+
+func (a *app) collectJiraDataTotalsItems(ctx context.Context, effective config.EffectiveConfig, service *totals.Service, windowFrom, windowTo time.Time) []totalsCollectionItem {
+	if effective.File.JiraData == nil || len(effective.File.JiraData.Instances) == 0 {
+		return nil
+	}
+
+	names := sortedJiraDataInstanceNames(effective.File.JiraData.Instances)
+	items := make([]totalsCollectionItem, 0, len(names))
+	for _, name := range names {
+		item := totalsCollectionItem{Adapter: "jira-data-center", Instance: name}
+		issuePrefixes, err := config.JiraDataIssuePrefixesForTotals(effective, name)
+		if err != nil {
+			item.Code = 2
+			item.Status = "validation_error"
+			item.Message = err.Error()
+			items = append(items, item)
+			continue
+		}
+		excludedIssues, err := config.JiraExcludedIssuesForInstance(effective, "jira-data-center", name)
+		if err != nil {
+			item.Code = 2
+			item.Status = "validation_error"
+			item.Message = err.Error()
+			items = append(items, item)
+			continue
+		}
+		rows, err := a.loadJiraDataTotalsRows(ctx, effective, name, windowFrom, windowTo, issuePrefixes, excludedIssues)
+		if err != nil {
+			item.Code = totalsExitCodeForJiraData(err)
+			item.Status = totalsStatusForJiraDataError(err)
+			item.Message = err.Error()
+			items = append(items, item)
+			continue
+		}
+		result, err := service.CompareJiraDataWithExclusions(ctx, effective, windowFrom, windowTo, rows, issuePrefixes, toExactSet(excludedIssues))
+		if err != nil {
+			item.Code = 1
+			item.Status = "unexpected_error"
+			item.Message = err.Error()
+			items = append(items, item)
+			continue
+		}
+		item.Result = &result
+		items = append(items, item)
+	}
+	return items
+}
+
+func (a *app) newPlanCommand() *cobra.Command {
+	planCmd := &cobra.Command{
+		Use:   "plan",
+		Short: "Review and apply saved reconcile plans",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+
+	planCmd.AddCommand(a.newPlanReconcileCommand())
+	planCmd.AddCommand(a.newPlanShowCommand())
+	planCmd.AddCommand(a.newPlanListCommand())
+	planCmd.AddCommand(a.newPlanApplyCommand())
+	planCmd.AddCommand(a.newPlanRetryCommand())
+
+	return planCmd
+}
+
+func (a *app) newPlanReconcileCommand() *cobra.Command {
+	var pull bool
+	var push bool
+	var adapters []string
+	var instances []string
+	var routeProfile string
+	var onlyDeleted bool
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+	var progressMode string
+
+	cmd := &cobra.Command{
+		Use:   "reconcile",
+		Short: "Create a saved reconcile plan",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			if pull == push {
+				return a.fail(mode, 2, "validation_error", "reconcile requires exactly one of --pull or --push", nil)
+			}
+			if pull && onlyDeleted {
+				return a.fail(mode, 2, "validation_error", "--only-deleted can only be used with --push", nil)
+			}
+
+			effective, store, cleanup, err := a.loadStore(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to)
+			if err != nil {
+				return a.fail(mode, 2, "validation_error", err.Error(), nil)
+			}
+
+			reporter, err := a.progressReporter(progressMode)
+			if err != nil {
+				return a.fail(mode, 2, "validation_error", err.Error(), nil)
+			}
+
+			selectedAdapters, selectedInstances, err := validateReconcileScope(effective, adapters, instances)
+			if err != nil {
+				return a.fail(mode, 2, "validation_error", err.Error(), nil)
+			}
+
+			plans := reconcile.NewService(store)
+			var plan reconcile.Plan
+			var result reconcile.ReconcileResult
+			scope := reconcile.ReconcileScope{AdapterFamilies: selectedAdapters, Instances: selectedInstances}
+			if pull {
+				plan, err = plans.CreateMultiPullPlan(cmd.Context(), effective, scope, windowFrom, windowTo, reconcile.PlanOptions{Reporter: reporter})
+			} else {
+				result, err = plans.ReconcileMultiPushPlan(cmd.Context(), effective, scope, routeProfile, windowFrom, windowTo, onlyDeleted, reconcile.PlanOptions{Reporter: reporter})
+				if err == nil && result.Plan != nil {
+					plan = *result.Plan
+				}
+			}
+			if err != nil {
+				return a.handleReconcileAdapterError(mode, strings.Join(selectedAdapters, ","), err)
+			}
+
+			if result.NoPlan != nil {
+				if mode == "json" {
+					return a.writeJSON(reconcileNoPlanJSON(*result.NoPlan))
+				}
+				return renderReconcileNoPlanTable(a.stdout, *result.NoPlan)
+			}
+
+			if mode == "json" {
+				if err := a.writeJSON(planJSON(plan)); err != nil {
+					return err
+				}
+			} else {
+				if err := renderTable(a.stdout, []string{"PLAN_ID", "STATUS", "ACTIONABLE", "INVALID_FINDINGS"}, [][]string{{plan.ID, plan.AggregateStatus, fmt.Sprint(countPlanItemsByStatus(plan.Items, "ready")), fmt.Sprint(len(plan.Findings))}}); err != nil {
+					return err
+				}
+			}
+			if hasPlanItemsWithStatus(plan.Items, "check_failed") {
+				return exitError{code: 6}
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&pull, "pull", false, "Create a pull plan")
+	cmd.Flags().BoolVar(&push, "push", false, "Create a push plan")
+	cmd.Flags().StringArrayVar(&adapters, "adapter", nil, "Adapter family")
+	cmd.Flags().StringArrayVar(&instances, "instance", nil, "Adapter instance allowlist")
+	cmd.Flags().StringVar(&routeProfile, "route-profile", "", "Push route profile")
+	cmd.Flags().BoolVar(&onlyDeleted, "only-deleted", false, "Push tombstoned local rows only")
+	cmd.Flags().BoolVar(&today, "today", false, "Use today")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Use the previous month")
+	cmd.Flags().StringVar(&from, "from", "", "From date")
+	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&progressMode, "progress", string(progress.ModeAuto), "Progress mode: auto, bar, plain, or off")
+	return cmd
+}
+
+func (a *app) newPlanShowCommand() *cobra.Command {
+	var onlyReady bool
+
+	cmd := &cobra.Command{
+		Use:   "show [plan-id]",
+		Short: "Show a saved plan",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode := outputMode(cmd)
+			_, store, cleanup, err := a.loadStore(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			planID := ""
+			if len(args) == 1 {
+				planID = args[0]
+			}
+
+			plan, err := reconcile.NewService(store).LoadPlan(planID)
+			if err != nil {
+				if errors.Is(err, reconcile.ErrPlanNotFound) {
+					return a.fail(mode, 3, "not_found", "saved plan not found", nil)
+				}
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+			if onlyReady {
+				plan.Items = filterPlanItemsByStatus(plan.Items, "ready")
+			}
+			if mode == "json" {
+				return a.writeJSON(planJSON(plan))
+			}
+
+			rows := make([][]string, 0, len(plan.Items))
+			for _, item := range plan.Items {
+				rows = append(rows, []string{
+					item.TargetAdapterFamily,
+					displayOrDash(item.TargetAdapterInstance),
+					item.TargetIssue,
+					formatSavedPlanWindow(item.WindowFromUTC, item.WindowToUTC),
+					item.PlanStatus,
+					item.PlannedAction,
+					item.ComparisonStatus,
+					fmt.Sprint(item.RemoteRowCount),
+					fmt.Sprint(item.LocalRowCount),
+					item.ExecutionState,
+				})
+			}
+			return renderTable(a.stdout, []string{"TARGET_ADAPTER", "TARGET_INSTANCE", "TARGET_ISSUE", "WINDOW", "STATUS", "ACTION", "COMPARE", "REMOTE_ROWS", "LOCAL_ROWS", "EXECUTION"}, rows)
+		},
+	}
+
+	cmd.Flags().BoolVar(&onlyReady, "only-ready", false, "Show only ready plan items")
+	return cmd
+}
+
+func (a *app) newPlanListCommand() *cobra.Command {
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List saved plans",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			effective, store, cleanup, err := a.loadStore(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			items, err := reconcile.NewService(store).ListPlans()
+			if err != nil {
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+			}
+			if hasPlanWindowSelection(today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to) {
+				windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to)
+				if err != nil {
+					return a.fail(mode, 2, "validation_error", err.Error(), nil)
+				}
+				items = filterPlanListEntriesByCreatedAt(items, windowFrom, windowTo)
+			}
+			if mode == "json" {
+				return a.writeJSON(map[string]any{"plans": planListJSON(items)})
+			}
+
+			rows := make([][]string, 0, len(items))
+			for _, item := range items {
+				rows = append(rows, []string{
+					item.ID,
+					item.Direction,
+					joinOrDash(item.AdapterFamilies),
+					joinOrDash(item.TargetInstances),
+					formatSavedPlanWindow(item.WindowFromUTC, item.WindowToUTC),
+					item.CreatedAt.Format(time.RFC3339),
+					fmt.Sprint(item.TotalItems),
+					fmt.Sprint(item.ReadyItems),
+					fmt.Sprint(item.SucceededItems),
+				})
+			}
+			return renderTable(a.stdout, []string{"PLAN_ID", "DIRECTION", "ADAPTERS", "INSTANCES", "WINDOW", "CREATED_AT", "ITEMS", "READY", "SUCCEEDED"}, rows)
+		},
+	}
+
+	cmd.Flags().BoolVar(&today, "today", false, "Use today")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Use the previous month")
+	cmd.Flags().StringVar(&from, "from", "", "From date")
+	cmd.Flags().StringVar(&to, "to", "", "To date")
+	return cmd
+}
+
+func (a *app) newPlanApplyCommand() *cobra.Command {
+	var progressMode string
+
+	cmd := &cobra.Command{
+		Use:   "apply [plan-id]",
+		Short: "Apply a saved plan",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode := outputMode(cmd)
+			effective, store, cleanup, err := a.loadStore(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			planID := ""
+			if len(args) == 1 {
+				planID = args[0]
+			}
+			reporter, err := a.progressReporter(progressMode)
+			if err != nil {
+				return a.fail(mode, 2, "validation_error", err.Error(), nil)
+			}
+			result, err := reconcile.NewService(store).ApplyPlan(effective, planID, reconcile.ApplyOptions{Reporter: reporter})
+			if err != nil {
+				if errors.Is(err, reconcile.ErrPlanNotFound) {
+					return a.fail(mode, 3, "not_found", "saved plan not found", nil)
+				}
+				return a.fail(mode, 2, "validation_error", err.Error(), nil)
+			}
+			return a.renderPlanExecutionResult(mode, result)
+		},
+	}
+
+	cmd.Flags().StringVar(&progressMode, "progress", string(progress.ModeAuto), "Progress mode: auto, bar, plain, or off")
+	return cmd
+}
+
+func (a *app) newPlanRetryCommand() *cobra.Command {
+	var only string
+	var progressMode string
+
+	cmd := &cobra.Command{
+		Use:   "retry [plan-id]",
+		Short: "Retry saved ready plan items",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode := outputMode(cmd)
+			if only != "failed" && only != "uncertain" {
+				return a.fail(mode, 2, "validation_error", "plan retry requires --only failed or --only uncertain", nil)
+			}
+
+			effective, store, cleanup, err := a.loadStore(mode)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			planID := ""
+			if len(args) == 1 {
+				planID = args[0]
+			}
+
+			reporter, err := a.progressReporter(progressMode)
+			if err != nil {
+				return a.fail(mode, 2, "validation_error", err.Error(), nil)
+			}
+			result, err := reconcile.NewService(store).RetryPlan(effective, planID, only, reconcile.ApplyOptions{Reporter: reporter})
+			if err != nil {
+				if errors.Is(err, reconcile.ErrPlanNotFound) {
+					return a.fail(mode, 3, "not_found", "saved plan not found", nil)
+				}
+				return a.fail(mode, 2, "validation_error", err.Error(), nil)
+			}
+			return a.renderPlanExecutionResult(mode, result)
+		},
+	}
+
+	cmd.Flags().StringVar(&only, "only", "", "Retry scope: failed or uncertain")
+	cmd.Flags().StringVar(&progressMode, "progress", string(progress.ModeAuto), "Progress mode: auto, bar, plain, or off")
+	return cmd
+}
+
+func (a *app) bootstrapClockifyConfig(ctx context.Context) (*config.ClockifyConfig, error) {
+	return a.bootstrapClockifyConfigFromEnv(ctx, "CLOCKIFY_API_KEY")
+}
+
+func (a *app) currentClockifyUserFromEnv(ctx context.Context, apiKeyEnv string) (*clockifyadapter.User, error) {
+	apiKey := strings.TrimSpace(os.Getenv(apiKeyEnv))
+	if apiKey == "" {
+		return nil, nil
+	}
+
+	client := clockifyadapter.NewClient(apiKey)
+	user, err := client.CurrentUser(ctx)
+	if err != nil {
+		return nil, nil
+	}
+	return &user, nil
+}
+
+func (a *app) bootstrapClockifyConfigFromEnv(ctx context.Context, apiKeyEnv string) (*config.ClockifyConfig, error) {
+	user, err := a.currentClockifyUserFromEnv(ctx, apiKeyEnv)
+	if err != nil || user == nil {
+		return nil, nil
+	}
+
+	workspaceID := user.ActiveWorkspace
+	if workspaceID == "" {
+		workspaceID = user.DefaultWorkspace
+	}
+	if workspaceID == "" || user.ID == "" {
+		return nil, nil
+	}
+
+	return &config.ClockifyConfig{
+		WorkspaceID: workspaceID,
+		UserID:      user.ID,
+		Auth:        config.ClockifyAuthConfig{APIKeyEnv: apiKeyEnv},
+	}, nil
+}
+
+func resolveJiraDataInstanceName(effective config.EffectiveConfig, name string) (string, error) {
+	resolved, _, err := config.ResolveJiraDataInstance(effective, name)
+	return resolved, err
+}
+
+func resolveJiraCloudInstanceName(effective config.EffectiveConfig, name string) (string, error) {
+	resolved, _, err := config.ResolveJiraCloudInstance(effective, name)
+	return resolved, err
+}
+
+func sortedSetKeys(values map[string]struct{}) []string {
+	items := make([]string, 0, len(values))
+	for value := range values {
+		items = append(items, value)
+	}
+	sort.Strings(items)
+	return items
+}
+
+func validateReconcileScope(effective config.EffectiveConfig, adapters []string, instances []string) ([]string, []string, error) {
+	if len(adapters) == 0 && len(instances) == 0 {
+		return nil, nil, errors.New("at least one --adapter or --instance is required")
+	}
+	adapterSet := map[string]struct{}{}
+	for _, adapter := range adapters {
+		switch adapter {
+		case "clockify", "jira-cloud", "jira-data-center":
+			adapterSet[adapter] = struct{}{}
+		default:
+			return nil, nil, errors.New("supported adapters are clockify, jira-cloud, and jira-data-center")
+		}
+	}
+	instanceOwners := map[string]string{}
+	if effective.File.JiraCloud != nil {
+		for name := range effective.File.JiraCloud.Instances {
+			instanceOwners[name] = "jira-cloud"
+		}
+	}
+	if effective.File.JiraData != nil {
+		for name := range effective.File.JiraData.Instances {
+			instanceOwners[name] = "jira-data-center"
+		}
+	}
+	instanceSet := map[string]struct{}{}
+	for _, instance := range instances {
+		owner, ok := instanceOwners[instance]
+		if !ok && instance == config.ClockifyInstanceName {
+			if _, _, err := config.ResolveClockifyInstance(effective, instance); err != nil {
+				return nil, nil, err
+			}
+			owner = "clockify"
+			ok = true
+		}
+		if !ok {
+			return nil, nil, fmt.Errorf("adapter instance %q is not configured", instance)
+		}
+		adapterSet[owner] = struct{}{}
+		instanceSet[instance] = struct{}{}
+	}
+	selectedAdapters := sortedSetKeys(adapterSet)
+	selectedInstances := sortedSetKeys(instanceSet)
+	if _, ok := adapterSet["clockify"]; ok {
+		if _, err := config.ResolveClockifyConfig(effective); err != nil {
+			return nil, nil, err
+		}
+	}
+	if _, ok := adapterSet["jira-cloud"]; ok && effective.File.JiraCloud == nil {
+		return nil, nil, errors.New("jira_cloud config is required")
+	}
+	if _, ok := adapterSet["jira-data-center"]; ok && effective.File.JiraData == nil {
+		return nil, nil, errors.New("jira_data_center config is required")
+	}
+	return selectedAdapters, selectedInstances, nil
+}
+
+func (a *app) loadJiraDataTotalsRows(ctx context.Context, effective config.EffectiveConfig, instanceName string, windowFrom, windowTo time.Time, issuePrefixes []string, excludedIssues []string) ([]reconcilemodel.Row, error) {
+	_, instance, err := config.ResolveJiraDataInstance(effective, instanceName)
+	if err != nil {
+		return nil, err
+	}
+	client := jiradcadapter.NewClient(instance.BaseURL, instance.Auth.Bearer.Token)
+	user, err := client.CurrentUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	jql := fmt.Sprintf("worklogAuthor = currentUser() AND worklogDate >= \"%s\" AND worklogDate <= \"%s\"", windowFrom.Format("2006-01-02"), windowTo.Format("2006-01-02"))
+	issues, err := client.SearchIssues(ctx, jql, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	excluded := toExactSet(excludedIssues)
+	rows := make([]reconcilemodel.Row, 0)
+	for _, issue := range issues {
+		if _, skip := excluded[issue.Key]; skip {
+			continue
+		}
+		worklogItems, err := client.ListIssueWorklogs(ctx, issue.Key)
+		if err != nil {
+			return nil, err
+		}
+		valid, _ := jiradcadapter.NormalizeIssueWorklogs(issue.Key, worklogItems, user, windowFrom, windowTo)
+		for _, row := range valid {
+			if matchesAnyIssuePrefix(row.IssueKey, issuePrefixes) {
+				rows = append(rows, row)
+			}
+		}
+	}
+	return rows, nil
+}
+
+func (a *app) loadJiraCloudTotalsRows(ctx context.Context, effective config.EffectiveConfig, instanceName string, windowFrom, windowTo time.Time, issuePrefixes []string, excludedIssues []string) ([]reconcilemodel.Row, error) {
+	_, instance, err := config.ResolveJiraCloudInstance(effective, instanceName)
+	if err != nil {
+		return nil, err
+	}
+	client := jiracloudadapter.NewClient(instance.BaseURL, instance.Auth.Email, instance.Auth.Token)
+	user, err := client.CurrentUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	jql := fmt.Sprintf("worklogAuthor = currentUser() AND worklogDate >= \"%s\" AND worklogDate <= \"%s\"", windowFrom.Format("2006-01-02"), windowTo.Format("2006-01-02"))
+	issues, err := client.SearchIssues(ctx, jql, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	excluded := toExactSet(excludedIssues)
+	rows := make([]reconcilemodel.Row, 0)
+	for _, issue := range issues {
+		issueKey, issueRef, err := resolveJiraCloudTotalsIssueReference(ctx, client, issue)
+		if err != nil {
+			return nil, err
+		}
+		if _, skip := excluded[issueKey]; skip {
+			continue
+		}
+		worklogItems, err := client.ListIssueWorklogs(ctx, issueRef)
+		if err != nil {
+			return nil, err
+		}
+		valid, _ := jiracloudadapter.NormalizeIssueWorklogs(issueKey, worklogItems, user, windowFrom, windowTo)
+		for _, row := range valid {
+			if matchesAnyIssuePrefix(row.IssueKey, issuePrefixes) {
+				rows = append(rows, row)
+			}
+		}
+	}
+	return rows, nil
+}
+
+func toExactSet(values []string) map[string]struct{} {
+	items := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		items[value] = struct{}{}
+	}
+	return items
+}
+
+func resolveJiraCloudTotalsIssueReference(ctx context.Context, client *jiracloudadapter.Client, issue jiracloudadapter.IssueBrief) (issueKey string, issueRef string, err error) {
+	if issue.Key != "" {
+		return issue.Key, issue.Key, nil
+	}
+	if issue.ID == "" {
+		return "", "", errors.New("jira cloud search result is missing both issue key and issue id")
+	}
+	resolved, err := client.GetIssue(ctx, issue.ID, nil)
+	if err != nil {
+		return "", "", err
+	}
+	if resolved.Key == "" {
+		return "", "", fmt.Errorf("jira cloud issue lookup returned no key for issue id %s", issue.ID)
+	}
+	return resolved.Key, issue.ID, nil
+}
+
+func matchesAnyIssuePrefix(issueKey string, issuePrefixes []string) bool {
+	for _, prefix := range issuePrefixes {
+		if strings.HasPrefix(issueKey, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func parsePlanWindow(cfg config.EffectiveConfig, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string) (time.Time, time.Time, error) {
+	return parsePlanWindowAt(cfg, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, time.Now)
+}
+
+func hasPlanWindowSelection(today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string) bool {
+	return today || yesterday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != ""
+}
+
+func parsePlanWindowAt(cfg config.EffectiveConfig, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, now func() time.Time) (time.Time, time.Time, error) {
+	selectedShortcuts := 0
+	for _, selected := range []bool{today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth} {
+		if selected {
+			selectedShortcuts++
+		}
+	}
+	if selectedShortcuts > 1 {
+		return time.Time{}, time.Time{}, errors.New("today, yesterday, current-week, last-week, current-month, and last-month are mutually exclusive")
+	}
+	if selectedShortcuts > 0 && (from != "" || to != "") {
+		return time.Time{}, time.Time{}, errors.New("today, yesterday, current-week, last-week, current-month, and last-month cannot be combined with from or to")
+	}
+
+	var windowStart time.Time
+	var windowEnd time.Time
+	switch {
+	case today:
+		date := now().In(cfg.Location)
+		windowStart = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, cfg.Location)
+		windowEnd = time.Date(date.Year(), date.Month(), date.Day(), 23, 59, 59, 0, cfg.Location)
+	case yesterday:
+		date := now().In(cfg.Location).AddDate(0, 0, -1)
+		windowStart = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, cfg.Location)
+		windowEnd = time.Date(date.Year(), date.Month(), date.Day(), 23, 59, 59, 0, cfg.Location)
+	case currentWeek:
+		windowStart, windowEnd = planWeekBounds(now().In(cfg.Location), cfg.Location)
+	case lastWeek:
+		windowStart, windowEnd = planWeekBounds(now().In(cfg.Location).AddDate(0, 0, -7), cfg.Location)
+	case currentMonth:
+		windowStart, windowEnd = planMonthBounds(now().In(cfg.Location), cfg.Location)
+	case lastMonth:
+		windowStart, windowEnd = planMonthBounds(now().In(cfg.Location).AddDate(0, -1, 0), cfg.Location)
+	default:
+		if from == "" || to == "" {
+			return time.Time{}, time.Time{}, errors.New("either --from and --to or exactly one of --today/--yesterday/--current-week/--last-week/--current-month/--last-month is required")
+		}
+		startDate, err := parsePlanDateSelector(from, cfg.Location, now)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("--from %w", err)
+		}
+		endDate, err := parsePlanDateSelector(to, cfg.Location, now)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("--to %w", err)
+		}
+		windowStart = time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, cfg.Location)
+		windowEnd = time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 0, cfg.Location)
+	}
+	if windowEnd.Before(windowStart) {
+		windowStart, windowEnd = windowEnd, windowStart
+	}
+	return windowStart.UTC(), windowEnd.UTC(), nil
+}
+
+func parsePlanDateSelector(value string, location *time.Location, now func() time.Time) (time.Time, error) {
+	switch value {
+	case "today":
+		return now().In(location), nil
+	case "yesterday":
+		return now().In(location).AddDate(0, 0, -1), nil
+	case "tomorrow":
+		return now().In(location).AddDate(0, 0, 1), nil
+	}
+
+	if strings.HasSuffix(value, "d") && (strings.HasPrefix(value, "+") || strings.HasPrefix(value, "-")) {
+		offset := 0
+		if _, err := fmt.Sscanf(strings.TrimSuffix(value, "d"), "%d", &offset); err != nil {
+			return time.Time{}, errors.New("must use YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd")
+		}
+		return now().In(location).AddDate(0, 0, offset), nil
+	}
+
+	parsed, err := time.ParseInLocation("2006-01-02", value, location)
+	if err != nil {
+		return time.Time{}, errors.New("must use YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd")
+	}
+	return parsed, nil
+}
+
+func planWeekBounds(date time.Time, location *time.Location) (time.Time, time.Time) {
+	local := date.In(location)
+	daysSinceMonday := (int(local.Weekday()) + 6) % 7
+	startDate := local.AddDate(0, 0, -daysSinceMonday)
+	start := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, location)
+	endDate := startDate.AddDate(0, 0, 6)
+	end := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 0, location)
+	return start, end
+}
+
+func planMonthBounds(date time.Time, location *time.Location) (time.Time, time.Time) {
+	local := date.In(location)
+	start := time.Date(local.Year(), local.Month(), 1, 0, 0, 0, 0, location)
+	nextMonth := start.AddDate(0, 1, 0)
+	end := nextMonth.Add(-time.Second)
+	return start, end
+}
+
+func filterPlanListEntriesByCreatedAt(items []reconcile.ListEntry, windowFrom, windowTo time.Time) []reconcile.ListEntry {
+	filtered := make([]reconcile.ListEntry, 0, len(items))
+	for _, item := range items {
+		if item.CreatedAt.Before(windowFrom) || item.CreatedAt.After(windowTo) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func filterPlanItemsByStatus(items []reconcile.PlanItem, status string) []reconcile.PlanItem {
+	filtered := make([]reconcile.PlanItem, 0, len(items))
+	for _, item := range items {
+		if item.PlanStatus != status {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func planJSON(plan reconcile.Plan) map[string]any {
+	items := make([]map[string]any, 0, len(plan.Items))
+	for _, item := range plan.Items {
+		payload := make([]map[string]any, 0, len(item.Payload))
+		for _, row := range item.Payload {
+			payload = append(payload, map[string]any{
+				"issue_key":        row.IssueKey,
+				"started_at_utc":   row.StartedAtUTC.Format(time.RFC3339),
+				"duration_seconds": row.DurationSeconds,
+				"description":      row.Description,
+				"source_row_id":    emptyToNil(row.SourceRowID),
+			})
+		}
+		items = append(items, map[string]any{
+			"id":                      item.ID,
+			"issue_key":               item.IssueKey,
+			"plan_direction":          item.PlanDirection,
+			"target_adapter_family":   item.TargetAdapterFamily,
+			"target_adapter_instance": emptyToNil(item.TargetAdapterInstance),
+			"target_issue":            item.TargetIssue,
+			"plan_status":             item.PlanStatus,
+			"planned_action":          item.PlannedAction,
+			"comparison_status":       item.ComparisonStatus,
+			"reason_code":             item.ReasonCode,
+			"reason_detail":           item.ReasonDetail,
+			"local_row_count":         item.LocalRowCount,
+			"local_total":             item.LocalTotal,
+			"remote_row_count":        item.RemoteRowCount,
+			"remote_total":            item.RemoteTotal,
+			"inspection_summary":      item.InspectionSummary,
+			"delivery_key":            item.DeliveryKey,
+			"applied_state":           item.AppliedState,
+			"execution_state":         item.ExecutionState,
+			"apply_message":           emptyToNil(item.ApplyMessage),
+			"payload":                 payload,
+		})
+	}
+
+	findings := make([]map[string]any, 0, len(plan.Findings))
+	for _, finding := range plan.Findings {
+		findings = append(findings, map[string]any{
+			"id":            finding.ID,
+			"source_row_id": finding.SourceRowID,
+			"reason_code":   finding.ReasonCode,
+			"reason_detail": finding.ReasonDetail,
+			"payload":       finding.Payload,
+		})
+	}
+
+	return map[string]any{
+		"plan_id":            plan.ID,
+		"plan_direction":     plan.Direction,
+		"adapter_family":     plan.AdapterFamily,
+		"adapter_families":   plan.AdapterFamilies,
+		"target_instances":   plan.TargetInstances,
+		"config_fingerprint": plan.ConfigFingerprint,
+		"window_from_utc":    plan.WindowFromUTC.Format(time.RFC3339),
+		"window_to_utc":      plan.WindowToUTC.Format(time.RFC3339),
+		"created_at":         plan.CreatedAt.Format(time.RFC3339),
+		"aggregate_status":   plan.AggregateStatus,
+		"applied_at":         plan.AppliedAt,
+		"summary":            map[string]any{"total_items": len(plan.Items), "ready_items": countPlanItemsByStatus(plan.Items, "ready"), "skipped_items": countPlanItemsByStatus(plan.Items, "skipped"), "invalid_findings": len(plan.Findings)},
+		"items":              items,
+		"findings":           findings,
+	}
+}
+
+func planListJSON(items []reconcile.ListEntry) []map[string]any {
+	rows := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, map[string]any{
+			"plan_id":          item.ID,
+			"plan_direction":   item.Direction,
+			"adapter_family":   item.AdapterFamily,
+			"adapter_families": item.AdapterFamilies,
+			"target_instances": item.TargetInstances,
+			"created_at":       item.CreatedAt.Format(time.RFC3339),
+			"aggregate_status": item.AggregateStatus,
+			"total_items":      item.TotalItems,
+			"ready_items":      item.ReadyItems,
+			"succeeded_items":  item.SucceededItems,
+		})
+	}
+	return rows
+}
+
+func reconcileNoPlanJSON(result reconcile.ReconcileNoPlanResult) map[string]any {
+	return map[string]any{
+		"plan_created":              false,
+		"reason":                    result.Reason,
+		"adapter_family":            result.AdapterFamily,
+		"adapter_families":          result.AdapterFamilies,
+		"route_profile":             emptyToNil(result.RouteProfile),
+		"window_from_utc":           result.WindowFromUTC.Format(time.RFC3339),
+		"window_to_utc":             result.WindowToUTC.Format(time.RFC3339),
+		"resolved_target_instances": result.ResolvedTargetInstances,
+		"matched_scope_count":       result.MatchedScopeCount,
+		"actionable_scope_count":    result.ActionableScopeCount,
+	}
+}
+
+func renderReconcileNoPlanTable(w io.Writer, result reconcile.ReconcileNoPlanResult) error {
+	return renderTable(w,
+		[]string{"PLAN_CREATED", "REASON", "ADAPTERS", "ROUTE_PROFILE", "WINDOW", "RESOLVED_TARGET_INSTANCES", "MATCHED_SCOPES", "ACTIONABLE_SCOPES"},
+		[][]string{{
+			"false",
+			result.Reason,
+			joinOrDash(result.AdapterFamilies),
+			displayOrDash(result.RouteProfile),
+			formatSavedPlanWindow(result.WindowFromUTC, result.WindowToUTC),
+			joinOrDash(result.ResolvedTargetInstances),
+			fmt.Sprint(result.MatchedScopeCount),
+			fmt.Sprint(result.ActionableScopeCount),
+		}},
+	)
+}
+
+func formatSavedPlanWindow(fromUTC, toUTC time.Time) string {
+	return fromUTC.Format(time.RFC3339) + "..." + toUTC.Format(time.RFC3339)
+}
+
+func countPlanItemsByStatus(items []reconcile.PlanItem, status string) int {
+	count := 0
+	for _, item := range items {
+		if item.PlanStatus == status {
+			count++
+		}
+	}
+	return count
+}
+
+func hasPlanItemsWithStatus(items []reconcile.PlanItem, status string) bool {
+	for _, item := range items {
+		if item.PlanStatus == status {
+			return true
+		}
+	}
+	return false
+}
+
+func joinOrDash(items []string) string {
+	if len(items) == 0 {
+		return "-"
+	}
+	return strings.Join(items, ",")
+}
+
+func displayOrDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+func (a *app) loadStore(mode string) (config.EffectiveConfig, *sqlitestore.Store, func(), error) {
+	effective, err := config.LoadEffective()
+	if err != nil {
+		if errors.Is(err, config.ErrConfigNotFound) {
+			return config.EffectiveConfig{}, nil, nil, a.fail(mode, 2, "validation_error", "config file does not exist", nil)
+		}
+		var validationErr config.ValidationErrors
+		if errors.As(err, &validationErr) {
+			return config.EffectiveConfig{}, nil, nil, a.fail(mode, 2, "validation_error", "config validation failed", validationErr.Issues)
+		}
+		return config.EffectiveConfig{}, nil, nil, a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+	}
+
+	store, err := sqlitestore.OpenExisting(effective.SQLitePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, sqlitestore.ErrSchemaMissing) {
+			return config.EffectiveConfig{}, nil, nil, a.fail(mode, 2, "validation_error", "sqlite store is not initialized; run workledger init", nil)
+		}
+		return config.EffectiveConfig{}, nil, nil, a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+	}
+
+	return effective, store, func() { _ = store.Close() }, nil
+}
+
+func (a *app) loadService(mode string) (config.EffectiveConfig, *worklogs.Service, func(), error) {
+	effective, store, cleanup, err := a.loadStore(mode)
+	if err != nil {
+		return config.EffectiveConfig{}, nil, nil, err
+	}
+	return effective, worklogs.NewService(store), cleanup, nil
+}
+
+func (a *app) handleWorklogError(mode string, cfg config.EffectiveConfig, err error) error {
+	switch {
+	case errors.Is(err, worklogs.ErrNotFound):
+		return a.fail(mode, 3, "not_found", "worklog not found", nil)
+	case errors.Is(err, worklogs.ErrValidation), errors.Is(err, worklogs.ErrConflict):
+		var validationErr worklogs.ValidationError
+		if errors.As(err, &validationErr) {
+			details := any(validationErr.Issues)
+			if validationErr.Conflict != nil {
+				details = validationErr.Conflict
+			}
+			return a.fail(mode, 2, "validation_error", err.Error(), details)
+		}
+		return a.fail(mode, 2, "validation_error", err.Error(), nil)
+	default:
+		return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+	}
+}
+
+func (a *app) handleIssueMetadataError(mode string, err error) error {
+	switch {
+	case errors.Is(err, worklogs.ErrIssueMetadataNotFound):
+		return a.fail(mode, 3, "not_found", "issue metadata not found", nil)
+	case errors.Is(err, worklogs.ErrValidation):
+		var validationErr worklogs.ValidationError
+		if errors.As(err, &validationErr) {
+			return a.fail(mode, 2, "validation_error", err.Error(), validationErr.Issues)
+		}
+		return a.fail(mode, 2, "validation_error", err.Error(), nil)
+	default:
+		return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+	}
+}
+
+func (a *app) handleClockifyError(mode string, err error) error {
+	var requestErr *clockifyadapter.RequestError
+	if errors.As(err, &requestErr) {
+		if requestErr.StatusCode == 401 || requestErr.StatusCode == 403 {
+			return a.fail(mode, 4, "auth_error", err.Error(), nil)
+		}
+		return a.fail(mode, 5, "external_error", err.Error(), nil)
+	}
+	return a.fail(mode, 5, "external_error", err.Error(), nil)
+}
+
+func (a *app) handleJiraDataError(mode string, err error) error {
+	var requestErr *jiradcadapter.RequestError
+	if errors.As(err, &requestErr) {
+		switch requestErr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return a.fail(mode, 4, "auth_error", "jira data center authentication failed", nil)
+		case http.StatusNotFound:
+			return a.fail(mode, 3, "not_found", "jira data center resource not found", nil)
+		default:
+			return a.fail(mode, 5, "remote_error", requestErr.Error(), nil)
+		}
+	}
+	return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+}
+
+func (a *app) handleJiraCloudError(mode string, err error) error {
+	var requestErr *jiracloudadapter.RequestError
+	if errors.As(err, &requestErr) {
+		switch requestErr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return a.fail(mode, 4, "auth_error", "jira cloud authentication failed", nil)
+		case http.StatusNotFound:
+			return a.fail(mode, 3, "not_found", "jira cloud resource not found", nil)
+		default:
+			return a.fail(mode, 5, "remote_error", requestErr.Error(), nil)
+		}
+	}
+	return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+}
+
+func (a *app) handleReconcileAdapterError(mode, adapter string, err error) error {
+	var clockifyErr *clockifyadapter.RequestError
+	if errors.As(err, &clockifyErr) {
+		return a.handleClockifyError(mode, err)
+	}
+	var jiraDataErr *jiradcadapter.RequestError
+	if errors.As(err, &jiraDataErr) {
+		return a.handleJiraDataError(mode, err)
+	}
+	var jiraCloudErr *jiracloudadapter.RequestError
+	if errors.As(err, &jiraCloudErr) {
+		return a.handleJiraCloudError(mode, err)
+	}
+	_ = adapter
+	return a.fail(mode, 2, "validation_error", err.Error(), nil)
+}
+
+func (a *app) renderTotalsJSON(adapter, instance string, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, result totals.Result) error {
+	rawFilters := map[string]any{
+		"adapter":       emptyToNil(adapter),
+		"today":         today,
+		"yesterday":     yesterday,
+		"current_week":  currentWeek,
+		"last_week":     lastWeek,
+		"current_month": currentMonth,
+		"last_month":    lastMonth,
+		"from":          emptyToNil(from),
+		"to":            emptyToNil(to),
+	}
+	effectiveFilters := map[string]any{
+		"adapter":  emptyToNil(adapter),
+		"from":     windowFromUTC.In(cfg.Location).Format(time.RFC3339),
+		"to":       windowToUTC.In(cfg.Location).Format(time.RFC3339),
+		"timezone": cfg.TimezoneName,
+	}
+	if adapter == "jira-data-center" || adapter == "jira-cloud" || adapter == "clockify" {
+		rawFilters["instance"] = emptyToNil(instance)
+		effectiveFilters["instance"] = instance
+	}
+
+	days := make([]map[string]any, 0, len(result.Days))
+	for _, day := range result.Days {
+		days = append(days, map[string]any{
+			"date":                 day.Date,
+			"state":                day.State,
+			"local_total_seconds":  day.LocalTotalSeconds,
+			"remote_total_seconds": day.RemoteTotalSeconds,
+			"delta_seconds":        day.DeltaSeconds,
+		})
+	}
+
+	return a.writeJSON(map[string]any{
+		"filters": map[string]any{
+			"raw":       rawFilters,
+			"effective": effectiveFilters,
+		},
+		"summary": totalsSummaryJSON(result),
+		"days":    days,
+	})
+}
+
+func (a *app) renderAllTotalsJSON(cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, items []totalsCollectionItem) error {
+	rows := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		entry := map[string]any{
+			"adapter":  item.Adapter,
+			"instance": emptyToNil(item.Instance),
+			"from":     windowFromUTC.In(cfg.Location).Format(time.RFC3339),
+			"to":       windowToUTC.In(cfg.Location).Format(time.RFC3339),
+			"timezone": cfg.TimezoneName,
+		}
+		if item.Result != nil {
+			entry["summary"] = totalsSummaryJSON(*item.Result)
+			entry["days"] = totalsDaysJSON(item.Result.Days)
+		} else {
+			entry["status"] = item.Status
+			entry["message"] = item.Message
+		}
+		rows = append(rows, entry)
+	}
+	return a.writeJSON(map[string]any{"items": rows})
+}
+
+func (a *app) renderTotalsTable(adapter, instance string, details bool, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, result totals.Result) error {
+	rows := make([][]string, 0, len(result.Days)+1)
+	if details {
+		for _, day := range result.Days {
+			rows = append(rows, []string{
+				day.Date,
+				humanDuration(day.LocalTotalSeconds),
+				humanDuration(day.RemoteTotalSeconds),
+				signedHumanDuration(day.DeltaSeconds),
+				day.State,
+			})
+		}
+	}
+	rows = append(rows, []string{
+		"TOTAL",
+		humanDuration(result.LocalTotalSeconds),
+		humanDuration(result.RemoteTotalSeconds),
+		signedHumanDuration(result.DeltaSeconds),
+		result.State,
+	})
+	if err := renderTable(a.stdout, []string{"DATE", "LOCAL", "REMOTE", "DELTA", "STATE"}, rows); err != nil {
+		return err
+	}
+	footer := fmt.Sprintf(
+		"\nfrom=%s to=%s timezone=%s",
+		windowFromUTC.In(cfg.Location).Format(time.RFC3339),
+		windowToUTC.In(cfg.Location).Format(time.RFC3339),
+		cfg.TimezoneName,
+	)
+	if adapter != "" {
+		footer = fmt.Sprintf(
+			"\nadapter=%s from=%s to=%s timezone=%s",
+			adapter,
+			windowFromUTC.In(cfg.Location).Format(time.RFC3339),
+			windowToUTC.In(cfg.Location).Format(time.RFC3339),
+			cfg.TimezoneName,
+		)
+		if adapter == "jira-data-center" || adapter == "jira-cloud" || adapter == "clockify" {
+			footer += fmt.Sprintf(" instance=%s", instance)
+		}
+	}
+	footer += fmt.Sprintf(" state=%s\n", result.State)
+	_, err := fmt.Fprint(a.stdout, footer)
+	return err
+}
+
+func (a *app) renderAllTotalsTable(cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, items []totalsCollectionItem) error {
+	rows := make([][]string, 0, len(items))
+	for _, item := range items {
+		instance := firstNonEmpty(item.Display, item.Instance)
+		if item.Adapter == "clockify" {
+			instance = item.Instance
+		}
+		localTotal := ""
+		remoteTotal := ""
+		delta := ""
+		state := ""
+		message := ""
+		if item.Result != nil {
+			localTotal = humanDuration(item.Result.LocalTotalSeconds)
+			remoteTotal = humanDuration(item.Result.RemoteTotalSeconds)
+			delta = signedHumanDuration(item.Result.DeltaSeconds)
+			state = item.Result.State
+		} else if item.LocalResult != nil {
+			localTotal = humanDuration(item.LocalResult.LocalTotalSeconds)
+			state = item.Status
+		} else {
+			state = item.Status
+			message = singleLineTableCell(item.Message)
+		}
+		if item.Result == nil {
+			message = singleLineTableCell(item.Message)
+		}
+		rows = append(rows, []string{
+			item.Adapter,
+			displayOrDash(instance),
+			windowFromUTC.In(cfg.Location).Format(time.RFC3339),
+			windowToUTC.In(cfg.Location).Format(time.RFC3339),
+			cfg.TimezoneName,
+			localTotal,
+			remoteTotal,
+			delta,
+			state,
+			message,
+		})
+	}
+	return renderTable(a.stdout, []string{"ADAPTER", "INSTANCE", "FROM", "TO", "TIMEZONE", "LOCAL", "REMOTE", "DELTA", "STATE", "ERROR"}, rows)
+}
+
+func singleLineTableCell(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func totalsSummaryJSON(result totals.Result) map[string]any {
+	return map[string]any{
+		"state":                         result.State,
+		"local_total_seconds":           result.LocalTotalSeconds,
+		"remote_total_seconds":          result.RemoteTotalSeconds,
+		"delta_seconds":                 result.DeltaSeconds,
+		"running_remote_entry_detected": result.RunningRemoteEntryDetected,
+	}
+}
+
+func totalsDaysJSON(days []totals.DayResult) []map[string]any {
+	items := make([]map[string]any, 0, len(days))
+	for _, day := range days {
+		items = append(items, map[string]any{
+			"date":                 day.Date,
+			"state":                day.State,
+			"local_total_seconds":  day.LocalTotalSeconds,
+			"remote_total_seconds": day.RemoteTotalSeconds,
+			"delta_seconds":        day.DeltaSeconds,
+		})
+	}
+	return items
+}
+
+func (a *app) renderIssueMetadataListJSON(raw worklogs.ListFilters, effective worklogs.EffectiveFilters, items []worklogs.IssueMetadata, location *time.Location) error {
+	payload := map[string]any{
+		"filters": selectorFiltersJSON(raw, effective, location),
+	}
+
+	records := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		records = append(records, issueMetadataRecordJSON(item))
+	}
+	payload["items"] = records
+	payload["total"] = len(records)
+	return a.writeJSON(payload)
+}
+
+func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilters, effective worklogs.EffectiveFilters, active []worklogs.LocalWorklog, deleted []worklogs.Tombstone) error {
+	payload := map[string]any{
+		"filters": map[string]any{
+			"raw": map[string]any{
+				"issue":         emptyToNil(raw.Issue),
+				"today":         raw.Today,
+				"yesterday":     raw.Yesterday,
+				"current_week":  raw.CurrentWeek,
+				"last_week":     raw.LastWeek,
+				"current_month": raw.CurrentMonth,
+				"last_month":    raw.LastMonth,
+				"from":          emptyToNil(raw.From),
+				"to":            emptyToNil(raw.To),
+				"only_deleted":  raw.OnlyDeleted,
+				"fields":        raw.Fields,
+			},
+			"effective": map[string]any{
+				"only_deleted": effective.OnlyDeleted,
+				"fields":       nilIfEmpty(effective.Fields),
+				"timezone":     effective.Timezone,
+			},
+		},
+	}
+	if effective.IssueKey != nil {
+		payload["filters"].(map[string]any)["effective"].(map[string]any)["issue_key"] = *effective.IssueKey
+	}
+	if effective.From != nil {
+		payload["filters"].(map[string]any)["effective"].(map[string]any)["from"] = effective.From.In(cfg.Location).Format(time.RFC3339)
+	}
+	if effective.To != nil {
+		payload["filters"].(map[string]any)["effective"].(map[string]any)["to"] = effective.To.In(cfg.Location).Format(time.RFC3339)
+	}
+	if raw.OnlyDeleted {
+		items := make([]map[string]any, 0, len(deleted))
+		for _, item := range deleted {
+			items = append(items, tombstoneRecordJSON(item))
+		}
+		payload["items"] = items
+		payload["total"] = len(items)
+		return a.writeJSON(payload)
+	}
+
+	items := make([]map[string]any, 0, len(active))
+	for _, item := range active {
+		record := worklogRecordJSON(item, cfg.Location)
+		if len(effective.Fields) > 0 {
+			record = filterRecord(record, effective.Fields)
+		}
+		items = append(items, record)
+	}
+	payload["items"] = items
+	payload["total"] = len(items)
+	return a.writeJSON(payload)
+}
+
+func (a *app) renderSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw worklogs.ListFilters, effective worklogs.EffectiveFilters, normalizedQuery string, active []worklogs.LocalWorklog, deleted []worklogs.Tombstone) error {
+	payload := map[string]any{
+		"filters": map[string]any{
+			"raw": map[string]any{
+				"query":         rawQuery,
+				"issue":         emptyToNil(raw.Issue),
+				"today":         raw.Today,
+				"yesterday":     raw.Yesterday,
+				"current_week":  raw.CurrentWeek,
+				"last_week":     raw.LastWeek,
+				"current_month": raw.CurrentMonth,
+				"last_month":    raw.LastMonth,
+				"from":          emptyToNil(raw.From),
+				"to":            emptyToNil(raw.To),
+				"only_deleted":  raw.OnlyDeleted,
+				"fields":        raw.Fields,
+			},
+			"effective": map[string]any{
+				"query":        normalizedQuery,
+				"only_deleted": effective.OnlyDeleted,
+				"fields":       nilIfEmpty(effective.Fields),
+				"timezone":     effective.Timezone,
+			},
+		},
+	}
+	if effective.IssueKey != nil {
+		payload["filters"].(map[string]any)["effective"].(map[string]any)["issue_key"] = *effective.IssueKey
+	}
+	if effective.From != nil {
+		payload["filters"].(map[string]any)["effective"].(map[string]any)["from"] = effective.From.In(cfg.Location).Format(time.RFC3339)
+	}
+	if effective.To != nil {
+		payload["filters"].(map[string]any)["effective"].(map[string]any)["to"] = effective.To.In(cfg.Location).Format(time.RFC3339)
+	}
+	if raw.OnlyDeleted {
+		items := make([]map[string]any, 0, len(deleted))
+		for _, item := range deleted {
+			items = append(items, tombstoneRecordJSON(item))
+		}
+		payload["items"] = items
+		payload["total"] = len(items)
+		return a.writeJSON(payload)
+	}
+
+	items := make([]map[string]any, 0, len(active))
+	for _, item := range active {
+		record := worklogRecordJSON(item, cfg.Location)
+		if len(effective.Fields) > 0 {
+			record = filterRecord(record, effective.Fields)
+		}
+		items = append(items, record)
+	}
+	payload["items"] = items
+	payload["total"] = len(items)
+	return a.writeJSON(payload)
+}
+
+func (a *app) renderContextJSON(raw worklogs.ContextInput, result worklogs.ContextResult, location *time.Location) error {
+	filters := map[string]any{
+		"raw": map[string]any{
+			"issue":         nilIfEmpty(raw.Issues),
+			"today":         raw.Today,
+			"yesterday":     raw.Yesterday,
+			"current_week":  raw.CurrentWeek,
+			"last_week":     raw.LastWeek,
+			"current_month": raw.CurrentMonth,
+			"last_month":    raw.LastMonth,
+			"from":          emptyToNil(raw.From),
+			"to":            emptyToNil(raw.To),
+			"day_start":     emptyToNil(raw.DayStart),
+			"day_end":       emptyToNil(raw.DayEnd),
+			"lunch":         emptyToNil(raw.Lunch),
+			"no_lunch":      raw.NoLunch,
+		},
+		"effective": map[string]any{
+			"timezone": result.Filters.Timezone,
+		},
+	}
+	if result.Filters.From != nil {
+		filters["effective"].(map[string]any)["from"] = result.Filters.From.In(location).Format(time.RFC3339)
+	}
+	if result.Filters.To != nil {
+		filters["effective"].(map[string]any)["to"] = result.Filters.To.In(location).Format(time.RFC3339)
+	}
+
+	planningIssues := make([]map[string]any, 0, len(result.Planning.Issues))
+	for _, item := range result.Planning.Issues {
+		planningIssues = append(planningIssues, map[string]any{
+			"issue_key":            item.IssueKey,
+			"max_estimate_seconds": int64PtrToAny(item.MaxEstimateSeconds),
+		})
+	}
+
+	days := make([]map[string]any, 0, len(result.Days))
+	for _, day := range result.Days {
+		dayWorklogs := make([]map[string]any, 0, len(day.Worklogs))
+		for _, worklog := range day.Worklogs {
+			dayWorklogs = append(dayWorklogs, worklogRecordJSON(worklog, location))
+		}
+		freeSlots := make([]map[string]any, 0, len(day.FreeSlots))
+		for _, slot := range day.FreeSlots {
+			freeSlots = append(freeSlots, map[string]any{
+				"start":            slot.Start.Format(time.RFC3339),
+				"end":              slot.End.Format(time.RFC3339),
+				"duration_seconds": slot.DurationSeconds,
+			})
+		}
+		collisions := make([]map[string]any, 0, len(day.Collisions))
+		for _, collision := range day.Collisions {
+			collisions = append(collisions, map[string]any{
+				"start":       collision.Start.Format(time.RFC3339),
+				"end":         collision.End.Format(time.RFC3339),
+				"worklog_ids": collision.WorklogIDs,
+			})
+		}
+		days = append(days, map[string]any{
+			"date":                day.Date,
+			"worklogs":            dayWorklogs,
+			"booked_seconds":      day.BookedSeconds,
+			"until_quota_seconds": day.UntilQuotaSeconds,
+			"free_slots":          freeSlots,
+			"collisions":          collisions,
+		})
+	}
+
+	settings := map[string]any{
+		"timezone":                    result.Settings.Timezone,
+		"day_start":                   result.Settings.DayStart,
+		"day_end":                     result.Settings.DayEnd,
+		"daily_minimum_quota_seconds": result.Settings.DailyMinimumQuotaSeconds,
+		"lunch":                       nil,
+	}
+	if result.Settings.Lunch != nil {
+		settings["lunch"] = map[string]any{
+			"start": result.Settings.Lunch.Start,
+			"end":   result.Settings.Lunch.End,
+		}
+	}
+
+	return a.writeJSON(map[string]any{
+		"filters":  filters,
+		"settings": settings,
+		"planning": map[string]any{
+			"issue_order":              result.Planning.IssueOrder,
+			"issues":                   planningIssues,
+			"minimum_duration_seconds": result.Planning.MinimumDurationSeconds,
+			"payload_contract":         result.Planning.PayloadContract,
+			"slot_order":               result.Planning.SlotOrder,
+		},
+		"summary": map[string]any{
+			"day_count":           result.Summary.DayCount,
+			"worklog_count":       result.Summary.WorklogCount,
+			"booked_seconds":      result.Summary.BookedSeconds,
+			"until_quota_seconds": result.Summary.UntilQuotaSeconds,
+			"collision_count":     result.Summary.CollisionCount,
+		},
+		"days": days,
+	})
+}
+
+func (a *app) renderDeleteBatchJSON(raw worklogs.ListFilters, result worklogs.DeleteBatchResult, location *time.Location) error {
+	filters := selectorFiltersJSON(raw, result.Filters, location)
+	if result.DryRun {
+		items := make([]map[string]any, 0, len(result.Items))
+		for _, item := range result.Items {
+			record := worklogRecordJSON(item, location)
+			record["delete_preview"] = true
+			items = append(items, record)
+		}
+		return a.writeJSON(map[string]any{
+			"filters":     filters,
+			"dry_run":     true,
+			"hard_delete": result.HardDelete,
+			"matched":     len(items),
+			"items":       items,
+		})
+	}
+
+	items := make([]map[string]any, 0, len(result.Deleted))
+	for _, id := range result.Deleted {
+		items = append(items, map[string]any{"id": id})
+	}
+	return a.writeJSON(map[string]any{
+		"filters":     filters,
+		"dry_run":     false,
+		"hard_delete": result.HardDelete,
+		"deleted":     len(result.Deleted),
+		"items":       items,
+	})
+}
+
+func (a *app) renderRestoreBatchJSON(raw worklogs.ListFilters, result worklogs.RestoreBatchResult, location *time.Location) error {
+	filters := selectorFiltersJSON(raw, result.Filters, location)
+	if result.DryRun {
+		items := make([]map[string]any, 0, len(result.Items))
+		for _, item := range result.Items {
+			record := worklogRecordJSON(item.Record, location)
+			record["deleted_at"] = item.Tombstone.DeletedAt.UTC().Format(time.RFC3339)
+			record["restore_preview"] = true
+			items = append(items, record)
+		}
+		return a.writeJSON(map[string]any{
+			"filters": filters,
+			"dry_run": true,
+			"matched": len(items),
+			"items":   items,
+		})
+	}
+
+	items := make([]map[string]any, 0, len(result.Restored))
+	for _, id := range result.Restored {
+		items = append(items, map[string]any{"id": id})
+	}
+	return a.writeJSON(map[string]any{
+		"filters":  filters,
+		"dry_run":  false,
+		"restored": len(result.Restored),
+		"items":    items,
+	})
+}
+
+func selectorFiltersJSON(raw worklogs.ListFilters, effective worklogs.EffectiveFilters, location *time.Location) map[string]any {
+	filters := map[string]any{
+		"raw": map[string]any{
+			"issue":         emptyToNil(raw.Issue),
+			"today":         raw.Today,
+			"yesterday":     raw.Yesterday,
+			"current_week":  raw.CurrentWeek,
+			"last_week":     raw.LastWeek,
+			"current_month": raw.CurrentMonth,
+			"last_month":    raw.LastMonth,
+			"from":          emptyToNil(raw.From),
+			"to":            emptyToNil(raw.To),
+		},
+		"effective": map[string]any{},
+	}
+	if effective.IssueKey != nil {
+		filters["effective"].(map[string]any)["issue_key"] = *effective.IssueKey
+	}
+	if effective.From != nil {
+		filters["effective"].(map[string]any)["from"] = effective.From.In(location).Format(time.RFC3339)
+	}
+	if effective.To != nil {
+		filters["effective"].(map[string]any)["to"] = effective.To.In(location).Format(time.RFC3339)
+	}
+	filters["effective"].(map[string]any)["timezone"] = effective.Timezone
+	return filters
+}
+
+func (a *app) renderShiftJSON(raw worklogs.ListFilters, result worklogs.ShiftResult, location *time.Location) error {
+	filters := map[string]any{
+		"raw": map[string]any{
+			"issue":         emptyToNil(raw.Issue),
+			"today":         raw.Today,
+			"yesterday":     raw.Yesterday,
+			"current_week":  raw.CurrentWeek,
+			"last_week":     raw.LastWeek,
+			"current_month": raw.CurrentMonth,
+			"last_month":    raw.LastMonth,
+			"from":          emptyToNil(raw.From),
+			"to":            emptyToNil(raw.To),
+		},
+		"effective": map[string]any{
+			"timezone": result.Filters.Timezone,
+		},
+	}
+	if result.Filters.IssueKey != nil {
+		filters["effective"].(map[string]any)["issue_key"] = *result.Filters.IssueKey
+	}
+	if result.Filters.From != nil {
+		filters["effective"].(map[string]any)["from"] = result.Filters.From.In(location).Format(time.RFC3339)
+	}
+	if result.Filters.To != nil {
+		filters["effective"].(map[string]any)["to"] = result.Filters.To.In(location).Format(time.RFC3339)
+	}
+
+	payload := map[string]any{
+		"filters":       filters,
+		"dry_run":       result.DryRun,
+		"delta_seconds": result.DeltaSeconds,
+		"matched":       result.Matched,
+	}
+	if result.DryRun {
+		items := make([]map[string]any, 0, len(result.PreviewItems))
+		for _, item := range result.PreviewItems {
+			items = append(items, map[string]any{
+				"id":                    item.ID,
+				"issue_key":             item.IssueKey,
+				"started_at_before":     item.StartedAtBefore.Format(time.RFC3339),
+				"started_at_after":      item.StartedAtAfter.Format(time.RFC3339),
+				"started_at_utc_before": item.StartedAtUTCBefore.Format(time.RFC3339),
+				"started_at_utc_after":  item.StartedAtUTCAfter.Format(time.RFC3339),
+				"duration_seconds":      item.DurationSeconds,
+				"description":           item.Description,
+			})
+		}
+		payload["items"] = items
+		return a.writeJSON(payload)
+	}
+
+	items := make([]map[string]any, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, worklogRecordJSON(item, location))
+	}
+	payload["items"] = items
+	return a.writeJSON(payload)
+}
+
+func (a *app) renderApplyJSON(result worklogs.ApplyResult, location *time.Location) error {
+	items := make([]map[string]any, 0, len(result.Items))
+	for _, item := range result.Items {
+		entry := map[string]any{
+			"op":     item.Op,
+			"index":  item.Index,
+			"id":     nil,
+			"record": worklogRecordJSON(item.Record, location),
+		}
+		if item.ID != nil {
+			entry["id"] = *item.ID
+		}
+		items = append(items, entry)
+	}
+
+	return a.writeJSON(map[string]any{
+		"dry_run": result.DryRun,
+		"summary": map[string]any{
+			"add_count": result.Adds,
+		},
+		"items": items,
+	})
+}
+
+func (a *app) renderPlanExecutionResult(mode string, result reconcile.ApplyResult) error {
+	if mode == "json" {
+		payload := map[string]any{
+			"plan_id":       result.PlanID,
+			"applied_count": result.AppliedCount,
+			"skipped_count": result.SkippedCount,
+			"failed_count":  result.FailedCount,
+			"mixed_result":  result.MixedResult,
+			"noop":          result.NoOp,
+		}
+		if result.RetryScope != "" {
+			payload["retry_scope"] = result.RetryScope
+		}
+		if err := a.writeJSON(payload); err != nil {
+			return err
+		}
+	} else {
+		if result.RetryScope != "" {
+			_, _ = fmt.Fprintf(a.stdout, "plan_id=%s retry_scope=%s applied=%d failed=%d skipped=%d mixed_result=%t noop=%t\n", result.PlanID, result.RetryScope, result.AppliedCount, result.FailedCount, result.SkippedCount, result.MixedResult, result.NoOp)
+		} else {
+			_, _ = fmt.Fprintf(a.stdout, "plan_id=%s applied=%d failed=%d skipped=%d mixed_result=%t noop=%t\n", result.PlanID, result.AppliedCount, result.FailedCount, result.SkippedCount, result.MixedResult, result.NoOp)
+		}
+	}
+
+	switch {
+	case result.MixedResult:
+		return exitError{code: 6}
+	case result.FailedCount > 0:
+		return exitError{code: 1}
+	default:
+		return nil
+	}
+}
+
+func (a *app) fail(mode string, code int, errorCode, message string, details any) error {
+	if mode == "json" {
+		_ = a.writeJSON(map[string]any{
+			"error": map[string]any{
+				"code":    errorCode,
+				"message": message,
+				"details": detailsOrEmpty(details),
+			},
+		})
+	} else {
+		_, _ = fmt.Fprintln(a.stdout, message)
+	}
+	return exitError{code: code}
+}
+
+func (a *app) failUnrecoverableSQLiteInit(mode, sqlitePath string) error {
+	message := "Local SQLite store is corrupt or incompatible and cannot be repaired additively."
+	next := "Next step: inspect, replace, or restore the SQLite file, then rerun workledger init."
+
+	_, _ = fmt.Fprintf(a.stderr, "%s\nsqlite_path: %s\n%s\n", message, sqlitePath, next)
+	if mode == "json" {
+		_ = a.writeJSON(map[string]any{
+			"reason":      "sqlite_unrecoverable",
+			"message":     message,
+			"sqlite_path": sqlitePath,
+		})
+	}
+	return exitError{code: 1}
+}
+
+func (a *app) writeJSON(value any) error {
+	encoder := json.NewEncoder(a.stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(value)
+}
+
+func outputMode(cmd *cobra.Command) string {
+	value, _ := cmd.Flags().GetString("output")
+	return config.DetectOutputMode(value)
+}
+
+func (a *app) progressReporter(raw string) (progress.Reporter, error) {
+	return progressReporterForMode(progress.Mode(raw), isTTYWriter(a.stderr), a.stderr)
+}
+
+func progressReporterForMode(mode progress.Mode, isTTY bool, w io.Writer) (progress.Reporter, error) {
+	switch mode {
+	case progress.ModeAuto:
+		if isTTY {
+			return progress.NewTTYReporter(w), nil
+		}
+		return progress.NewNoopReporter(), nil
+	case progress.ModeBar:
+		if isTTY {
+			return progress.NewTTYReporter(w), nil
+		}
+		return progress.NewPlainReporter(w), nil
+	case progress.ModePlain:
+		return progress.NewPlainReporter(w), nil
+	case progress.ModeOff:
+		return progress.NewNoopReporter(), nil
+	default:
+		return nil, fmt.Errorf("progress must be one of auto, bar, plain, or off")
+	}
+}
+
+type fdWriter interface {
+	Fd() uintptr
+}
+
+func isTTYWriter(w io.Writer) bool {
+	fd, ok := w.(fdWriter)
+	if !ok {
+		return false
+	}
+	return isatty.IsTerminal(fd.Fd()) || isatty.IsCygwinTerminal(fd.Fd())
+}
+
+func splitFields(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	fields := make([]string, 0, len(parts))
+	for _, part := range parts {
+		fields = append(fields, strings.TrimSpace(part))
+	}
+	return fields
+}
+
+func hasSelector(raw worklogs.ListFilters) bool {
+	return raw.Today || raw.Yesterday || raw.CurrentWeek || raw.LastWeek || raw.CurrentMonth || raw.LastMonth || raw.From != "" || raw.To != ""
+}
+
+func worklogRecordJSON(item worklogs.LocalWorklog, location *time.Location) map[string]any {
+	return map[string]any{
+		"id":               item.ID,
+		"issue_key":        item.IssueKey,
+		"started_at":       item.StartedAtUTC.In(location).Format(time.RFC3339),
+		"started_at_utc":   item.StartedAtUTC.UTC().Format(time.RFC3339),
+		"duration_seconds": item.DurationSeconds,
+		"description":      item.Description,
+	}
+}
+
+func tombstoneRecordJSON(item worklogs.Tombstone) map[string]any {
+	return map[string]any{
+		"id":         item.ID,
+		"issue_key":  item.IssueKey,
+		"deleted_at": item.DeletedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func filterRecord(record map[string]any, fields []string) map[string]any {
+	filtered := make(map[string]any, len(fields))
+	for _, field := range fields {
+		filtered[field] = record[field]
+	}
+	return filtered
+}
+
+func issueMetadataRecordJSON(item worklogs.IssueMetadata) map[string]any {
+	return map[string]any{
+		"issue_key":               item.IssueKey,
+		"max_estimate_seconds":    int64PtrToAny(item.MaxEstimateSeconds),
+		"source_adapter_family":   item.SourceAdapterFamily,
+		"source_adapter_instance": item.SourceAdapterInst,
+		"refreshed_at":            item.RefreshedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func activeRows(items []worklogs.LocalWorklog, location *time.Location, fields []string, descriptionMaxWidth int) [][]string {
+	rows := make([][]string, 0, len(items))
+	for _, item := range items {
+		record := worklogRecordJSON(item, location)
+		row := make([]string, 0, len(fields))
+		for _, field := range fields {
+			row = append(row, formatActiveRowValue(field, record[field], descriptionMaxWidth))
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func formatActiveRowValue(field string, value any, descriptionMaxWidth int) string {
+	if value == nil {
+		return ""
+	}
+
+	formatted := fmt.Sprint(value)
+	if field == "description" && descriptionMaxWidth > 0 && len(formatted) > descriptionMaxWidth {
+		return formatted[:descriptionMaxWidth-3] + "..."
+	}
+
+	return formatted
+}
+
+func shiftPreviewRows(items []worklogs.ShiftPreviewItem) [][]string {
+	rows := make([][]string, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, []string{
+			item.ID,
+			item.IssueKey,
+			item.StartedAtBefore.Format(time.RFC3339),
+			item.StartedAtAfter.Format(time.RFC3339),
+			fmt.Sprint(item.DurationSeconds),
+			item.Description,
+		})
+	}
+	return rows
+}
+
+func deletedRows(items []worklogs.Tombstone) [][]string {
+	rows := make([][]string, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, []string{item.ID, item.IssueKey, item.DeletedAt.UTC().Format(time.RFC3339)})
+	}
+	return rows
+}
+
+func deleteResultRows(items []worklogs.DeleteResult) [][]string {
+	rows := make([][]string, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, []string{
+			item.ID,
+			item.IssueKey,
+			item.DeletedAt.UTC().Format(time.RFC3339),
+			strconv.FormatBool(item.HardDelete),
+		})
+	}
+	return rows
+}
+
+func restorePreviewRows(items []worklogs.RestorePreviewItem, location *time.Location) [][]string {
+	rows := make([][]string, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, []string{
+			item.Record.ID,
+			item.Record.IssueKey,
+			item.Record.StartedAtUTC.In(location).Format(time.RFC3339),
+			fmt.Sprint(item.Record.DurationSeconds),
+			item.Record.Description,
+			item.Tombstone.DeletedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return rows
+}
+
+func tableHeaders(fields []string) []string {
+	headers := make([]string, 0, len(fields))
+	for _, field := range fields {
+		switch field {
+		case "id":
+			headers = append(headers, "ID")
+		case "issue_key":
+			headers = append(headers, "ISSUE")
+		case "started_at":
+			headers = append(headers, "STARTED")
+		case "started_at_utc":
+			headers = append(headers, "STARTED_AT_UTC")
+		case "duration_seconds":
+			headers = append(headers, "DURATION")
+		case "description":
+			headers = append(headers, "DESCRIPTION")
+		case "deleted_at":
+			headers = append(headers, "DELETED")
+		}
+	}
+	return headers
+}
+
+func renderTable(w io.Writer, headers []string, rows [][]string) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, strings.Join(headers, "\t"))
+	for _, row := range rows {
+		_, _ = fmt.Fprintln(tw, strings.Join(row, "\t"))
+	}
+	return tw.Flush()
+}
+
+func renderListTotalsFooter(w io.Writer, count int, durationSeconds int, label string) error {
+	_, err := fmt.Fprintf(w, "\nTotals: %d %s, %s\n", count, label, humanDuration(durationSeconds))
+	return err
+}
+
+func sumActiveDurationSeconds(items []worklogs.LocalWorklog) int {
+	total := 0
+	for _, item := range items {
+		total += item.DurationSeconds
+	}
+	return total
+}
+
+func sumDeletedDurationSeconds(items []worklogs.Tombstone) int {
+	total := 0
+	for _, item := range items {
+		total += item.DurationSeconds
+	}
+	return total
+}
+
+func humanDuration(durationSeconds int) string {
+	if durationSeconds == 0 {
+		return "0m"
+	}
+
+	remaining := durationSeconds
+	parts := make([]string, 0, 3)
+
+	hours := remaining / 3600
+	if hours > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", hours))
+		remaining %= 3600
+	}
+
+	minutes := remaining / 60
+	if minutes > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", minutes))
+		remaining %= 60
+	}
+
+	if remaining > 0 {
+		parts = append(parts, fmt.Sprintf("%ds", remaining))
+	}
+
+	return strings.Join(parts, " ")
+}
+
+func signedHumanDuration(durationSeconds int) string {
+	if durationSeconds < 0 {
+		return "-" + humanDuration(-durationSeconds)
+	}
+	return humanDuration(durationSeconds)
+}
+
+func emptyToNil(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func nilIfEmpty(items []string) any {
+	if len(items) == 0 {
+		return nil
+	}
+	return items
+}
+
+func detailsOrEmpty(value any) any {
+	if value == nil {
+		return []any{}
+	}
+	return value
+}
+
+func issueKeys(items []worklogs.LocalWorklog) []string {
+	keys := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if _, ok := seen[item.IssueKey]; ok {
+			continue
+		}
+		seen[item.IssueKey] = struct{}{}
+		keys = append(keys, item.IssueKey)
+	}
+	return keys
+}
+
+func filterIssueKeysByPrefixes(issueKeys, issuePrefixes []string) []string {
+	if len(issuePrefixes) == 0 {
+		return issueKeys
+	}
+	filtered := make([]string, 0, len(issueKeys))
+	for _, issueKey := range issueKeys {
+		if matchesAnyIssuePrefix(issueKey, issuePrefixes) {
+			filtered = append(filtered, issueKey)
+		}
+	}
+	return filtered
+}
+
+func issueMetadataRefreshRows(items []map[string]any) [][]string {
+	rows := make([][]string, 0, len(items))
+	for _, item := range items {
+		value := ""
+		if item["max_estimate_seconds"] != nil {
+			value = fmt.Sprint(item["max_estimate_seconds"])
+		}
+		rows = append(rows, []string{fmt.Sprint(item["issue_key"]), value})
+	}
+	return rows
+}
+
+func issueMetadataRows(items []worklogs.IssueMetadata) [][]string {
+	rows := make([][]string, 0, len(items))
+	for _, item := range items {
+		value := ""
+		if item.MaxEstimateSeconds != nil {
+			value = fmt.Sprint(*item.MaxEstimateSeconds)
+		}
+		rows = append(rows, []string{
+			item.IssueKey,
+			value,
+			item.SourceAdapterFamily,
+			item.SourceAdapterInst,
+			item.RefreshedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return rows
+}
+
+func int64PtrToAny(value *int64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func contextRows(result worklogs.ContextResult) [][]string {
+	rows := make([][]string, 0, len(result.Days))
+	for _, day := range result.Days {
+		rows = append(rows, []string{
+			day.Date,
+			fmt.Sprint(len(day.Worklogs)),
+			fmt.Sprint(day.BookedSeconds),
+			fmt.Sprint(day.UntilQuotaSeconds),
+			fmt.Sprint(len(day.Collisions)),
+		})
+	}
+	return rows
+}
