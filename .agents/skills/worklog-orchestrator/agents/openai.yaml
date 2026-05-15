@@ -1,0 +1,4 @@
+interface:
+  display_name: "Worklog Orchestrator"
+  short_description: "Bridge coding-agent evidence with the workledger CLI"
+  default_prompt: "Use $worklog-orchestrator to inspect workledger state, draft local worklogs from coding-session evidence, or operate setup, totals, and reconcile-plan workflows."

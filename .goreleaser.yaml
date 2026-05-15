@@ -1,0 +1,34 @@
+version: 2
+
+project_name: workledger
+
+builds:
+  - id: workledger
+    main: ./cmd/workledger
+    binary: workledger
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/solitus0/workledger/internal/cli.Version={{ .Version }}
+
+archives:
+  - id: workledger
+    ids:
+      - workledger
+    formats:
+      - tar.gz
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-devel"
+
+release:
+  github:
+    owner: solitus0
+    name: workledger

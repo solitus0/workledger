@@ -1,0 +1,5 @@
+interface:
+  display_name: Specs Organizer
+  short_description: Flatten messy specs into functional and non-functional Markdown requirements.
+  icon: 🗂️
+  accent_color: '#4f46e5'

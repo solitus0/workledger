@@ -1,0 +1,626 @@
+# Non-Functional Requirements
+
+Status: Draft
+
+Rule format:
+- [ ] NFR-000: Single auditable non-functional rule.
+
+Placement rule:
+- Add new requirements under the most specific existing group.
+- Create a new group only when no existing group fits.
+- Do not duplicate a rule across groups.
+
+## Storage
+- [ ] NFR-001: YAML shall be the source of truth for operator-managed configuration.
+- [ ] NFR-002: SQLite shall be the source of truth for canonical local worklogs.
+- [ ] NFR-003: SQLite shall persist active local worklogs.
+- [ ] NFR-004: SQLite shall persist tombstones for deleted local worklogs.
+- [ ] NFR-005: Saved plans, delivery attempts, audit events, issue metadata, and adapter runtime state shall be stored only in the additive storage model.
+- [ ] NFR-006: Persisted table and column names shall use `snake_case`.
+- [ ] NFR-007: The local `worklogs` table shall include `id`, `issue_key`, `started_at_utc`, `duration_seconds`, `description`, `created_at`, and `updated_at`.
+- [ ] NFR-008: The local `worklog_tombstones` table shall include `worklog_id`, `issue_key`, `started_at_utc`, `duration_seconds`, `description`, and `deleted_at`.
+- [ ] NFR-009: The SQLite schema shall define a unique index on `worklogs(id)`.
+- [ ] NFR-010: The SQLite schema shall define an index on `worklogs(issue_key, started_at_utc)`.
+- [ ] NFR-011: The SQLite schema shall define an index on `worklogs(started_at_utc)`.
+- [ ] NFR-012: The SQLite schema shall define a unique index on `worklog_tombstones(worklog_id)`.
+- [ ] NFR-013: The SQLite schema shall define an index on `worklog_tombstones(issue_key, started_at_utc)`.
+- [ ] NFR-014: The SQLite schema shall define an index on `worklog_tombstones(deleted_at)`.
+- [ ] NFR-015: Additive storage shall use `issue_metadata`, `saved_plans`, `saved_plan_items`, `delivery_attempts`, and `audit_events` tables.
+- [ ] NFR-016: The `issue_metadata` table shall include `issue_key`, `max_estimate_seconds`, `source_adapter_family`, `source_adapter_instance`, and `refreshed_at`.
+- [ ] NFR-017: The `saved_plans` table shall include `id`, `created_at`, `plan_direction`, `adapter_family`, `config_fingerprint`, `window_from_utc`, `window_to_utc`, `aggregate_status`, and `applied_at`.
+- [ ] NFR-018: The `saved_plan_items` table shall include `id`, `plan_id`, `issue_key`, `target_issue`, `route_profile`, `plan_direction`, `target_adapter_family`, `target_adapter_instance`, `window_from_utc`, `window_to_utc`, `plan_status`, `planned_action`, `comparison_status`, `reason_code`, `reason_detail`, `payload_json`, `inspection_summary_json`, `delivery_key`, `content_hash`, `local_row_count`, `local_total_seconds`, `remote_row_count`, `remote_total_seconds`, `applied_state`, `applied_at`, and `apply_message`.
+- [ ] NFR-019: The `delivery_attempts` table shall include `id`, `plan_id`, `plan_item_id`, `attempt_state`, `message`, and `created_at`.
+- [ ] NFR-020: The `audit_events` table shall include `id`, `event_type`, `entity_type`, `entity_id`, `created_at`, and `payload_json`.
+- [ ] NFR-021: Additive storage shall define a unique index on `issue_metadata(issue_key)`.
+- [ ] NFR-022: Additive storage shall define an index on `issue_metadata(refreshed_at)`.
+- [ ] NFR-023: Additive storage shall define an index on `saved_plans(created_at)`.
+- [ ] NFR-024: Additive storage shall define an index on `saved_plan_items(plan_id)`.
+- [ ] NFR-025: Additive storage shall define an index on `saved_plan_items(issue_key, window_from_utc, window_to_utc)`.
+- [ ] NFR-026: Additive storage shall define an index on `saved_plan_items(target_adapter_family, target_adapter_instance, target_issue)`.
+- [ ] NFR-027: Additive storage shall define an index on `saved_plan_items(delivery_key)`.
+- [ ] NFR-028: Additive storage shall define an index on `delivery_attempts(plan_item_id, created_at)`.
+- [ ] NFR-029: Additive storage shall define an index on `delivery_attempts(attempt_state, created_at)`.
+- [ ] NFR-030: Additive storage shall define an index on `audit_events(created_at)`.
+- [ ] NFR-031: Scope payload rows and inspection summaries shall be stored on `saved_plan_items`.
+- [ ] NFR-032: Scope payload rows and inspection summaries shall not be split into extra child tables in the first implementation.
+- [ ] NFR-033: Mutable adapter instance records shall not be persisted in SQLite.
+- [ ] NFR-034: Mutable route records shall not be persisted in SQLite.
+- [ ] NFR-035: Background job state shall not be persisted in SQLite.
+- [ ] NFR-036: Distributed worker state shall not be persisted in SQLite.
+- [ ] NFR-037: A mutable `execution_state` column shall not be stored on saved plan items when current state can be derived from attempt history.
+
+## Identity
+- [ ] NFR-038: Local worklog IDs shall be opaque UUID strings generated locally by the CLI.
+- [ ] NFR-039: The operator shall not supply or override local worklog `id` values.
+- [ ] NFR-040: The CLI shall not expose SQLite row IDs.
+- [ ] NFR-041: The CLI shall not depend on SQLite row IDs.
+- [ ] NFR-042: `worklogs.id` shall be the canonical local worklog identity for active rows.
+- [ ] NFR-043: `worklog_tombstones.worklog_id` shall preserve the deleted local worklog identity.
+- [ ] NFR-044: Remote worklog identifiers shall not be persisted as canonical local identity.
+- [ ] NFR-045: Remote worklog identifiers observed during adapter reads shall be transient execution handles only.
+- [ ] NFR-046: Remote segmentation shall not define local worklog identity when the same issue/window allocation is observed again.
+- [ ] NFR-047: Adapter target identity shall use adapter family plus configured target name from YAML.
+- [ ] NFR-048: `target_adapter_instance` shall store the configured YAML target name.
+- [ ] NFR-049: Numeric target IDs shall not be invented for adapter instances.
+- [ ] NFR-050: Persisted adapter family values shall use YAML `snake_case` form such as `jira_cloud`, `jira_data_center`, and `clockify`.
+- [ ] NFR-051: CLI `--adapter` values such as `jira-cloud` shall normalize to persisted YAML form before store access.
+
+## Configuration
+- [ ] NFR-052: The config path shall resolve to `~/.config/workledger/config.yaml`.
+- [ ] NFR-053: `storage.sqlite_path` shall be present and non-empty.
+- [ ] NFR-054: `storage.sqlite_path` may use `~`.
+- [ ] NFR-055: `storage.sqlite_path` shall resolve to a valid absolute local path after expansion.
+- [ ] NFR-056: The resolved SQLite path shall be usable for local SQLite operations.
+- [ ] NFR-057: The resolved SQLite path parent directory shall be writable.
+- [ ] NFR-058: `worklogs.minimum_duration_seconds` and `worklogs.daily_minimum_quota_seconds`, when present, shall be positive whole numbers of seconds.
+- [ ] NFR-059: The effective local worklog minimum duration shall default to `900` when `worklogs.minimum_duration_seconds` is absent, the effective daily minimum quota shall default to `28800` when `worklogs.daily_minimum_quota_seconds` is absent, and the effective default lunch shall default to `12:00-13:00` when `worklogs.daily_lunch` is absent.
+- [ ] NFR-059a: `worklogs.daily_lunch`, when present, shall use `HH:MM-HH:MM` and define a positive interval.
+- [ ] NFR-060: `local_timezone`, when present, shall be a valid timezone.
+- [ ] NFR-061: Local timestamp resolution and date selection shall fall back to the system local timezone when `local_timezone` is absent.
+- [ ] NFR-062: `default_output`, when present, shall be `table` or `json`.
+- [ ] NFR-063: The output mode precedence shall be command `--output`, then config `default_output`, then built-in fallback `table`.
+- [ ] NFR-064: Only supported sections and keys shall be accepted in config validation.
+- [ ] NFR-065: Unsupported top-level sections shall be rejected until explicitly supported.
+- [ ] NFR-066: Unknown keys inside known config sections shall be rejected.
+- [ ] NFR-067: Optional `jira_cloud`, `jira_data_center`, and `clockify` sections shall be validated independently when present.
+- [ ] NFR-068: Optional adapter sections shall fail validation on unknown keys.
+- [ ] NFR-069: Optional adapter sections shall fail validation on inline secret keys.
+- [ ] NFR-070: Optional adapter sections shall fail validation on missing required auth env-reference fields.
+- [ ] NFR-071: Referenced adapter env vars may be unset during generic config validation when the adapter block is structurally valid.
+- [ ] NFR-072: Adapter env var values shall be validated when the selected adapter is used.
+- [ ] NFR-073: Adapter secrets shall be referenced by env-variable-name fields such as `token_env` and `api_key_env`.
+- [ ] NFR-074: Inline secret values such as `token` and `api_key` shall be invalid config.
+- [ ] NFR-075: Adapter secret references shall stay local-only.
+- [ ] NFR-076: Adapter secret references shall not be rewritten by the CLI.
+- [ ] NFR-077: Configured adapter `base_url` values shall trim trailing `/` after validation.
+- [ ] NFR-078: Adapter `base_url` normalization shall be in-memory only.
+- [ ] NFR-079: Timezone normalization shall not rewrite the config file.
+- [ ] NFR-080: Validation shall report all discovered schema and field errors in one pass.
+- [ ] NFR-081: Validation shall fail clearly instead of attempting partial command execution on invalid config.
+- [ ] NFR-082: CLI flags shall override YAML where applicable.
+- [ ] NFR-083: Hidden configuration precedence rules shall not be introduced.
+- [ ] NFR-084: Automatic config mutation shall not be introduced outside explicit setup or init flows.
+- [ ] NFR-085: Formatting-only YAML changes shall not invalidate a saved plan.
+- [ ] NFR-086: Secret rotation alone shall not invalidate a saved plan fingerprint.
+
+## Adapter Configuration
+- [ ] NFR-087: YAML config section names shall use `snake_case` adapter-family form.
+- [ ] NFR-088: `jira_cloud` shall own Jira Cloud adapter config only.
+- [ ] NFR-089: `jira_data_center` shall own Jira Data Center adapter config only.
+- [ ] NFR-090: `clockify` shall own Clockify adapter config only.
+- [ ] NFR-091: The entire `jira_cloud` section shall be optional.
+- [ ] NFR-092: Each Jira Cloud instance name shall be unique within `jira_cloud.instances`.
+- [ ] NFR-093: `jira_cloud.instances.<name>.base_url` shall be required for each configured Jira Cloud instance.
+- [ ] NFR-094: `jira_cloud.instances.<name>.auth.email` shall be required for each configured Jira Cloud instance.
+- [ ] NFR-095: `jira_cloud.instances.<name>.auth.token_env` shall be required for each configured Jira Cloud instance.
+- [ ] NFR-096: Inline `jira_cloud.instances.<name>.auth.token` shall be invalid.
+- [ ] NFR-097: The entire `jira_data_center` section shall be optional.
+- [ ] NFR-098: Each Jira Data Center instance name shall be unique within `jira_data_center.instances`.
+- [ ] NFR-099: `jira_data_center.instances.<name>.base_url` shall be required for each configured Jira Data Center instance.
+- [ ] NFR-100: Jira Data Center auth shall use `bearer.token_env` only.
+- [ ] NFR-101: Inline `jira_data_center.instances.<name>.auth.bearer.token` shall be invalid.
+- [ ] NFR-102: The entire `clockify` section shall be optional.
+- [ ] NFR-103: `clockify.workspace_id` shall be required when a Clockify command uses the adapter.
+- [ ] NFR-104: `clockify.user_id` shall be required when a Clockify command uses the adapter.
+- [ ] NFR-105: `clockify.auth.api_key_env` shall be required when a Clockify command uses the adapter.
+- [ ] NFR-106: Inline `clockify.auth.api_key` shall be invalid.
+- [ ] NFR-107: `clockify.project_mapping.issue_prefixes` shall map canonical local issue-key prefixes to exact Clockify project names in the configured workspace.
+- [ ] NFR-108: `clockify.project_mapping.default_project` shall name the fallback Clockify project when no prefix rule matches.
+- [ ] NFR-109: `clockify.project_mapping.create_issue_tag_if_missing` shall default to `true` when omitted.
+- [ ] NFR-110: Clockify project mapping shall live under the `clockify` section rather than shared top-level `routing`.
+
+## Time Handling
+- [ ] NFR-111: Canonical stored worklog timestamps shall use UTC.
+- [ ] NFR-112: SQLite shall store one canonical `started_at_utc` instant per worklog.
+- [ ] NFR-113: `started_at_utc` shall be an explicit UTC input field for write operations.
+- [ ] NFR-114: `started_at_utc` shall be a default field in active-worklog JSON output.
+- [ ] NFR-115: Operator-facing `started_at` values shall render in the effective local timezone as RFC3339 with an explicit offset.
+- [ ] NFR-116: `local_timezone` shall affect local `started_at` input resolution for worklog writes.
+- [ ] NFR-117: `local_timezone` shall affect date-based filters such as `--today`, `--yesterday`, `--from`, and `--to`.
+- [ ] NFR-118: `local_timezone` shall affect operator-facing `started_at` rendering.
+- [ ] NFR-119: Date-window selector shortcut flags shall be mutually exclusive with each other.
+- [ ] NFR-120: Date-window selector shortcut flags shall be mutually exclusive with `--from` and `--to`.
+- [ ] NFR-121: `--from` and `--to` shall accept `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, and signed day offsets in `+Nd` or `-Nd` form.
+- [ ] NFR-122: Week ranges shall be Monday-through-Sunday calendar weeks in the effective local timezone.
+- [ ] NFR-123: `--current-week` shall expand to the start of the current local Monday and the end of the current local Sunday.
+- [ ] NFR-124: `--last-week` shall expand to the start of the previous local Monday and the end of the previous local Sunday.
+- [ ] NFR-125: Month ranges shall be calendar-month windows in the effective local timezone.
+- [ ] NFR-126: `--current-month` shall expand to the start of the first local day and the end of the last local day of the current calendar month.
+- [ ] NFR-127: `--last-month` shall expand to the start of the first local day and the end of the last local day of the previous calendar month.
+- [ ] NFR-128: `--from` shall expand to the start of the selected day in the effective local timezone.
+- [ ] NFR-129: `--to` shall expand to the end of the selected day in the effective local timezone.
+- [ ] NFR-130: Explicit range option order shall be ignored.
+- [ ] NFR-131: When both `--from` and `--to` are set, the earlier expanded bound shall be the effective start and the later expanded bound shall be the effective end.
+- [ ] NFR-132: Expanded date windows shall convert to canonical UTC query boundaries before querying storage.
+- [ ] NFR-133: Local worklog `--started` shall accept `YYYY-MM-DDTHH:MM`, `todayTHH:MM`, `yesterdayTHH:MM`, `tomorrowTHH:MM`, and signed day offsets in `+NdTHH:MM` or `-NdTHH:MM` form.
+- [ ] NFR-134: Local worklog `--started` shall resolve local civil time in `local_timezone` when configured.
+- [ ] NFR-135: Local worklog `--started` shall resolve local civil time in the system local timezone when `local_timezone` is absent.
+- [ ] NFR-136: `--started-utc` shall accept an explicit UTC RFC3339 timestamp only.
+- [ ] NFR-137: Invalid local civil times such as timezone gaps shall fail validation.
+- [ ] NFR-138: Ambiguous repeated-wall-clock timestamps shall fail validation.
+- [ ] NFR-139: Future `started_at` timestamps shall be allowed.
+- [ ] NFR-140: Saved plan payloads shall use UTC for started time.
+- [ ] NFR-141: A timezone configuration change after planning shall not alter execution for an existing saved plan.
+
+## Input Validation
+- [ ] NFR-142: Canonical issue keys shall use `<PROJECTKEY>-<NUMBER>` grammar.
+- [ ] NFR-143: `PROJECTKEY` shall start with an uppercase ASCII letter.
+- [ ] NFR-144: `PROJECTKEY` may contain uppercase ASCII letters or digits after the first character.
+- [ ] NFR-145: `NUMBER` shall contain one or more decimal digits.
+- [ ] NFR-146: `NUMBER` shall not start with `0`.
+- [ ] NFR-147: Lowercase issue keys shall fail validation rather than being normalized.
+- [ ] NFR-148: Jira-family routing prefixes shall start with an uppercase ASCII letter.
+- [ ] NFR-149: Jira-family routing prefixes may contain uppercase ASCII letters or digits after the first character.
+- [ ] NFR-150: Jira routing prefixes shall be matched exactly.
+- [ ] NFR-151: `worklogs search <query>` shall trim outer whitespace from `<query>` before validation.
+- [ ] NFR-152: `worklogs search <query>` shall fail validation when the trimmed query is empty.
+- [ ] NFR-153: `worklogs search <query>` shall preserve remaining internal query text exactly.
+- [ ] NFR-154: `worklogs add` duration shall normalize to strictly positive whole seconds.
+- [ ] NFR-155: `worklogs add` duration shall be greater than or equal to the effective configured minimum local worklog duration in seconds.
+- [ ] NFR-156: `worklogs update` shall preserve the same configured minimum duration rule as `worklogs add`.
+- [ ] NFR-157: `worklogs apply` payload `duration_seconds` values shall be whole seconds.
+- [ ] NFR-158: `worklogs apply` payload `duration_seconds` values shall satisfy the effective configured minimum local worklog duration.
+- [ ] NFR-159: `worklogs add` description shall trim outer whitespace.
+- [ ] NFR-160: `worklogs add` description shall collapse internal newlines to single spaces.
+- [ ] NFR-161: `worklogs add` description shall collapse repeated whitespace to single spaces.
+- [ ] NFR-162: `worklogs add` normalized description shall remain non-empty.
+- [ ] NFR-163: `worklogs update` shall preserve the same non-empty normalized description invariant as `worklogs add`.
+- [ ] NFR-164: `worklogs shift --by` shall normalize to non-zero whole seconds.
+- [ ] NFR-165: `worklogs apply` payload shall be JSON.
+- [ ] NFR-166: `worklogs apply` payload shall be one raw apply payload object.
+- [ ] NFR-167: `worklogs apply` payload shall contain top-level `adds`.
+- [ ] NFR-168: `worklogs apply` payload shall contain at least one add operation.
+- [ ] NFR-169: Each `worklogs apply` `adds` item shall include `issue_key`.
+- [ ] NFR-170: Each `worklogs apply` `adds` item shall include exactly one of `started_at` or `started_at_utc`.
+- [ ] NFR-171: Each `worklogs apply` `adds` item shall include `duration_seconds`.
+- [ ] NFR-172: Each `worklogs apply` `adds` item shall include `description`.
+- [ ] NFR-173: Payload `started_at` values shall use the same local timestamp grammar as `--started`.
+- [ ] NFR-174: Payload `started_at_utc` values shall use explicit UTC RFC3339.
+- [ ] NFR-175: A payload row shall not include both `started_at` and `started_at_utc`.
+- [ ] NFR-176: `--fields` shall fail validation on duplicate field names.
+- [ ] NFR-177: `--fields` shall allow `id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description` for active worklogs.
+- [ ] NFR-178: `--fields` shall allow `id`, `issue_key`, and `deleted_at` for deleted tombstones.
+- [ ] NFR-179: `--fields` shall fail validation when a requested field is invalid for the selected record class.
+- [ ] NFR-180: `worklogs context --day-start` shall be earlier than `--day-end`.
+- [ ] NFR-181: `worklogs context --lunch` and `--no-lunch` shall be mutually exclusive.
+- [ ] NFR-182: `worklogs context --lunch` shall define a positive interval.
+- [ ] NFR-183: `worklogs context --lunch` shall fit strictly inside the effective workday window.
+- [ ] NFR-183a: `worklogs context` effective lunch precedence shall be `--no-lunch`, then `--lunch`, then config `worklogs.daily_lunch`, then built-in fallback `12:00-13:00`.
+- [ ] NFR-183b: Config validation shall validate `worklogs.daily_lunch` format and positive interval, but workday-fit validation shall remain a runtime `worklogs context` check after combining flags and config.
+
+## Conflict Validation
+- [ ] NFR-184: Duplicate detection shall evaluate active local worklogs before insert.
+- [ ] NFR-185: Overlap detection shall evaluate active local worklogs before insert.
+- [ ] NFR-186: Duplicate detection shall ignore tombstones.
+- [ ] NFR-187: Overlap detection shall ignore tombstones.
+- [ ] NFR-188: Overlap detection shall apply across all active local worklogs.
+- [ ] NFR-189: Overlap detection shall not be limited to rows with the same issue key.
+- [ ] NFR-190: Two worklogs shall overlap when their canonical UTC time intervals intersect.
+- [ ] NFR-191: Exact boundary touch shall not be an overlap.
+- [ ] NFR-192: Duplicate or overlap conflicts shall fail with exit code `2` unless `--force` is set.
+- [ ] NFR-193: Duplicate and overlap conflict failures shall return a structured conflict summary identifying the conflict reason.
+- [ ] NFR-194: Duplicate and overlap conflict failures shall return the attempted canonical record.
+- [ ] NFR-195: Duplicate and overlap conflict failures shall return conflicting local IDs.
+- [ ] NFR-196: Overlap conflict failures shall return conflicting time windows.
+- [ ] NFR-197: `worklogs update` duplicate detection shall exclude the row being updated.
+- [ ] NFR-198: `worklogs update` overlap detection shall exclude the row being updated.
+- [ ] NFR-199: `worklogs shift` shall fail when the final active-worklog set contains duplicate rows.
+- [ ] NFR-200: `worklogs shift` shall fail when the final active-worklog set contains overlapping rows.
+- [ ] NFR-201: `worklogs shift` overlap validation shall evaluate selected and non-selected active worklogs using final shifted timestamps.
+- [ ] NFR-202: `worklogs apply` duplicate and overlap validation shall evaluate the final resulting active worklog set.
+- [ ] NFR-203: `worklogs apply` duplicate and overlap validation shall include conflicts introduced between add operations inside the same payload.
+- [ ] NFR-204: `worklogs restore` shall validate the full restore set against active rows unless `--force` is set.
+- [ ] NFR-205: `worklogs restore` shall validate conflicts inside the restore set unless `--force` is set.
+- [ ] NFR-206: Duplicate and overlap enforcement shall apply to `add`, `update`, `apply`, and `restore` only.
+- [ ] NFR-207: Duplicate and overlap enforcement shall not apply to `delete`.
+
+## Tombstones
+- [ ] NFR-208: Default delete shall remove a worklog from the active `worklogs` set and write a tombstone record.
+- [ ] NFR-209: Hard delete shall remove a worklog from the active `worklogs` set without writing a tombstone record.
+- [ ] NFR-210: A tombstone shall retain original local `worklog_id`.
+- [ ] NFR-211: A tombstone shall retain original `issue_key`.
+- [ ] NFR-212: A tombstone shall retain original `started_at_utc`.
+- [ ] NFR-213: A tombstone shall retain original `duration_seconds`.
+- [ ] NFR-214: A tombstone shall retain original `description`.
+- [ ] NFR-215: A tombstone shall retain deletion timestamp.
+- [ ] NFR-216: Tombstones shall retain enough data for `worklogs list --only-deleted`.
+- [ ] NFR-217: Tombstones shall retain enough data for delete-only reconcile scopes.
+- [ ] NFR-218: Tombstones shall retain enough data for pull protection for the same issue and reconcile-window allocation.
+- [ ] NFR-219: Tombstones shall not require a resolved target adapter family at delete time.
+- [ ] NFR-220: Tombstones shall not require a resolved target adapter instance at delete time.
+- [ ] NFR-221: Tombstones shall not persist a resolved target adapter family at delete time.
+- [ ] NFR-222: Tombstones shall not persist a resolved target adapter instance at delete time.
+- [ ] NFR-223: Tombstones shall not retain remote worklog identifiers as part of local identity.
+- [ ] NFR-224: Hard deletes shall produce no tombstone row.
+- [ ] NFR-225: Hard deletes shall produce no durable local delete intent.
+- [ ] NFR-226: A later pull for the same issue and reconcile-window allocation shall not recreate a deleted canonical row automatically.
+
+## Output Contracts
+- [ ] NFR-227: User-facing command output shall go to stdout.
+- [ ] NFR-228: Logs and diagnostics shall go to stderr, including unrecoverable SQLite diagnostics from `workledger init`.
+- [ ] NFR-229: Table output shall go to stdout.
+- [ ] NFR-230: `--output json` stdout shall remain valid JSON without mixed log lines.
+- [ ] NFR-231: Success payloads for `--output json` shall be fixed per command.
+- [ ] NFR-232: Unless a command-specific contract says otherwise, a JSON success payload shall be one object with exactly documented keys.
+- [ ] NFR-233: All timestamps in JSON shall use RFC3339.
+- [ ] NFR-234: The default active-worklog JSON record shape shall include `id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description`.
+- [ ] NFR-235: The deleted tombstone JSON record shape shall include `id`, `issue_key`, and `deleted_at`.
+- [ ] NFR-236: `workledger version --output json` shall return an object with `version`.
+- [ ] NFR-237: `workledger init --output json` shall return either success output with `config`, `sqlite`, `config_path`, and `sqlite_path`, or unrecoverable SQLite failure output with exactly `reason`, `message`, and `sqlite_path`.
+- [ ] NFR-238: `workledger init --output json` `config` shall be `created` or `reused`.
+- [ ] NFR-239: `workledger init --output json` `sqlite` shall be `created`, `reused`, or `repaired`.
+- [ ] NFR-240: `workledger init` table output shall include a config status line that distinguishes `created` from reused existing valid config, plus a Clockify status line that says whether `CLOCKIFY_API_KEY` was auto-configured during starter-config creation.
+- [ ] NFR-241: `workledger config validate --output json` shall return `valid`, `config_path`, and `effective` on success.
+- [ ] NFR-242: `worklogs list --output json` shall return `filters`, `items`, and `total`.
+- [ ] NFR-243: `worklogs search --output json` shall return `filters`, `items`, and `total`.
+- [ ] NFR-244: `worklogs list` JSON `filters` shall expose raw operator inputs.
+- [ ] NFR-245: `worklogs list` JSON `filters` shall expose effective normalized values.
+- [ ] NFR-246: `worklogs search` JSON `filters.raw.query` shall preserve the operator-supplied query.
+- [ ] NFR-247: `worklogs search` JSON `filters.effective.query` shall contain the trimmed normalized query used for matching.
+- [ ] NFR-248: `--fields` shall not remove `filters` from `worklogs list` or `worklogs search` JSON output.
+- [ ] NFR-249: `--fields` shall not remove `total` from `worklogs list` or `worklogs search` JSON output.
+- [ ] NFR-250: When `--fields` is set, each selected JSON item shall include only requested item fields in requested order.
+- [ ] NFR-251: `worklogs list` active table columns shall be `ID`, `ISSUE`, `STARTED`, `DURATION`, and `DESCRIPTION`.
+- [ ] NFR-252: `worklogs list --only-deleted` table columns shall be `ID`, `ISSUE`, and `DELETED`.
+- [ ] NFR-253: Empty table results shall render selected table headers with zero data rows.
+- [ ] NFR-254: Human-facing table output shall render aligned columns rather than raw tab-delimited cells.
+- [ ] NFR-255: Human-facing list and search output shall append a blank line and a totals footer.
+- [ ] NFR-256: Active list and search footers shall use `Totals: <N> worklogs, <duration>`.
+- [ ] NFR-257: Deleted list and search footers shall use `Totals: <N> tombstones, <duration>`.
+- [ ] NFR-258: The totals footer shall be derived from the full matched result set.
+- [ ] NFR-259: The totals footer shall be unaffected by `--fields`.
+- [ ] NFR-260: `DESCRIPTION` in `worklogs list` shall truncate to 80 characters with `...` when longer.
+- [ ] NFR-261: `worklogs context --output json` shall expose `planning.issue_order`, `planning.issues`, `planning.minimum_duration_seconds`, `planning.payload_contract`, and `planning.slot_order`.
+- [ ] NFR-262: `worklogs context` JSON `summary.booked_seconds` shall aggregate selected days after per-day proration of cross-midnight occupancy.
+- [ ] NFR-263: `worklogs context` JSON `summary.until_quota_seconds` shall aggregate selected days after per-day proration of cross-midnight occupancy as the sum of per-day deltas against `worklogs.daily_minimum_quota_seconds`.
+- [ ] NFR-264: `worklogs context` JSON `summary.collision_count` shall aggregate selected days after per-day proration of cross-midnight occupancy.
+- [ ] NFR-265: `worklogs shift --output json` dry-run items shall use preview fields for original and shifted timestamps.
+- [ ] NFR-266: `worklogs shift --output json` non-dry items shall use active worklog records.
+- [ ] NFR-267: `worklogs apply --output json` shall return `dry_run`, `summary`, and `items`.
+- [ ] NFR-268: `worklogs apply --output json` `summary.add_count` shall equal the number of add operations in the effective payload.
+- [ ] NFR-269: `worklogs apply --output json` each `items[*].index` shall identify the zero-based payload row.
+- [ ] NFR-270: Single-delete JSON output shall use `id`, `issue_key`, `deleted_at`, and `hard_delete`.
+- [ ] NFR-271: Filtered batch delete dry-run JSON output shall use `filters`, `dry_run`, `hard_delete`, `matched`, and `items`.
+- [ ] NFR-272: Executed filtered batch delete JSON output shall use `filters`, `dry_run`, `hard_delete`, `deleted`, and `items`.
+- [ ] NFR-273: Restore dry-run JSON output shall use `filters`, `dry_run`, `matched`, and `items`.
+- [ ] NFR-274: Restore executed JSON output shall use `filters`, `dry_run`, `restored`, and `items`.
+- [ ] NFR-275: `workledger status --output json` shall use `{"items":[...]}` for bare and filtered status.
+- [ ] NFR-276: Each status `items[]` entry shall include `adapter`, `instance`, `status`, `base_url`, `workspace_id`, `user_id`, and `user`.
+- [ ] NFR-276a: Clockify status rows shall report the implicit runtime instance name `clockify` in `instance`.
+- [ ] NFR-277: Status JSON fields that do not apply to an adapter shall be `null`.
+- [ ] NFR-278: Status table output shall use `ADAPTER`, `INSTANCE`, `STATUS`, `BASE_URL`, and `USER` headers.
+- [ ] NFR-279: `workledger totals --output json` explicit adapter output shall contain exactly `filters`, `summary`, and `days`.
+- [ ] NFR-280: `workledger totals --output json` bare output shall render `{"items":[...]}`.
+- [ ] NFR-281: Bare totals `items[]` entries shall include `adapter`, `instance`, `from`, `to`, and `timezone`.
+- [ ] NFR-281a: Clockify totals output shall report the implicit runtime instance name `clockify` in `instance`.
+- [ ] NFR-282: Successful bare totals `items[]` entries shall include `summary` and `days`.
+- [ ] NFR-283: Failed bare totals `items[]` entries shall include `status` and `message`.
+- [ ] NFR-284: Totals table output shall render columns `DATE`, `LOCAL`, `REMOTE`, `DELTA`, and `STATE` for explicit single-result output.
+- [ ] NFR-285: Totals table output shall append one final `TOTAL` row with aggregate local, remote, and delta values plus overall state.
+- [ ] NFR-286: Totals table output shall append one final summary line naming the adapter, effective selected range, effective timezone, and overall state.
+
+## Exit Codes
+- [ ] NFR-287: Exit code `0` shall mean success.
+- [ ] NFR-288: Exit code `1` shall mean unexpected failure, including unrecoverable SQLite corruption or incompatibility during `workledger init`.
+- [ ] NFR-289: Exit code `2` shall mean validation or input failure.
+- [ ] NFR-290: Exit code `3` shall mean not found.
+- [ ] NFR-291: Exit code `4` shall mean auth failure.
+- [ ] NFR-292: Exit code `5` shall mean external or connectivity failure.
+- [ ] NFR-293: Exit code `6` shall mean partial success.
+- [ ] NFR-294: Write-path duplicate conflicts shall use exit code `2`.
+- [ ] NFR-295: Write-path overlap conflicts shall use exit code `2`.
+- [ ] NFR-297: `worklogs update <id>` shall return exit code `3` when the worklog does not exist.
+- [ ] NFR-298: `worklogs delete <id>` shall return exit code `3` when the worklog does not exist.
+- [ ] NFR-299: `worklogs shift` shall return exit code `3` when no active worklogs match the selector set.
+- [ ] NFR-300: `worklogs shift` shall return exit code `2` when validation fails.
+- [ ] NFR-301: `worklogs apply` shall return exit code `2` when payload validation fails for a non-force-bypassable reason.
+- [ ] NFR-302: Explicit adapter totals shall return exit code `0` for `match`.
+- [ ] NFR-303: Explicit adapter totals shall return exit code `0` for `mismatch`.
+- [ ] NFR-304: Clockify explicit totals shall return exit code `0` for `indeterminate`.
+- [ ] NFR-305: Bare totals shall return the first deterministic non-zero per-target exit code after rendering all rows.
+- [ ] NFR-306: Jira-family totals shall use exit code `3` for surfaced Jira-family `404`.
+- [ ] NFR-307: `plan reconcile --push` shall return exit code `6` when a saved plan contains one or more `check_failed` scopes.
+- [ ] NFR-307a: `plan reconcile --pull` shall return exit code `6` when a saved plan contains one or more `check_failed` scopes.
+- [ ] NFR-308: `plan apply` shall return exit code `6` when one execution ends with mixed per-scope success and failure results.
+
+## Atomicity
+- [ ] NFR-309: SQLite worklog mutations shall use explicit SQLite write transactions.
+- [ ] NFR-310: `worklogs add` atomic scope shall insert one active worklog.
+- [ ] NFR-311: `worklogs update` atomic scope shall validate and update one active worklog.
+- [ ] NFR-312: `worklogs delete <id>` atomic scope shall remove one active worklog and insert one tombstone unless `--hard` is set.
+- [ ] NFR-313: Filtered batch delete atomic scope shall remove all matched active worklogs and insert one tombstone per deleted row unless `--hard` is set.
+- [ ] NFR-314: `worklogs restore` atomic scope shall insert original active rows from matched tombstones and delete those tombstones.
+- [ ] NFR-315: `worklogs apply` shall validate the entire payload before any write.
+- [ ] NFR-316: `worklogs apply` shall execute all writes atomically when validation succeeds and `--dry` is not set.
+- [ ] NFR-317: `worklogs shift` shall validate the full resulting active-worklog set atomically before writing.
+- [ ] NFR-318: `worklogs restore` shall delete matching tombstones in the same transaction as active-row insertion.
+- [ ] NFR-319: Validation failures shall not produce partial writes.
+- [ ] NFR-320: Per-item plan apply or retry execution shall use explicit transaction boundaries for SQLite writes.
+- [ ] NFR-321: SQLite writes shall be serialized through one writer path.
+
+## Determinism
+- [ ] NFR-322: `worklogs list` sorting shall be fixed by `started_at desc`, then stable local `id`.
+- [ ] NFR-323: `worklogs search` sorting shall be fixed by `started_at desc`, then stable local `id`.
+- [ ] NFR-324: `worklogs list` shall not expose sort-selection flags.
+- [ ] NFR-325: `worklogs search` shall not expose sort-selection flags.
+- [ ] NFR-326: Deleted-only ordering shall use `started_at desc`, then stable local `id`.
+- [ ] NFR-327: `worklogs context` free-slot order shall be ascending by local start time.
+- [ ] NFR-328: `planning.slot_order` shall indicate free slots are ordered by ascending local day and ascending slot start.
+- [ ] NFR-329: `worklogs shift` shall preserve relative spacing between selected worklogs.
+- [ ] NFR-330: `worklogs shift` shall preserve ordering between selected worklogs.
+- [ ] NFR-331: `workledger status` rows shall be ordered by family as `clockify`, `jira-cloud`, then `jira-data-center`.
+- [ ] NFR-332: Jira status rows shall be sorted by instance name ascending.
+- [ ] NFR-333: Bare totals rows shall be ordered by family as `clockify`, `jira-cloud`, then `jira-data-center`.
+- [ ] NFR-334: Bare totals Jira instance rows shall be sorted by instance name ascending.
+- [ ] NFR-335: Totals days shall be ordered chronologically by local date in the effective local timezone.
+- [ ] NFR-336: Plan apply shall build a deterministic execution order by resolved target issue key, target adapter family, target adapter instance, window start, and stable saved plan item ID.
+- [ ] NFR-337: Plan execution results shall sort and render deterministically after execution finishes.
+- [ ] NFR-338: Machine-readable reason codes shall be used instead of raw `error` values in user-facing result models, including `sqlite_unrecoverable` for unrecoverable SQLite corruption or incompatibility during `workledger init`.
+
+## Security
+- [ ] NFR-339: The config directory shall be created with private permissions suitable for local credentials.
+- [ ] NFR-340: The config file shall be written with private permissions suitable for local credentials.
+- [ ] NFR-341: `workledger init` shall fail clearly when required private config permissions cannot be enforced.
+- [ ] NFR-342: `workledger init` shall tighten overly broad config directory permissions automatically.
+- [ ] NFR-343: `workledger init` shall tighten overly broad existing config file permissions automatically.
+- [ ] NFR-344: The SQLite parent directory shall have overly broad permissions tightened automatically.
+- [ ] NFR-345: The SQLite file shall have private file permissions suitable for local operator data.
+- [ ] NFR-346: The SQLite file shall have overly broad permissions tightened automatically.
+- [ ] NFR-347: `workledger init` shall never persist adapter secret values into YAML.
+- [ ] NFR-348: `workledger setup jira-cloud` shall write env-var references only.
+- [ ] NFR-349: `workledger setup jira-cloud` shall never persist inline secret values.
+- [ ] NFR-350: `workledger setup jira-data-center` shall write env-var references only.
+- [ ] NFR-351: `workledger setup jira-data-center` shall never persist inline secret values.
+- [ ] NFR-352: `workledger setup clockify` shall never persist an API key value.
+- [ ] NFR-353: `workledger init` shall read `CLOCKIFY_API_KEY` from process env only during `init`.
+- [ ] NFR-354: `workledger init` shall not parse repo-local `.env` files at runtime.
+- [ ] NFR-355: Missing env vars shall be local validation failures, not remote failures.
+- [ ] NFR-356: Sync features shall not add cross-user push.
+- [ ] NFR-357: Sync features shall not add author override.
+- [ ] NFR-358: Sync features shall not add adapter impersonation.
+- [ ] NFR-359: Sync features shall not add service-account delivery on behalf of another user.
+- [ ] NFR-360: Reporting delivery shall be an additive mirror only.
+- [ ] NFR-361: Reporting delivery shall not mutate source-system worklogs.
+- [ ] NFR-362: Apply shall never mutate an adapter other than the target adapter instance saved on each push plan item.
+- [ ] NFR-363: Apply shall never silently downgrade a saved `replace` into a create-only action.
+- [ ] NFR-364: No force-recreate path shall exist for uncertain push retries.
+
+## Architecture
+- [ ] NFR-365: The CLI implementation shall use Cobra for root, group, and leaf command construction.
+- [ ] NFR-366: The root command shall not expose Cobra's default `completion` command.
+- [ ] NFR-367: Business logic shall remain outside Cobra commands.
+- [ ] NFR-368: `cmd/workledger` shall be used for process startup and dependency wiring only.
+- [ ] NFR-369: `internal/cli` shall own flag parsing helpers, rendering, confirmation, and exit code mapping.
+- [ ] NFR-370: `internal/config` shall own YAML loading, path resolution, normalization, and validation.
+- [ ] NFR-371: `internal/worklogs` shall own local CRUD rules, duplicate and overlap checks, tombstones, and selectors.
+- [ ] NFR-372: `internal/issues` shall own local issue-metadata refresh, joins, and issue-scoped advisory rules.
+- [ ] NFR-373: `internal/plans` shall own saved-plan creation, scope grouping, classification, review loading, apply, and retry orchestration.
+- [ ] NFR-374: `internal/adapter` shall own shared adapter capability contracts and family-specific planning or apply helpers.
+- [ ] NFR-375: `internal/adapter/jira_cloud` shall own Jira Cloud integration.
+- [ ] NFR-376: `internal/adapter/jira_data_center` shall own Jira Data Center integration.
+- [ ] NFR-377: `internal/adapter/clockify` shall own Clockify integration.
+- [ ] NFR-378: `internal/store/sqlite` shall own SQLite stores, migrations, and transactions.
+- [ ] NFR-379: `internal/tui` shall be reserved for a future Bubble Tea and Lip Gloss frontend.
+- [ ] NFR-380: `internal/cli` shall not own worklog, planning, or adapter business rules.
+- [ ] NFR-381: Frontends shall depend on services rather than raw SQLite stores.
+- [ ] NFR-382: Frontends shall not call other commands.
+- [ ] NFR-383: Frontends shall not parse rendered output from other commands.
+- [ ] NFR-384: Pull, push, or routing shall not be split into separate top-level packages until `internal/plans`, `internal/worklogs`, or `internal/adapter` becomes too large.
+- [ ] NFR-385: Application and domain logic shall remain reusable from the CLI and future TUI surfaces.
+- [ ] NFR-386: Adapter interfaces shall be defined at the consumer boundary for the service that uses them.
+- [ ] NFR-387: Adapter APIs shall prefer query structs over positional parameters.
+- [ ] NFR-388: Adapter-family differences shall stay out of service code.
+- [ ] NFR-389: Auth and HTTP details shall stay inside adapter-specific packages.
+- [ ] NFR-390: Issue-metadata decoration shall stay separate from worklog planning and apply contracts.
+
+## Routing
+- [ ] NFR-391: Routing config shall be partitioned by adapter family.
+- [ ] NFR-392: Each adapter family shall own its own routing rule schema.
+- [ ] NFR-393: Each adapter family shall own its own target resolver behavior.
+- [ ] NFR-394: Jira routing shall be instance-local rather than shared top-level config.
+- [ ] NFR-395: Each Jira instance may define named routing profiles under `instances.<name>.routing.profiles`.
+- [ ] NFR-396: `default` shall be the implicit routing profile when no CLI flag selects another profile.
+- [ ] NFR-397: Adapter families without target-instance routing rules shall rely on their own adapter-local selection contract.
+- [ ] NFR-398: Jira-family `issue_prefixes` shall preserve the same issue key on the target.
+- [ ] NFR-399: Jira-family `reporting_targets` shall map a canonical local issue-key prefix to one fixed reporting issue on the owning target Jira instance.
+- [ ] NFR-400: A `reporting_targets` rule may collapse many local issue keys into one remote reporting issue.
+- [ ] NFR-401: Within one route profile, the same source prefix shall not appear in both `issue_prefixes` and `reporting_targets`.
+- [ ] NFR-402: One Jira route profile shall use exactly one delivery mode: `issue_prefixes` or `reporting_targets`.
+- [ ] NFR-403: The same source prefix may map to different reporting issues in different route profiles.
+- [ ] NFR-404: The same reporting target issue may be referenced by more than one route profile.
+- [ ] NFR-405: Reporting delivery shall always require explicit `--route-profile` selection.
+- [ ] NFR-406: Reporting delivery shall never be activated implicitly through the `default` profile.
+- [ ] NFR-407: A reporting route profile shall resolve only to instances in the selected Jira adapter family.
+- [ ] NFR-408: Jira pull-scope exclusion for reporting-loop prevention shall be defined by explicit issue keys.
+- [ ] NFR-409: Jira pull-scope exclusion for reporting-loop prevention shall not use project-level exclusion.
+- [ ] NFR-410: Jira pull-scope exclusion for reporting-loop prevention shall not use arbitrary Jira query text.
+- [ ] NFR-411: Config validation shall fail when more than one Jira instance in the same adapter family owns the same source prefix for the same route profile.
+- [ ] NFR-412: Config validation shall fail when one route profile mixes `issue_prefixes` and `reporting_targets`.
+- [ ] NFR-413: Config validation shall fail when the implicit `default` route profile uses `reporting_targets`.
+- [ ] NFR-414: Planning shall fail clearly when a requested non-default route profile does not exist under any instance in the selected adapter family.
+
+## Reconcile Planning
+- [ ] NFR-415: Each saved plan shall persist `plan_direction` as `pull` or `push`.
+- [ ] NFR-416: Each saved plan shall persist the selected target adapter family set and selected target instance set.
+- [ ] NFR-417: `plan reconcile` shall be non-destructive.
+- [ ] NFR-418: `plan reconcile` shall not provide a separate `--dry-run` mode.
+- [ ] NFR-419: `plan reconcile` shall validate the selected adapter family and its config before adapter inspection begins.
+- [ ] NFR-420: `plan reconcile` shall choose one reconcile direction before adapter inspection begins.
+- [ ] NFR-421: `plan reconcile` shall materialize a saved plan payload snapshot for each scope.
+- [ ] NFR-422: `plan reconcile` shall materialize a saved inspection summary for each scope.
+- [ ] NFR-423: `plan reconcile` shall persist non-importable remote observations as saved plan findings.
+- [ ] NFR-423a: one `plan reconcile` invocation with repeated adapters or instances shall persist at most one saved plan.
+- [ ] NFR-424: Push planning shall group active selected local worklogs by target adapter family, target adapter instance, issue key, and selected reconcile time window.
+- [ ] NFR-425: A delete-only push scope shall exist when tombstones leave no active local rows in the same target, issue, and selected reconcile window.
+- [ ] NFR-426: Pull planning shall group remote rows into canonical reconcile scopes after normalization.
+- [ ] NFR-427: Pull planning shall not treat remote row IDs as canonical local identity.
+- [ ] NFR-428: Pull planning shall not treat remote row boundaries as canonical local identity.
+- [ ] NFR-429: A pull plan shall not recreate a local allocation protected by a matching tombstone.
+- [ ] NFR-430: Saved plan items shall persist `plan_direction`.
+- [ ] NFR-431: Saved plan items shall persist `planned_action`.
+- [ ] NFR-432: Each saved plan item shall represent one reconcile scope.
+- [ ] NFR-433: `planned_action` shall use `merge` or `none` for `plan_direction=pull`.
+- [ ] NFR-434: `planned_action` shall use `create`, `replace`, `delete`, or `none` for `plan_direction=push`.
+- [ ] NFR-435: Scope classifications shall use `ready`, `invalid`, `blocked`, `skipped`, and `check_failed`.
+- [ ] NFR-436: Final reconcile correctness shall be exact local-versus-remote row-set equality within the saved scope.
+- [ ] NFR-437: Per-entry remote worklog identity shall not be part of reconcile identity.
+- [ ] NFR-438: Remote cleanup and replacement shall be scoped only by target adapter instance, target issue, and saved reconcile time window.
+- [ ] NFR-439: No local rows and no tombstone-backed delete intent shall not trigger cleanup.
+- [ ] NFR-440: Reporting window membership shall be determined by worklog `started_at` only.
+- [ ] NFR-441: Reporting window membership shall not use interval overlap.
+- [ ] NFR-442: Reporting window membership shall not use row-splitting across boundaries.
+- [ ] NFR-443: A reporting reconcile that finds only non-actionable scopes shall not persist a saved plan.
+
+## Saved Plans
+- [ ] NFR-444: Each saved plan shall retain a deterministic `config_fingerprint`.
+- [ ] NFR-445: The `config_fingerprint` shall be computed from canonicalized effective config data.
+- [ ] NFR-446: The `config_fingerprint` shall not be computed from raw YAML bytes.
+- [ ] NFR-447: `plan apply` shall compare the current effective config fingerprint with the saved fingerprint before execution.
+- [ ] NFR-448: `plan retry` shall compare the current effective config fingerprint with the saved fingerprint before execution.
+- [ ] NFR-449: A saved plan shall fail clearly before execution when the fingerprint differs.
+- [ ] NFR-450: `plan apply` shall consume the saved scope definition.
+- [ ] NFR-451: `plan apply` shall consume the saved plan payload snapshot.
+- [ ] NFR-452: `plan apply` shall consume the saved inspection snapshot.
+- [ ] NFR-453: Local SQL changes after planning shall not alter an existing saved plan.
+- [ ] NFR-454: Remote adapter state changes after planning shall not alter an existing saved plan scope or payload.
+- [ ] NFR-455: A saved plan shall not freeze exact remote row identities.
+- [ ] NFR-456: `content_hash` shall be computed from exactly the saved normalized row-set payload fields.
+- [ ] NFR-457: `delivery_key` shall be used for stable saved-plan execution identity.
+- [ ] NFR-458: `content_hash` shall be used for materialized saved payload identity.
+- [ ] NFR-459: Saved plan items shall retain issue key, `plan_direction`, target adapter family, target adapter instance when present, saved reconcile window, `plan_status`, `planned_action`, reason code, reason detail, saved payload rows, `delivery_key`, `content_hash`, and saved inspection summary.
+- [ ] NFR-460: For reporting push payloads, normalized description shall preserve the source issue key using `<ISSUE_KEY> | <description>`.
+- [ ] NFR-461: Reporting description normalization shall avoid exact double-prefixing when the canonical local description already starts with the same `<ISSUE_KEY> | ` prefix.
+- [ ] NFR-462: Apply and retry shall use the target adapter family saved on each plan item.
+- [ ] NFR-463: Apply and retry shall use the target adapter instance saved on each plan item.
+- [ ] NFR-464: Apply and retry shall not re-run routing.
+
+## Execution State
+- [ ] NFR-465: `plan_status` shall be immutable after planning.
+- [ ] NFR-466: Attempt history shall be append-only.
+- [ ] NFR-467: Attempt states shall be `pending`, `succeeded`, `failed`, and `uncertain`.
+- [ ] NFR-468: Derived execution states shall be `not_attempted`, `pending`, `succeeded`, `failed`, and `uncertain`.
+- [ ] NFR-469: A succeeded item shall be terminal.
+- [ ] NFR-470: A succeeded item shall not be retried.
+- [ ] NFR-471: Plain `plan apply` shall never start a new execution for an item whose effective state is `pending`, `failed`, or `uncertain`.
+- [ ] NFR-472: Before local merge or remote delete/create, execution shall reserve the execution locally.
+- [ ] NFR-473: Before local merge or remote delete/create, execution shall persist an attempt row with `pending`.
+- [ ] NFR-474: After confirmed success, execution shall mark the attempt `succeeded` and persist resulting execution metadata.
+- [ ] NFR-475: After confirmed failure, execution shall mark the attempt `failed`.
+- [ ] NFR-476: After ambiguous outcome, execution shall mark the attempt `uncertain`.
+- [ ] NFR-477: A `pending` attempt older than 15 minutes shall be treated as effective `uncertain`.
+- [ ] NFR-478: Historical attempt rows shall not be rewritten solely because they became stale.
+- [ ] NFR-479: Uncertain push retries shall first perform best-effort target-adapter reconciliation where supported.
+- [ ] NFR-480: If prior remote creation cannot be ruled out, the push item shall remain `uncertain`.
+- [ ] NFR-481: If prior remote creation cannot be ruled out, the push item shall not be recreated automatically.
+
+## Concurrency and Performance
+- [ ] NFR-482: Goroutines shall be used only for remote adapter I/O.
+- [ ] NFR-483: Planning-time remote HTTP work shall use one fixed tool-defined global concurrency limit.
+- [ ] NFR-484: Push planning remote reads and advisory checks may run concurrently per resolved target adapter instance.
+- [ ] NFR-485: Push planning local scope grouping shall remain single-threaded.
+- [ ] NFR-486: Push planning diffing shall remain single-threaded.
+- [ ] NFR-487: Push planning classification shall remain single-threaded.
+- [ ] NFR-488: Push planning saved-plan persistence shall remain single-threaded.
+- [ ] NFR-489: Push planning shall not spawn per-scope goroutines after remote target-instance reads complete.
+- [ ] NFR-490: Plan apply shall schedule concurrency at the saved-plan-item level.
+- [ ] NFR-491: Plan apply shall never split one saved plan item into multiple concurrent goroutines.
+- [ ] NFR-492: Plan apply shall allow at most one active goroutine per resolved target issue key at a time.
+- [ ] NFR-493: Plan retry shall reuse the same concurrency rules as `plan apply`.
+- [ ] NFR-494: Push execution shall run remote HTTP work with `errgroup.Group`.
+- [ ] NFR-495: Remote HTTP execution shall use bounded concurrency with one fixed tool-defined global `SetLimit()` across the whole plan execution.
+- [ ] NFR-496: Concurrency units shall be saved plan items, not sub-steps within one plan item.
+- [ ] NFR-497: Target-issue isolation shall apply before fixed-limit scheduling.
+- [ ] NFR-498: Per-task failures shall be treated as result data rather than fatal group errors.
+- [ ] NFR-499: Unexpected per-item infrastructure failures during remote I/O shall be recorded on those items while other independent items continue.
+- [ ] NFR-500: Repeated issue capability checks and similar advisory validations shall be cached where practical for push flows.
+- [ ] NFR-501: `429` and transient transport failures shall use narrow retry behavior inside the HTTP client only when safe.
+- [ ] NFR-502: Bare totals may fetch distinct adapter targets concurrently while preserving final row order.
+- [ ] NFR-503: Jira totals may fetch per-issue worklogs concurrently after issue discovery while keeping final aggregation deterministic.
+
+## Totals Comparison
+- [ ] NFR-504: Totals shall read local totals from active canonical SQLite worklogs only.
+- [ ] NFR-505: Totals shall exclude deleted tombstones from local totals.
+- [ ] NFR-506: Bare totals shall inspect only configured adapter families and every configured instance owned by each family.
+- [ ] NFR-507: Bare totals shall contribute at most one Clockify row.
+- [ ] NFR-507a: The single Clockify bare totals row shall use instance name `clockify`.
+- [ ] NFR-508: Bare totals shall contribute at most one Jira Cloud row per configured instance.
+- [ ] NFR-509: Bare totals shall contribute at most one Jira Data Center row per configured instance.
+- [ ] NFR-510: Bare totals shall validate and execute each adapter target independently.
+- [ ] NFR-511: Bare totals shall render every successful and failed target row before exiting.
+- [ ] NFR-512: Bare totals shall return an empty `items` array and exit code `0` when no adapters are configured.
+- [ ] NFR-513: Clockify totals shall read remote totals from entries visible to configured `clockify.workspace_id` and `clockify.user_id` only.
+- [ ] NFR-514: Jira Cloud totals shall derive managed scope from the union of all `issue_prefixes` across every routing profile configured on the selected instance.
+- [ ] NFR-515: Jira Cloud totals shall ignore `reporting_targets` when deriving totals scope.
+- [ ] NFR-516: Jira Cloud totals shall exclude exact issue keys from local and remote totals when those keys appear in `pull.exclude_issues`.
+- [ ] NFR-517: Jira Cloud totals shall exclude exact issue keys from local and remote totals when those keys appear as configured `reporting_targets` target issues on the selected instance.
+- [ ] NFR-518: Jira Cloud totals shall fail validation when the selected instance has no routing config.
+- [ ] NFR-519: Jira Cloud totals shall fail validation when the selected instance routing profiles contribute zero `issue_prefixes`.
+- [ ] NFR-520: Jira Cloud totals shall filter local totals to worklogs whose issue keys match the managed routed issue-prefix scope.
+- [ ] NFR-521: Jira Cloud totals shall read remote totals only from worklogs authored by the authenticated Jira Cloud user.
+- [ ] NFR-522: Jira Data Center totals shall derive managed scope from the union of all `issue_prefixes` across every routing profile configured on the selected instance.
+- [ ] NFR-523: Jira Data Center totals shall ignore `reporting_targets` when deriving totals scope.
+- [ ] NFR-524: Jira Data Center totals shall exclude exact issue keys from local and remote totals when those keys appear in `pull.exclude_issues`.
+- [ ] NFR-525: Jira Data Center totals shall exclude exact issue keys from local and remote totals when those keys appear as configured `reporting_targets` target issues on the selected instance.
+- [ ] NFR-526: Jira Data Center totals shall fail validation when the selected instance has no routing config.
+- [ ] NFR-527: Jira Data Center totals shall fail validation when the selected instance routing profiles contribute zero `issue_prefixes`.
+- [ ] NFR-528: Jira Data Center totals shall filter local totals to worklogs whose issue keys match the managed routed issue-prefix scope.
+- [ ] NFR-529: Jira Data Center totals shall read remote totals only from worklogs authored by the authenticated Jira Data Center user.
+- [ ] NFR-530: Totals shall compare by overlap with the effective selected window rather than by start timestamp alone.
+- [ ] NFR-531: Totals shall split local overlapping intervals at local day boundaries in the effective local timezone before per-day aggregation.
+- [ ] NFR-532: Totals shall split remote overlapping intervals at local day boundaries in the effective local timezone before per-day aggregation.
+- [ ] NFR-533: Totals shall compute aggregate totals and per-day comparison rows from the same sliced interval set.
+- [ ] NFR-534: Totals shall report `match` only when aggregate totals match exactly and every returned day matches exactly.
+- [ ] NFR-535: Totals shall report `mismatch` when any aggregate or per-day delta is non-zero.
+- [ ] NFR-536: Totals shall report `indeterminate` only when a running Clockify entry overlaps the selected effective window.
+
+## Progress Output
+- [ ] NFR-537: Live progress output shall go to stderr only.
+- [ ] NFR-538: Live progress output shall never be mixed into stdout.
+- [ ] NFR-539: Progress rendering shall not affect command success.
+- [ ] NFR-540: Progress rendering shall not affect command failure.
+- [ ] NFR-541: Progress rendering shall not affect exit code.
+- [ ] NFR-542: When stderr is not writable, commands shall continue without progress UI.
+- [ ] NFR-543: Progress shall track logical work units rather than raw transport attempts.
+- [ ] NFR-544: Retries caused by `429` shall not create fake forward progress.
+- [ ] NFR-545: Retries caused by transient transport failures shall not create fake forward progress.
+- [ ] NFR-546: When a command has a stable work-set before execution starts, progress totals shall use that stable work-set.
+- [ ] NFR-547: When remote request count is unknown up front, progress may render without a percentage bar.
+- [ ] NFR-548: Operator-visible progress shall prefer stable scope counts over volatile HTTP-call counts.
+- [ ] NFR-549: Interactive progress bar mode shall show current phase.
+- [ ] NFR-550: Interactive progress bar mode shall show completed logical units.
+- [ ] NFR-551: Interactive progress bar mode shall show total logical units when known.
+- [ ] NFR-552: Interactive progress bar mode shall show failed logical units so far.
+- [ ] NFR-553: Interactive progress bar mode shall show elapsed time.
+- [ ] NFR-554: Plain progress mode shall emit one start line.
+- [ ] NFR-555: Plain progress mode shall emit periodic summary lines only when counts change materially or a time threshold is crossed.
+- [ ] NFR-556: Plain progress mode shall emit one final completion line with succeeded, failed, and uncertain counts when relevant.
+- [ ] NFR-557: Progress text shall use deterministic wording.
+- [ ] NFR-558: Progress UI shall tolerate mixed outcomes.
+- [ ] NFR-559: Per-unit progress failures shall increment failure counts without stopping unrelated eligible work.
+- [ ] NFR-560: Interrupted or crashed commands shall not require resumable progress state.
+- [ ] NFR-561: Persisted attempt history shall remain the source of truth for interrupted or crashed commands.
+- [ ] NFR-562: Workers shall emit structured progress events through a channel.
+- [ ] NFR-563: One renderer goroutine shall own terminal progress output.
+- [ ] NFR-564: Workers shall never print progress directly.
+- [ ] NFR-565: Progress state shall remain in memory only.
+- [ ] NFR-566: Progress state shall never be persisted.

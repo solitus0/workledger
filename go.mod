@@ -1,4 +1,4 @@
-module github.com/ernestas/workledger
+module github.com/solitus0/workledger
 
 go 1.26
 
