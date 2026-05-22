@@ -88,6 +88,8 @@ Placement rule:
 - [ ] FUNC-068: `workledger doctor --routing` shall enable routing checks.
 - [ ] FUNC-069: `workledger doctor --connectivity` shall enable adapter connectivity checks.
 - [ ] FUNC-070: `workledger doctor --all` shall enable all check groups.
+- [ ] FUNC-070a: Local `doctor` checks shall validate the effective `storage.sqlite_path`, including DB-file writability when present, parent-directory writability, and whether SQLite sidecar files can be created.
+- [ ] FUNC-070b: Bare `workledger doctor` shall include the local storage writability check because bare `doctor` includes local checks by default.
 
 ## Routing Commands
 - [ ] FUNC-071: `workledger routing list` shall emit configured Jira routing inventory across all configured Jira families and instances.
@@ -206,6 +208,7 @@ Placement rule:
 - [ ] FUNC-168: `workledger worklogs apply` shall return a deterministic would-apply summary plus per-operation results for successful dry-runs.
 - [ ] FUNC-169: `workledger worklogs apply` shall return a deterministic applied summary plus per-operation results for successful non-dry runs.
 - [ ] FUNC-170: `workledger worklogs apply` per-operation results shall identify the operation type and resulting local worklog `id`.
+- [ ] FUNC-170a: `workledger` commands that persist local SQLite state shall preflight local storage writability before starting a write transaction.
 
 ## Worklog Delete
 - [ ] FUNC-171: `workledger worklogs delete <id>` shall delete exactly one active local worklog.

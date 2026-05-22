@@ -21,6 +21,7 @@ The CLI decides:
 - selector expansion
 - final payload acceptance
 - SQLite persistence
+- write-path storage preflight
 
 ## Evidence precedence
 
@@ -105,3 +106,4 @@ For candidate drafted worklogs, return:
 6. Warnings or assumptions.
 
 For mutations already executed, include changed IDs or counts and any validation warnings. For dry-runs, be explicit that no canonical state changed.
+When a write fails with storage-path restrictions, explain the resolved SQLite path and parent directory rather than blaming the payload.

@@ -72,6 +72,9 @@ Placement rule:
 - [ ] NFR-055: `storage.sqlite_path` shall resolve to a valid absolute local path after expansion.
 - [ ] NFR-056: The resolved SQLite path shall be usable for local SQLite operations.
 - [ ] NFR-057: The resolved SQLite path parent directory shall be writable.
+- [ ] NFR-057a: When the resolved SQLite file already exists, write-capable local commands shall verify the file is writable before opening a write transaction.
+- [ ] NFR-057b: Write-capable local commands shall verify the resolved SQLite path parent directory remains writable before opening a write transaction.
+- [ ] NFR-057c: Local storage checks shall verify that SQLite journal or WAL sidecar files can be created in the resolved SQLite path parent directory.
 - [ ] NFR-058: `worklogs.minimum_duration_seconds` and `worklogs.daily_minimum_quota_seconds`, when present, shall be positive whole numbers of seconds.
 - [ ] NFR-059: The effective local worklog minimum duration shall default to `900` when `worklogs.minimum_duration_seconds` is absent, the effective daily minimum quota shall default to `28800` when `worklogs.daily_minimum_quota_seconds` is absent, and the effective default lunch shall default to `12:00-13:00` when `worklogs.daily_lunch` is absent.
 - [ ] NFR-059a: `worklogs.daily_lunch`, when present, shall use `HH:MM-HH:MM` and define a positive interval.
@@ -318,6 +321,7 @@ Placement rule:
 - [ ] NFR-284: Totals table output shall render columns `DATE`, `LOCAL`, `REMOTE`, `DELTA`, and `STATE` for explicit single-result output.
 - [ ] NFR-285: Totals table output shall append one final `TOTAL` row with aggregate local, remote, and delta values plus overall state.
 - [ ] NFR-286: Totals table output shall append one final summary line naming the adapter, effective selected range, effective timezone, and overall state.
+- [ ] NFR-286a: User-facing local storage write failures in `--output json` mode shall return exactly `reason`, `message`, `sqlite_path`, `parent_dir`, and `operation`.
 
 ## Exit Codes
 - [ ] NFR-287: Exit code `0` shall mean success.
@@ -334,6 +338,7 @@ Placement rule:
 - [ ] NFR-299: `worklogs shift` shall return exit code `3` when no active worklogs match the selector set.
 - [ ] NFR-300: `worklogs shift` shall return exit code `2` when validation fails.
 - [ ] NFR-301: `worklogs apply` shall return exit code `2` when payload validation fails for a non-force-bypassable reason.
+- [ ] NFR-301a: Local storage writability failures shall return exit code `1`.
 - [ ] NFR-302: Explicit adapter totals shall return exit code `0` for `match`.
 - [ ] NFR-303: Explicit adapter totals shall return exit code `0` for `mismatch`.
 - [ ] NFR-304: Clockify explicit totals shall return exit code `0` for `indeterminate`.
@@ -357,6 +362,8 @@ Placement rule:
 - [ ] NFR-319: Validation failures shall not produce partial writes.
 - [ ] NFR-320: Per-item plan apply or retry execution shall use explicit transaction boundaries for SQLite writes.
 - [ ] NFR-321: SQLite writes shall be serialized through one writer path.
+- [ ] NFR-321a: Commands that persist local SQLite state shall run one shared storage-writability preflight after config resolution and before opening a write transaction.
+- [ ] NFR-321b: `worklogs apply --dry` shall remain read-only and shall not require local storage writability.
 
 ## Determinism
 - [ ] NFR-322: `worklogs list` sorting shall be fixed by `started_at desc`, then stable local `id`.
@@ -376,6 +383,7 @@ Placement rule:
 - [ ] NFR-336: Plan apply shall build a deterministic execution order by resolved target issue key, target adapter family, target adapter instance, window start, and stable saved plan item ID.
 - [ ] NFR-337: Plan execution results shall sort and render deterministically after execution finishes.
 - [ ] NFR-338: Machine-readable reason codes shall be used instead of raw `error` values in user-facing result models, including `sqlite_unrecoverable` for unrecoverable SQLite corruption or incompatibility during `workledger init`.
+- [ ] NFR-338a: Local SQLite write-path storage failures shall use machine-readable reason code `local_storage_not_writable`.
 
 ## Security
 - [ ] NFR-339: The config directory shall be created with private permissions suitable for local credentials.

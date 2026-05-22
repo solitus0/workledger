@@ -816,6 +816,90 @@ func TestDoctorDefaultSkipsConnectivityAndReportsMissingEnv(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsWritableLocalStorage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	result := runCLI(t, "doctor", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("doctor failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	items := statusItems(t, result.stdout)
+	found := false
+	for _, item := range items {
+		if item["category"] == "local" && item["target"] == "storage" {
+			found = true
+			if item["status"] != "ok" {
+				t.Fatalf("expected writable local storage, got %v", item)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected local storage doctor item, got %s", result.stdout)
+	}
+}
+
+func TestDoctorReportsUnwritableLocalStorage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	sqlitePath := filepath.Join(os.Getenv("HOME"), ".local", "share", "workledger", "worklogs.db")
+	setReadOnly(t, filepath.Dir(sqlitePath), 0o500)
+
+	result := runCLI(t, "doctor", "--output", "json")
+	if result.code != 1 {
+		t.Fatalf("expected storage failure, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	items := statusItems(t, result.stdout)
+	for _, item := range items {
+		if item["category"] == "local" && item["target"] == "storage" {
+			if item["status"] != "error" || !strings.Contains(item["message"].(string), "cannot write local ledger") {
+				t.Fatalf("unexpected storage item %v", item)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected local storage error item, got %s", result.stdout)
+}
+
+func TestWorklogsAddReturnsLocalStorageNotWritable(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	sqlitePath := filepath.Join(os.Getenv("HOME"), ".local", "share", "workledger", "worklogs.db")
+	setReadOnly(t, sqlitePath, 0o400)
+
+	result := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:00:00Z", "--duration", "1h", "--description", "Blocked write", "--output", "json")
+	if result.code != 1 {
+		t.Fatalf("expected local storage failure, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	payload := decodeJSONMap(t, []byte(result.stdout))
+	if payload["reason"] != "local_storage_not_writable" {
+		t.Fatalf("expected local_storage_not_writable, got %s", result.stdout)
+	}
+	if payload["sqlite_path"] != sqlitePath {
+		t.Fatalf("expected sqlite path %s, got %s", sqlitePath, result.stdout)
+	}
+	if payload["parent_dir"] != filepath.Dir(sqlitePath) {
+		t.Fatalf("expected parent dir %s, got %s", filepath.Dir(sqlitePath), result.stdout)
+	}
+	if payload["operation"] != "worklogs add" {
+		t.Fatalf("expected operation worklogs add, got %s", result.stdout)
+	}
+}
+
 func TestClockifyMappingsValidateWarningsAndMissingProject(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	setClockifyTestEnv(t)

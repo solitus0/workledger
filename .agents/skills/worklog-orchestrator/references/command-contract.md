@@ -33,6 +33,8 @@ workledger doctor --all
 
 `config validate` checks structural config without requiring adapter connectivity. Use `doctor --connectivity` or `status` when credentials and remote reachability matter.
 
+`doctor` local checks include local storage validation for the effective `storage.sqlite_path`, including DB-file writability when present, parent-directory writability, and SQLite sidecar creation viability.
+
 ## Routing and mapping inspection
 
 ```text
@@ -87,6 +89,7 @@ Rules:
 - Selector-based delete requires `--yes` for execution and supports `--dry` for preview.
 - Restore is selector-based only, requires a time selector, and requires exactly one of `--dry` or `--yes` for safe flows.
 - `--force` may bypass duplicate or overlap rejection on supported write paths. Do not use it to hide uncertainty.
+- Commands that persist local SQLite state preflight storage writability before opening a write transaction.
 
 ## Batch apply payload
 
@@ -118,6 +121,7 @@ Rules:
 - Each add requires `issue_key`, `duration_seconds`, `description`, and exactly one of `started_at` or `started_at_utc`.
 - `duration_seconds` must be positive whole seconds and satisfy the configured minimum duration.
 - CLI dry-run is the authoritative payload validation step.
+- A successful dry-run does not guarantee the real apply can write to the configured SQLite path in a sandboxed session.
 
 ## Metadata, status, and totals
 

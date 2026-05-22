@@ -326,7 +326,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 		Short: "List local worklogs",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode)
+			effective, service, cleanup, err := a.loadService(mode, false, "")
 			if err != nil {
 				return err
 			}
@@ -416,7 +416,7 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode)
+			effective, service, cleanup, err := a.loadService(mode, false, "")
 			if err != nil {
 				return err
 			}
@@ -499,7 +499,7 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 		Short: "Inspect planning context for local worklogs",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode)
+			effective, service, cleanup, err := a.loadService(mode, false, "")
 			if err != nil {
 				return err
 			}
@@ -580,7 +580,7 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 		Short: "Shift local worklog timestamps",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode)
+			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs shift")
 			if err != nil {
 				return err
 			}
@@ -648,7 +648,7 @@ func (a *app) newWorklogsApplyCommand() *cobra.Command {
 		Short: "Apply raw batch worklog additions",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode)
+			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs apply")
 			if err != nil {
 				return err
 			}
@@ -706,7 +706,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 		Short: "Add a local worklog",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode)
+			effective, service, cleanup, err := a.loadService(mode, true, "worklogs add")
 			if err != nil {
 				return err
 			}
@@ -754,7 +754,7 @@ func (a *app) newWorklogsUpdateCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode)
+			effective, service, cleanup, err := a.loadService(mode, true, "worklogs update")
 			if err != nil {
 				return err
 			}
@@ -818,7 +818,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode)
+			effective, service, cleanup, err := a.loadService(mode, true, "worklogs delete")
 			if err != nil {
 				return err
 			}
@@ -925,7 +925,7 @@ func (a *app) newWorklogsRestoreCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode)
+			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs restore")
 			if err != nil {
 				return err
 			}
@@ -1526,7 +1526,7 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 		Short: "List cached issue metadata",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode)
+			effective, service, cleanup, err := a.loadService(mode, false, "")
 			if err != nil {
 				return err
 			}
@@ -1612,7 +1612,7 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 			if field != "max-estimate" {
 				return a.fail(mode, 2, "validation_error", "only --field=max-estimate is supported in this slice", nil)
 			}
-			effective, service, cleanup, err := a.loadService(mode)
+			effective, service, cleanup, err := a.loadService(mode, true, "issue-metadata refresh")
 			if err != nil {
 				return err
 			}
@@ -1776,7 +1776,7 @@ func (a *app) newTotalsCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 
-			effective, store, cleanup, err := a.loadStore(mode)
+			effective, store, cleanup, err := a.loadStore(mode, false, "")
 			if err != nil {
 				return err
 			}
@@ -2088,7 +2088,7 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 				return a.fail(mode, 2, "validation_error", "--only-deleted can only be used with --push", nil)
 			}
 
-			effective, store, cleanup, err := a.loadStore(mode)
+			effective, store, cleanup, err := a.loadStore(mode, true, "plan reconcile")
 			if err != nil {
 				return err
 			}
@@ -2175,7 +2175,7 @@ func (a *app) newPlanShowCommand() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := outputMode(cmd)
-			_, store, cleanup, err := a.loadStore(mode)
+			_, store, cleanup, err := a.loadStore(mode, false, "")
 			if err != nil {
 				return err
 			}
@@ -2238,7 +2238,7 @@ func (a *app) newPlanListCommand() *cobra.Command {
 		Short: "List saved plans",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			effective, store, cleanup, err := a.loadStore(mode)
+			effective, store, cleanup, err := a.loadStore(mode, false, "")
 			if err != nil {
 				return err
 			}
@@ -2297,7 +2297,7 @@ func (a *app) newPlanApplyCommand() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := outputMode(cmd)
-			effective, store, cleanup, err := a.loadStore(mode)
+			effective, store, cleanup, err := a.loadStore(mode, true, "plan apply")
 			if err != nil {
 				return err
 			}
@@ -2340,7 +2340,7 @@ func (a *app) newPlanRetryCommand() *cobra.Command {
 				return a.fail(mode, 2, "validation_error", "plan retry requires --only failed or --only uncertain", nil)
 			}
 
-			effective, store, cleanup, err := a.loadStore(mode)
+			effective, store, cleanup, err := a.loadStore(mode, true, "plan retry")
 			if err != nil {
 				return err
 			}
@@ -2882,7 +2882,7 @@ func displayOrDash(value string) string {
 	return value
 }
 
-func (a *app) loadStore(mode string) (config.EffectiveConfig, *sqlitestore.Store, func(), error) {
+func (a *app) loadStore(mode string, requireWrite bool, operation string) (config.EffectiveConfig, *sqlitestore.Store, func(), error) {
 	effective, err := config.LoadEffective()
 	if err != nil {
 		if errors.Is(err, config.ErrConfigNotFound) {
@@ -2893,6 +2893,16 @@ func (a *app) loadStore(mode string) (config.EffectiveConfig, *sqlitestore.Store
 			return config.EffectiveConfig{}, nil, nil, a.fail(mode, 2, "validation_error", "config validation failed", validationErr.Issues)
 		}
 		return config.EffectiveConfig{}, nil, nil, a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+	}
+
+	if requireWrite {
+		if err := checkLocalStorageWritable(effective.SQLitePath, operation); err != nil {
+			var storageErr *localStorageError
+			if errors.As(err, &storageErr) {
+				return config.EffectiveConfig{}, nil, nil, a.failLocalStorageNotWritable(mode, storageErr)
+			}
+			return config.EffectiveConfig{}, nil, nil, a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+		}
 	}
 
 	store, err := sqlitestore.OpenExisting(effective.SQLitePath)
@@ -2906,8 +2916,8 @@ func (a *app) loadStore(mode string) (config.EffectiveConfig, *sqlitestore.Store
 	return effective, store, func() { _ = store.Close() }, nil
 }
 
-func (a *app) loadService(mode string) (config.EffectiveConfig, *worklogs.Service, func(), error) {
-	effective, store, cleanup, err := a.loadStore(mode)
+func (a *app) loadService(mode string, requireWrite bool, operation string) (config.EffectiveConfig, *worklogs.Service, func(), error) {
+	effective, store, cleanup, err := a.loadStore(mode, requireWrite, operation)
 	if err != nil {
 		return config.EffectiveConfig{}, nil, nil, err
 	}
@@ -3650,6 +3660,24 @@ func (a *app) failUnrecoverableSQLiteInit(mode, sqlitePath string) error {
 			"message":     message,
 			"sqlite_path": sqlitePath,
 		})
+	}
+	return exitError{code: 1}
+}
+
+func (a *app) failLocalStorageNotWritable(mode string, storageErr *localStorageError) error {
+	message := storageErr.Error()
+	next := "Next step: run outside sandbox, move storage.sqlite_path to a writable location, or fix filesystem permissions."
+
+	if mode == "json" {
+		_ = a.writeJSON(map[string]any{
+			"reason":      "local_storage_not_writable",
+			"message":     message,
+			"sqlite_path": storageErr.SQLitePath,
+			"parent_dir":  storageErr.ParentDir,
+			"operation":   storageErr.Operation,
+		})
+	} else {
+		_, _ = fmt.Fprintf(a.stdout, "%s\n%s\n", message, next)
 	}
 	return exitError{code: 1}
 }

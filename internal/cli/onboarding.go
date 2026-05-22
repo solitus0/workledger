@@ -410,6 +410,12 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			if local {
 				if configValid {
 					items = append(items, doctorItem{Category: "local", Target: "config", Status: "ok", Message: "config is valid"})
+					if err := checkLocalStorageWritable(effective.SQLitePath, "doctor"); err != nil {
+						items = append(items, doctorItem{Category: "local", Target: "storage", Status: "error", Message: err.Error()})
+						exitCode = firstStatusExitCode(exitCode, 1)
+					} else {
+						items = append(items, doctorItem{Category: "local", Target: "storage", Status: "ok", Message: "local SQLite storage is writable"})
+					}
 				} else {
 					items = append(items, doctorItem{Category: "local", Target: "config", Status: "error", Message: "config validation failed"})
 					exitCode = 2

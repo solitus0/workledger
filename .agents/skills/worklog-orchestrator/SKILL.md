@@ -20,6 +20,7 @@ Operate `workledger` as the authority for worklog state. Use reasoning to choose
 - Treat adapter systems, issue metadata, Git history, and session artifacts as supporting evidence.
 - Treat saved reconcile plans as the only execution contract for remote sync.
 - Inspect before mutating unless the user explicitly asks for a single unambiguous local write.
+- Check the effective SQLite path before local mutations when the environment may sandbox writes.
 - Use `--output json` when a result will drive another command, payload, or agent decision.
 - Keep local worklog CRUD separate from remote reconcile workflows.
 
@@ -57,8 +58,8 @@ Use this path when session notes, coding-agent output, Git evidence, or user not
 3. Merge supporting evidence into issue-level work bundles. Do not emit one row per chat, commit, or session by default.
 4. Draft one raw `worklogs apply` payload with top-level `adds`.
 5. Prefer `started_at_utc` for deterministic automation; use `started_at` only when local civil time is the user-facing requirement.
-6. Validate obvious payload-shape mistakes with `scripts/validate_worklog_plan.py` when useful, then let `workledger worklogs apply --dry --output json` be the authoritative check.
-7. Execute `workledger worklogs apply --stdin --output json` only when validation succeeds and the user intended the write.
+6. Validate the payload with `workledger worklogs apply --dry --output json`; the CLI dry-run is the authoritative payload check.
+7. Execute `workledger worklogs apply --stdin --output json` only after the CLI dry-run succeeds and the user intended the write.
 
 Load `references/agentic-flow.md` for allocation, evidence, payload, and response-shaping rules.
 
@@ -86,5 +87,4 @@ Load `references/agentic-flow.md` for allocation, evidence, payload, and respons
 - Exact CLI contracts and examples: `references/command-contract.md`
 - Coding-agent drafting workflow: `references/agentic-flow.md`
 - Session artifact format and renderer usage: `references/session-artifacts.md`
-- Apply payload preflight: `scripts/validate_worklog_plan.py`
 - Session artifact renderer: `scripts/render_session_artifact.py`
