@@ -27,3 +27,17 @@ go.work
 # End of https://www.toptal.com/developers/gitignore/api/go
 .DS_Store
 dist/
+.claude
+
+# START Ruler Generated Files
+/.claude/skills
+/.codex/config.toml
+/.codex/config.toml.bak
+/.codex/skills
+/.github/copilot-instructions.md
+/.github/copilot-instructions.md.bak
+/AGENTS.md
+/AGENTS.md.bak
+/CLAUDE.md
+/CLAUDE.md.bak
+# END Ruler Generated Files

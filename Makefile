@@ -11,3 +11,6 @@ validate:
 
 db:
 	litecli ~/.local/share/workledger/worklogs.db
+
+ruler:
+	ruler apply --agents codex,claude,copilot

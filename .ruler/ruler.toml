@@ -1,0 +1,27 @@
+# Ruler Configuration File
+# See https://ai.intellectronica.net/ruler for documentation.
+
+# Only enable these agents by default
+default_agents = ["codex", "claude-code", "copilot"]
+
+# Enable nested rule loading from nested .ruler directories
+nested = true
+
+[gitignore]
+enabled = true
+local = false
+
+# --- Agent Specific Configurations ---
+
+[agents.codex]
+enabled = true
+output_path = "AGENTS.md"
+
+[agents.claude-code]
+enabled = true
+output_path = "CLAUDE.md"
+
+[agents.copilot]
+enabled = true
+output_path = ".github/copilot-instructions.md"
+
