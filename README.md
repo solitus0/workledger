@@ -63,10 +63,19 @@ go run ./cmd/workledger --help
 
 ## Recommended agent workflow
 
-If you use an agent with `workledger`, install the `worklog-orchestrator` skill for the best workflow synergy. It is tuned for `workledger` setup, local worklog operations, totals inspection, and reconcile-plan review and apply flows.
+If you use an agent with `workledger`, install the `session-worklog-creator` skill to turn current coding-session context into local worklogs with minimal prompting.
 
 ```sh
-npx skills add solitus0/workledger --skill worklog-orchestrator -g
+npx skills add solitus0/workledger --skill session-worklog-creator -g
+```
+
+If you use Codex and want it to write local worklogs to the shared SQLite database outside the current agent session without asking for permission on every add, allow the default storage path in your Codex sandbox config:
+
+```toml
+[sandbox_workspace_write]
+writable_roots = [
+  "~/.local/share/workledger"
+]
 ```
 
 ## Quick start

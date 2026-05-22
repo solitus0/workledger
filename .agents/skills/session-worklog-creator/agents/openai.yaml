@@ -1,0 +1,4 @@
+interface:
+  display_name: "Session Worklog Creator"
+  short_description: "Create workledger worklogs from the current agent session"
+  default_prompt: "Use $session-worklog-creator to create local workledger worklogs from the current session context."
