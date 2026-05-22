@@ -173,6 +173,8 @@ Placement rule:
 - [ ] FUNC-139: `workledger worklogs add` shall require `--description <text>`.
 - [ ] FUNC-140: `workledger worklogs add` shall accept description input through a flag.
 - [ ] FUNC-141: `workledger worklogs add --force` shall allow the operator to bypass duplicate or overlap rejection explicitly.
+- [ ] FUNC-141a: `workledger worklogs add --dry` shall validate and preview one would-be local worklog without writing it.
+- [ ] FUNC-141b: `workledger worklogs add --dry` shall use the same normalization, duplicate validation, overlap validation, and `--force` behavior as executed `worklogs add`.
 - [ ] FUNC-142: `workledger worklogs add` shall auto-generate the created worklog `id`.
 - [ ] FUNC-143: `workledger worklogs add` shall return the created canonical worklog on success.
 

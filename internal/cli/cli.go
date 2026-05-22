@@ -699,6 +699,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	var startedUTC string
 	var duration string
 	var description string
+	var dry bool
 	var force bool
 
 	cmd := &cobra.Command{
@@ -706,26 +707,42 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 		Short: "Add a local worklog",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode, true, "worklogs add")
+			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs add")
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			record, err := service.Add(effective, worklogs.AddInput{
+			input := worklogs.AddInput{
 				IssueKey:    issue,
 				Started:     started,
 				StartedUTC:  startedUTC,
 				Duration:    duration,
 				Description: description,
 				Force:       force,
-			})
+			}
+
+			var record worklogs.LocalWorklog
+			if dry {
+				record, err = service.PreviewAdd(effective, input)
+			} else {
+				record, err = service.Add(effective, input)
+			}
 			if err != nil {
 				return a.handleWorklogError(mode, effective, err)
 			}
 
 			if mode == "json" {
+				if dry {
+					return a.writeJSON(map[string]any{
+						"dry_run": true,
+						"record":  worklogPreviewJSON(record, effective.Location),
+					})
+				}
 				return a.writeJSON(worklogRecordJSON(record, effective.Location))
+			}
+			if dry {
+				return renderTable(a.stdout, []string{"ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"issue_key", "started_at", "duration_seconds", "description"}, 0))
 			}
 			return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
 		},
@@ -736,6 +753,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	cmd.Flags().StringVar(&startedUTC, "started-utc", "", "UTC started timestamp")
 	cmd.Flags().StringVar(&duration, "duration", "", "Worklog duration")
 	cmd.Flags().StringVar(&description, "description", "", "Description")
+	cmd.Flags().BoolVar(&dry, "dry", false, "Validate without writing")
 	cmd.Flags().BoolVar(&force, "force", false, "Bypass duplicate and overlap validation")
 	return cmd
 }
@@ -3749,6 +3767,16 @@ func hasSelector(raw worklogs.ListFilters) bool {
 func worklogRecordJSON(item worklogs.LocalWorklog, location *time.Location) map[string]any {
 	return map[string]any{
 		"id":               item.ID,
+		"issue_key":        item.IssueKey,
+		"started_at":       item.StartedAtUTC.In(location).Format(time.RFC3339),
+		"started_at_utc":   item.StartedAtUTC.UTC().Format(time.RFC3339),
+		"duration_seconds": item.DurationSeconds,
+		"description":      item.Description,
+	}
+}
+
+func worklogPreviewJSON(item worklogs.LocalWorklog, location *time.Location) map[string]any {
+	return map[string]any{
 		"issue_key":        item.IssueKey,
 		"started_at":       item.StartedAtUTC.In(location).Format(time.RFC3339),
 		"started_at_utc":   item.StartedAtUTC.UTC().Format(time.RFC3339),

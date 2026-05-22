@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -897,6 +898,140 @@ func TestWorklogsAddReturnsLocalStorageNotWritable(t *testing.T) {
 	}
 	if payload["operation"] != "worklogs add" {
 		t.Fatalf("expected operation worklogs add, got %s", result.stdout)
+	}
+}
+
+func TestWorklogsAddDryJSONPreviewsAndDoesNotPersist(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	result := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started", "2026-05-03T09:00", "--duration", "1h", "--description", "  Investigated \n bug  ", "--dry", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("dry add failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	payload := decodeJSONMap(t, []byte(result.stdout))
+	if payload["dry_run"] != true {
+		t.Fatalf("expected dry_run=true, got %s", result.stdout)
+	}
+	record, ok := payload["record"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected record object, got %s", result.stdout)
+	}
+	if _, exists := record["id"]; exists {
+		t.Fatalf("expected preview record without id, got %s", result.stdout)
+	}
+	if record["issue_key"] != "ABC-123" {
+		t.Fatalf("unexpected issue key: %s", result.stdout)
+	}
+	if record["started_at"] != "2026-05-03T09:00:00Z" || record["started_at_utc"] != "2026-05-03T09:00:00Z" {
+		t.Fatalf("unexpected started fields: %s", result.stdout)
+	}
+	if record["duration_seconds"] != float64(3600) {
+		t.Fatalf("unexpected duration: %s", result.stdout)
+	}
+	if record["description"] != "Investigated bug" {
+		t.Fatalf("unexpected description: %s", result.stdout)
+	}
+	if countActiveCLIWorklogs(t) != 0 {
+		t.Fatalf("expected dry add to leave storage unchanged")
+	}
+}
+
+func TestWorklogsAddDryTableOmitsID(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	result := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started", "2026-05-03T09:00", "--duration", "1h", "--description", "Preview row", "--dry")
+	if result.code != 0 {
+		t.Fatalf("dry add table failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	lines := strings.Split(strings.TrimSpace(result.stdout), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected header and one row, got %q", result.stdout)
+	}
+	headers := strings.Fields(lines[0])
+	expected := []string{"ISSUE", "STARTED", "DURATION", "DESCRIPTION"}
+	if !reflect.DeepEqual(headers, expected) {
+		t.Fatalf("unexpected headers %v in %q", headers, result.stdout)
+	}
+	if strings.Contains(lines[0], "ID") {
+		t.Fatalf("expected no ID column, got %q", result.stdout)
+	}
+}
+
+func TestWorklogsAddDryConflictLeavesRowsUnchanged(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	first := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:00:00Z", "--duration", "1h", "--description", "First", "--output", "json")
+	if first.code != 0 {
+		t.Fatalf("seed add failed: code=%d stdout=%s stderr=%s", first.code, first.stdout, first.stderr)
+	}
+
+	conflict := runCLI(t, "worklogs", "add", "--issue", "ABC-124", "--started-utc", "2026-05-03T06:30:00Z", "--duration", "1h", "--description", "Overlap", "--dry", "--output", "json")
+	if conflict.code != 2 {
+		t.Fatalf("expected dry conflict exit 2, got code=%d stdout=%s stderr=%s", conflict.code, conflict.stdout, conflict.stderr)
+	}
+	if countActiveCLIWorklogs(t) != 1 {
+		t.Fatalf("expected conflicting dry add to leave row count unchanged")
+	}
+}
+
+func TestWorklogsAddDryForceSucceedsWithoutPersisting(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	first := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:00:00Z", "--duration", "1h", "--description", "First", "--output", "json")
+	if first.code != 0 {
+		t.Fatalf("seed add failed: code=%d stdout=%s stderr=%s", first.code, first.stdout, first.stderr)
+	}
+
+	result := runCLI(t, "worklogs", "add", "--issue", "ABC-124", "--started-utc", "2026-05-03T06:30:00Z", "--duration", "1h", "--description", "Overlap", "--dry", "--force", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("forced dry add failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if countActiveCLIWorklogs(t) != 1 {
+		t.Fatalf("expected forced dry add to leave row count unchanged")
+	}
+}
+
+func TestWorklogsAddDrySkipsLocalStorageWritabilityPrecheck(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	sqlitePath := filepath.Join(os.Getenv("HOME"), ".local", "share", "workledger", "worklogs.db")
+	setReadOnly(t, sqlitePath, 0o400)
+
+	result := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:00:00Z", "--duration", "1h", "--description", "Preview", "--dry", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("expected dry add to succeed on read-only db, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(result.stdout))
+	if payload["dry_run"] != true {
+		t.Fatalf("expected dry preview payload, got %s", result.stdout)
+	}
+	if countActiveCLIWorklogs(t) != 0 {
+		t.Fatalf("expected dry add on read-only db to leave storage unchanged")
 	}
 }
 
@@ -6082,6 +6217,19 @@ func openTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("open db: %v", err)
 	}
 	return db
+}
+
+func countActiveCLIWorklogs(t *testing.T) int {
+	t.Helper()
+
+	db := openTestDB(t)
+	defer db.Close()
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM worklogs`).Scan(&count); err != nil {
+		t.Fatalf("count worklogs: %v", err)
+	}
+	return count
 }
 
 func countSavedPlans(t *testing.T) int {

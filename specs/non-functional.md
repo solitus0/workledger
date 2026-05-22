@@ -188,6 +188,7 @@ Placement rule:
 - [ ] NFR-161: `worklogs add` description shall collapse repeated whitespace to single spaces.
 - [ ] NFR-162: `worklogs add` normalized description shall remain non-empty.
 - [ ] NFR-163: `worklogs update` shall preserve the same non-empty normalized description invariant as `worklogs add`.
+- [ ] NFR-163a: `worklogs add --dry` shall preserve the same duration, timestamp, and description normalization rules as executed `worklogs add`.
 - [ ] NFR-164: `worklogs shift --by` shall normalize to non-zero whole seconds.
 - [ ] NFR-165: `worklogs apply` payload shall be JSON.
 - [ ] NFR-166: `worklogs apply` payload shall be one raw apply payload object.
@@ -283,6 +284,8 @@ Placement rule:
 - [ ] NFR-248: `--fields` shall not remove `filters` from `worklogs list` or `worklogs search` JSON output.
 - [ ] NFR-249: `--fields` shall not remove `total` from `worklogs list` or `worklogs search` JSON output.
 - [ ] NFR-250: When `--fields` is set, each selected JSON item shall include only requested item fields in requested order.
+- [ ] NFR-250a: `worklogs add --output json --dry` shall return exactly `dry_run` and `record`.
+- [ ] NFR-250b: `worklogs add --output json --dry` `record` shall include `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description`.
 - [ ] NFR-251: `worklogs list` active table columns shall be `ID`, `ISSUE`, `STARTED`, `DURATION`, and `DESCRIPTION`.
 - [ ] NFR-252: `worklogs list --only-deleted` table columns shall be `ID`, `ISSUE`, and `DELETED`.
 - [ ] NFR-253: Empty table results shall render selected table headers with zero data rows.
@@ -364,6 +367,7 @@ Placement rule:
 - [ ] NFR-321: SQLite writes shall be serialized through one writer path.
 - [ ] NFR-321a: Commands that persist local SQLite state shall run one shared storage-writability preflight after config resolution and before opening a write transaction.
 - [ ] NFR-321b: `worklogs apply --dry` shall remain read-only and shall not require local storage writability.
+- [ ] NFR-321c: `worklogs add --dry` shall remain read-only and shall not require local storage writability.
 
 ## Determinism
 - [ ] NFR-322: `worklogs list` sorting shall be fixed by `started_at desc`, then stable local `id`.

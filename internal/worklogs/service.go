@@ -229,19 +229,13 @@ func (s *Service) Show(id string) (LocalWorklog, error) {
 	return LocalWorklog{}, err
 }
 
-func (s *Service) Add(cfg config.EffectiveConfig, input AddInput) (LocalWorklog, error) {
-	candidate, err := buildCandidate(cfg, AddCandidateInput{
-		IssueKey:    input.IssueKey,
-		Started:     input.Started,
-		StartedUTC:  input.StartedUTC,
-		Duration:    input.Duration,
-		Description: input.Description,
-	})
-	if err != nil {
-		return LocalWorklog{}, err
-	}
+func (s *Service) PreviewAdd(cfg config.EffectiveConfig, input AddInput) (LocalWorklog, error) {
+	return s.prepareAddCandidate(cfg, input)
+}
 
-	if err := s.validateConflicts(cfg, candidate, "", input.Force); err != nil {
+func (s *Service) Add(cfg config.EffectiveConfig, input AddInput) (LocalWorklog, error) {
+	candidate, err := s.prepareAddCandidate(cfg, input)
+	if err != nil {
 		return LocalWorklog{}, err
 	}
 
@@ -269,6 +263,25 @@ func (s *Service) Add(cfg config.EffectiveConfig, input AddInput) (LocalWorklog,
 	}
 
 	return worklog, nil
+}
+
+func (s *Service) prepareAddCandidate(cfg config.EffectiveConfig, input AddInput) (LocalWorklog, error) {
+	candidate, err := buildCandidate(cfg, AddCandidateInput{
+		IssueKey:    input.IssueKey,
+		Started:     input.Started,
+		StartedUTC:  input.StartedUTC,
+		Duration:    input.Duration,
+		Description: input.Description,
+	})
+	if err != nil {
+		return LocalWorklog{}, err
+	}
+
+	if err := s.validateConflicts(cfg, candidate, "", input.Force); err != nil {
+		return LocalWorklog{}, err
+	}
+
+	return candidate, nil
 }
 
 func (s *Service) Update(cfg config.EffectiveConfig, id string, patch PatchInput) (LocalWorklog, error) {

@@ -1,6 +1,7 @@
 package worklogs
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -304,6 +305,81 @@ func TestSearchRejectsBlankQuery(t *testing.T) {
 	}
 }
 
+func TestPreviewAddNormalizesAndDoesNotPersist(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{Location: time.UTC, MinimumDurationSeconds: 900}
+
+	record, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-123",
+		Started:     "2026-05-03T09:00",
+		Duration:    "1h",
+		Description: "  Investigated \n bug  ",
+	})
+	if err != nil {
+		t.Fatalf("preview add failed: %v", err)
+	}
+	if record.ID != "" {
+		t.Fatalf("expected preview to omit id, got %q", record.ID)
+	}
+	if record.IssueKey != "ABC-123" {
+		t.Fatalf("unexpected issue key %q", record.IssueKey)
+	}
+	if got := record.StartedAtUTC.Format(time.RFC3339); got != "2026-05-03T09:00:00Z" {
+		t.Fatalf("unexpected started_at_utc %s", got)
+	}
+	if record.DurationSeconds != 3600 {
+		t.Fatalf("unexpected duration %d", record.DurationSeconds)
+	}
+	if record.Description != "Investigated bug" {
+		t.Fatalf("unexpected description %q", record.Description)
+	}
+	if got := countActiveWorklogs(t, store); got != 0 {
+		t.Fatalf("expected no persisted worklogs, got %d", got)
+	}
+}
+
+func TestPreviewAddEnforcesConflictsAndForce(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{Location: time.UTC, MinimumDurationSeconds: 900}
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-123",
+		StartedUTC:  "2026-05-03T06:00:00Z",
+		Duration:    "1h",
+		Description: "First",
+	})
+
+	_, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		StartedUTC:  "2026-05-03T06:30:00Z",
+		Duration:    "1h",
+		Description: "Overlap",
+	})
+	if err == nil {
+		t.Fatal("expected preview conflict")
+	}
+
+	record, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		StartedUTC:  "2026-05-03T06:30:00Z",
+		Duration:    "1h",
+		Description: "Overlap",
+		Force:       true,
+	})
+	if err != nil {
+		t.Fatalf("forced preview add failed: %v", err)
+	}
+	if record.ID != "" {
+		t.Fatalf("expected forced preview to omit id, got %q", record.ID)
+	}
+	if got := countActiveWorklogs(t, store); got != 1 {
+		t.Fatalf("expected persisted row count to stay 1, got %d", got)
+	}
+}
+
 func newTestService(t *testing.T) (*sqlitestore.Store, *Service) {
 	t.Helper()
 
@@ -322,4 +398,17 @@ func mustAddWorklog(t *testing.T, service *Service, cfg config.EffectiveConfig, 
 		t.Fatalf("add worklog: %v", err)
 	}
 	return item
+}
+
+func countActiveWorklogs(t *testing.T, store *sqlitestore.Store) int {
+	t.Helper()
+
+	var count int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM worklogs`).Scan(&count); err != nil {
+		if err == sql.ErrNoRows {
+			return 0
+		}
+		t.Fatalf("count worklogs: %v", err)
+	}
+	return count
 }
