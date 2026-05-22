@@ -2,8 +2,10 @@ package reconcile
 
 import (
 	"context"
+	"math/rand"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/solitus0/workledger/internal/config"
 	"github.com/solitus0/workledger/internal/progress"
@@ -80,15 +82,45 @@ func (s *Service) executeSavedPushGroups(ctx context.Context, cfg config.Effecti
 		}
 	}
 
+	// Pre-resolve Clockify projects and tags sequentially before any goroutine starts.
+	var clockifyItems []PlanItem
+	for _, g := range groups {
+		if len(g.items) > 0 && g.items[0].TargetAdapterFamily == "clockify" {
+			clockifyItems = append(clockifyItems, g.items...)
+		}
+	}
+	clockifyCtx := ctx
+	if len(clockifyItems) > 0 {
+		deps, err := s.prepareClockifyPushDeps(ctx, cfg, clockifyItems)
+		if err != nil {
+			return pushExecutionSummary{}, err
+		}
+		clockifyCtx = withClockifyDeps(ctx, deps)
+	}
+	numClockifyGroups := len(clockifyItems)
+
 	outcomes := make(chan pushExecutionOutcome, len(items))
 	var wg sync.WaitGroup
 	for _, group := range groups {
 		group := group
+		isClockify := len(group.items) > 0 && group.items[0].TargetAdapterFamily == "clockify"
+		itemCtx := ctx
+		if isClockify {
+			itemCtx = clockifyCtx
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			if isClockify && numClockifyGroups > 1 {
+				jitter := time.Duration(rand.Int63n(int64(time.Duration(numClockifyGroups) * 200 * time.Millisecond)))
+				select {
+				case <-itemCtx.Done():
+					return
+				case <-time.After(jitter):
+				}
+			}
 			for _, item := range group.items {
-				outcomes <- s.performPushItem(ctx, cfg, item, retryScope)
+				outcomes <- s.performPushItem(itemCtx, cfg, item, retryScope)
 			}
 		}()
 	}

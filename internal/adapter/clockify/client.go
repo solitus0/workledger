@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"path"
@@ -341,35 +342,55 @@ func (c *Client) request(ctx context.Context, method, route string, query url.Va
 		endpoint += "?" + query.Encode()
 	}
 
-	var reader io.Reader
+	var payload []byte
 	if body != nil {
-		payload, err := json.Marshal(body)
+		var err error
+		payload, err = json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		reader = bytes.NewReader(payload)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-Api-Key", c.apiKey)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		defer resp.Body.Close()
-		return nil, &RequestError{
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
+	const maxAttempts = 5
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			base := time.Duration(1<<(attempt-1)) * time.Second
+			jitter := time.Duration(rand.Int63n(int64(base) + 1))
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(base + jitter):
+			}
 		}
-	}
 
-	return resp, nil
+		var reader io.Reader
+		if payload != nil {
+			reader = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("X-Api-Key", c.apiKey)
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			_ = resp.Body.Close()
+			lastErr = &RequestError{StatusCode: resp.StatusCode, Status: resp.Status}
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			_ = resp.Body.Close()
+			return nil, &RequestError{StatusCode: resp.StatusCode, Status: resp.Status}
+		}
+		return resp, nil
+	}
+	return nil, lastErr
 }

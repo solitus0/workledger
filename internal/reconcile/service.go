@@ -1391,6 +1391,10 @@ func (s *Service) loadCurrentJiraCloudScope(ctx context.Context, cfg config.Effe
 }
 
 func (s *Service) applyClockifyPushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem) error {
+	if deps, ok := clockifyDepsFromCtx(ctx); ok {
+		return s.applyClockifyPushItemWithDeps(ctx, item, deps)
+	}
+
 	clockifyCfg, err := config.ResolveClockifyConfig(cfg)
 	if err != nil {
 		return err
