@@ -76,6 +76,109 @@ func TestVersionShortFlagJSONWithoutConfig(t *testing.T) {
 	}
 }
 
+func TestHelpShowsAcceptedDateFormatsAndExamples(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		contains []string
+	}{
+		{
+			name: "worklogs add",
+			args: []string{"worklogs", "add", "--help"},
+			contains: []string{
+				"Local started timestamp: YYYY-MM-DDTHH:MM",
+				"UTC started timestamp in RFC3339, e.g. 2026-05-14T09:00:00Z",
+				"workledger worklogs add --issue PROJ-123 --started todayT09:00",
+			},
+		},
+		{
+			name: "worklogs context",
+			args: []string{"worklogs", "context", "--help"},
+			contains: []string{
+				"From Date selector: YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd",
+				"Clock time in HH:MM, e.g. 09:00",
+				"Lunch exclusion window in HH:MM-HH:MM, e.g. 12:00-13:00",
+			},
+		},
+		{
+			name: "worklogs apply",
+			args: []string{"worklogs", "apply", "--help"},
+			contains: []string{
+				"Payload timestamps:",
+				"started_at uses the same local timestamp grammar as --started",
+				"started_at_utc uses RFC3339 UTC, e.g. 2026-05-14T09:00:00Z",
+			},
+		},
+		{
+			name: "totals",
+			args: []string{"totals", "--help"},
+			contains: []string{
+				"From Date selector: YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd",
+				"workledger totals --from 2026-05-14 --to 2026-05-16 --adapter clockify",
+			},
+		},
+		{
+			name: "plan reconcile",
+			args: []string{"plan", "reconcile", "--help"},
+			contains: []string{
+				"To Date selector: YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd",
+				"workledger plan reconcile --pull --adapter jira-cloud --from 2026-05-14 --to 2026-05-16",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := runCLI(t, tc.args...)
+			if result.code != 0 {
+				t.Fatalf("expected help exit 0, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+			}
+			for _, want := range tc.contains {
+				if !strings.Contains(result.stdout, want) {
+					t.Fatalf("expected help to contain %q, got stdout=%s", want, result.stdout)
+				}
+			}
+		})
+	}
+}
+
+func TestWorklogsAddRejectsFullISOLocalTimestampWithExplicitFormatHint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	result := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started", "2026-05-03T09:00:00+03:00", "--duration", "1h", "--description", "Invalid started", "--output", "json")
+	if result.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "started must use YYYY-MM-DDTHH:MM") {
+		t.Fatalf("expected explicit started format hint, got stdout=%s stderr=%s", result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "time must use HH:MM, e.g. 09:00") {
+		t.Fatalf("expected explicit HH:MM hint, got stdout=%s stderr=%s", result.stdout, result.stderr)
+	}
+}
+
+func TestWorklogsContextRejectsInvalidDayStartWithExample(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	result := runCLI(t, "worklogs", "context", "--today", "--day-start", "9am", "--output", "json")
+	if result.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "time must use HH:MM, e.g. 09:00") {
+		t.Fatalf("expected explicit clock format hint, got stdout=%s stderr=%s", result.stdout, result.stderr)
+	}
+}
+
 func TestStatusWithoutConfigSuggestsInit(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -3531,6 +3634,12 @@ func TestPlanTableOutputIsAligned(t *testing.T) {
 	if !strings.Contains(reconcile.stdout, "PLAN_ID") || !strings.Contains(reconcile.stdout, "INVALID_FINDINGS") {
 		t.Fatalf("expected reconcile headers, got %q", reconcile.stdout)
 	}
+	if !strings.Contains(reconcile.stdout, "\nNext:\n") || !strings.Contains(reconcile.stdout, "workledger plan show ") {
+		t.Fatalf("expected reconcile next-step footer, got %q", reconcile.stdout)
+	}
+	if !strings.Contains(reconcile.stdout, "workledger plan apply ") {
+		t.Fatalf("expected reconcile apply next step when ready items exist, got %q", reconcile.stdout)
+	}
 
 	show := runCLI(t, "plan", "show")
 	if show.code != 0 {
@@ -3547,6 +3656,66 @@ func TestPlanTableOutputIsAligned(t *testing.T) {
 	}
 	if !strings.Contains(show.stdout, "2026-04-01T00:00:00Z...2026-04-30T23:59:59Z") {
 		t.Fatalf("expected plan show window value, got %q", show.stdout)
+	}
+}
+
+func TestPlanReconcileTableOutputOmitsApplyNextStepWhenNoReadyItems(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTCAndClockify(t)
+
+	server := newClockifyTestServer(t)
+	defer server.Close()
+	originalBaseURL := clockifyadapter.BaseURL
+	clockifyadapter.BaseURL = server.URL
+	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	first := runCLI(t, "plan", "reconcile", "--pull", "--adapter", "clockify", "--from", "2026-04-01", "--to", "2026-04-30", "--output", "json")
+	if first.code != 0 {
+		t.Fatalf("first reconcile failed: code=%d stdout=%s stderr=%s", first.code, first.stdout, first.stderr)
+	}
+	planID := decodeJSONMap(t, []byte(first.stdout))["plan_id"].(string)
+
+	apply := runCLI(t, "plan", "apply", planID, "--output", "json")
+	if apply.code != 0 {
+		t.Fatalf("apply failed: code=%d stdout=%s stderr=%s", apply.code, apply.stdout, apply.stderr)
+	}
+
+	second := runCLI(t, "plan", "reconcile", "--pull", "--adapter", "clockify", "--from", "2026-04-01", "--to", "2026-04-30")
+	if second.code != 0 {
+		t.Fatalf("second reconcile failed: code=%d stdout=%s stderr=%s", second.code, second.stdout, second.stderr)
+	}
+	if !strings.Contains(second.stdout, "\nNext:\n") || !strings.Contains(second.stdout, "workledger plan show ") {
+		t.Fatalf("expected reconcile show next step, got %q", second.stdout)
+	}
+	if strings.Contains(second.stdout, "workledger plan apply ") {
+		t.Fatalf("expected reconcile output without apply next step when no ready items exist, got %q", second.stdout)
+	}
+}
+
+func TestPlanReconcileJSONOutputDoesNotIncludeNextStepFooter(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTCAndClockify(t)
+
+	server := newClockifyTestServer(t)
+	defer server.Close()
+	originalBaseURL := clockifyadapter.BaseURL
+	clockifyadapter.BaseURL = server.URL
+	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	result := runCLI(t, "plan", "reconcile", "--pull", "--adapter", "clockify", "--from", "2026-04-01", "--to", "2026-04-30", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("reconcile failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if strings.Contains(result.stdout, "Next:") || strings.Contains(result.stdout, "workledger plan show ") || strings.Contains(result.stdout, "workledger plan apply ") {
+		t.Fatalf("expected reconcile json output without next-step footer, got %q", result.stdout)
 	}
 }
 

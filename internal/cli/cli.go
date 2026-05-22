@@ -34,6 +34,23 @@ const listDescriptionMaxWidth = 80
 
 var Version = "dev"
 
+const (
+	dateSelectorHelp       = "Date selector: YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd"
+	fromDateHelp           = "From " + dateSelectorHelp + ", e.g. 2026-05-14 or -7d"
+	toDateHelp             = "To " + dateSelectorHelp + ", e.g. 2026-05-14 or today"
+	localTimestampHelp     = "Local started timestamp: YYYY-MM-DDTHH:MM, todayTHH:MM, yesterdayTHH:MM, tomorrowTHH:MM, +NdTHH:MM, or -NdTHH:MM"
+	utcTimestampHelp       = "UTC started timestamp in RFC3339, e.g. 2026-05-14T09:00:00Z"
+	clockHelp              = "Clock time in HH:MM, e.g. 09:00"
+	lunchWindowHelp        = "Lunch exclusion window in HH:MM-HH:MM, e.g. 12:00-13:00"
+	worklogsAddExample     = "  workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started-utc 2026-05-14T09:00:00Z --duration 2h --description \"Implement reconciliation\""
+	worklogsUpdateExample  = "  workledger worklogs update <id> --started 2026-05-14T09:00 --duration 1h30m\n  workledger worklogs update <id> --started-utc 2026-05-14T09:00:00Z"
+	worklogsContextExample = "  workledger worklogs context --today --day-start 09:00 --day-end 17:30\n  workledger worklogs context --from 2026-05-14 --to 2026-05-14 --lunch 12:00-13:00"
+	worklogsApplyExample   = "  workledger worklogs apply --file payload.json\n  workledger worklogs apply --stdin\n\nPayload timestamps:\n  started_at uses the same local timestamp grammar as --started\n  started_at_utc uses RFC3339 UTC, e.g. 2026-05-14T09:00:00Z"
+	totalsExample          = "  workledger totals --today\n  workledger totals --from 2026-05-14 --to 2026-05-16 --adapter clockify"
+	planReconcileExample   = "  workledger plan reconcile --push --adapter clockify --today\n  workledger plan reconcile --pull --adapter jira-cloud --from 2026-05-14 --to 2026-05-16"
+	planListExample        = "  workledger plan list --today\n  workledger plan list --from 2026-05-14 --to 2026-05-16"
+)
+
 type exitError struct {
 	code int
 }
@@ -322,8 +339,9 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 	var fields string
 
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List local worklogs",
+		Use:     "list",
+		Short:   "List local worklogs",
+		Example: "  workledger worklogs list --today\n  workledger worklogs list --from 2026-05-14 --to 2026-05-16\n  workledger worklogs list --from -7d --to today",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, false, "")
@@ -390,8 +408,8 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
 	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
-	cmd.Flags().StringVar(&from, "from", "", "From date")
-	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
 	cmd.Flags().BoolVar(&onlyDeleted, "only-deleted", false, "List deleted tombstones")
 	cmd.Flags().StringVar(&fields, "fields", "", "Comma-separated field list")
 	return cmd
@@ -411,9 +429,10 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 	var fields string
 
 	cmd := &cobra.Command{
-		Use:   "search <query>",
-		Short: "Search local worklogs by description",
-		Args:  cobra.ExactArgs(1),
+		Use:     "search <query>",
+		Short:   "Search local worklogs by description",
+		Args:    cobra.ExactArgs(1),
+		Example: "  workledger worklogs search review --today\n  workledger worklogs search docs --from 2026-05-14 --to 2026-05-16",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, false, "")
@@ -472,8 +491,8 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
 	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
-	cmd.Flags().StringVar(&from, "from", "", "From date")
-	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
 	cmd.Flags().BoolVar(&onlyDeleted, "only-deleted", false, "Search deleted tombstones")
 	cmd.Flags().StringVar(&fields, "fields", "", "Comma-separated field list")
 	return cmd
@@ -495,8 +514,9 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 	var noLunch bool
 
 	cmd := &cobra.Command{
-		Use:   "context",
-		Short: "Inspect planning context for local worklogs",
+		Use:     "context",
+		Short:   "Inspect planning context for local worklogs",
+		Example: worklogsContextExample,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, false, "")
@@ -553,11 +573,11 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
 	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
-	cmd.Flags().StringVar(&from, "from", "", "From date")
-	cmd.Flags().StringVar(&to, "to", "", "To date")
-	cmd.Flags().StringVar(&dayStart, "day-start", "", "Workday start clock")
-	cmd.Flags().StringVar(&dayEnd, "day-end", "", "Workday end clock")
-	cmd.Flags().StringVar(&lunch, "lunch", "", "Lunch exclusion window")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
+	cmd.Flags().StringVar(&dayStart, "day-start", "", "Workday start "+clockHelp)
+	cmd.Flags().StringVar(&dayEnd, "day-end", "", "Workday end "+clockHelp)
+	cmd.Flags().StringVar(&lunch, "lunch", "", lunchWindowHelp)
 	cmd.Flags().BoolVar(&noLunch, "no-lunch", false, "Disable lunch exclusion")
 	return cmd
 }
@@ -576,8 +596,9 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 	var dry bool
 
 	cmd := &cobra.Command{
-		Use:   "shift",
-		Short: "Shift local worklog timestamps",
+		Use:     "shift",
+		Short:   "Shift local worklog timestamps",
+		Example: "  workledger worklogs shift --issue PROJ-123 --today --by 15m\n  workledger worklogs shift --from 2026-05-14 --to 2026-05-16 --by -30m --dry",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs shift")
@@ -630,8 +651,8 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
 	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
-	cmd.Flags().StringVar(&from, "from", "", "From date")
-	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
 	cmd.Flags().StringVar(&by, "by", "", "Signed Go duration, e.g. 15m, 1h30m, -45m")
 	cmd.Flags().BoolVar(&dry, "dry", false, "Preview shifted worklogs")
 	return cmd
@@ -644,8 +665,9 @@ func (a *app) newWorklogsApplyCommand() *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "apply",
-		Short: "Apply raw batch worklog additions",
+		Use:     "apply",
+		Short:   "Apply raw batch worklog additions",
+		Example: worklogsApplyExample,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs apply")
@@ -703,8 +725,9 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "add",
-		Short: "Add a local worklog",
+		Use:     "add",
+		Short:   "Add a local worklog",
+		Example: worklogsAddExample,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs add")
@@ -749,8 +772,8 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
-	cmd.Flags().StringVar(&started, "started", "", "Local started timestamp")
-	cmd.Flags().StringVar(&startedUTC, "started-utc", "", "UTC started timestamp")
+	cmd.Flags().StringVar(&started, "started", "", localTimestampHelp)
+	cmd.Flags().StringVar(&startedUTC, "started-utc", "", utcTimestampHelp)
 	cmd.Flags().StringVar(&duration, "duration", "", "Worklog duration")
 	cmd.Flags().StringVar(&description, "description", "", "Description")
 	cmd.Flags().BoolVar(&dry, "dry", false, "Validate without writing")
@@ -767,9 +790,10 @@ func (a *app) newWorklogsUpdateCommand() *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "update <id>",
-		Short: "Update a local worklog",
-		Args:  cobra.ExactArgs(1),
+		Use:     "update <id>",
+		Short:   "Update a local worklog",
+		Args:    cobra.ExactArgs(1),
+		Example: worklogsUpdateExample,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, true, "worklogs update")
@@ -808,8 +832,8 @@ func (a *app) newWorklogsUpdateCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
-	cmd.Flags().StringVar(&started, "started", "", "Local started timestamp")
-	cmd.Flags().StringVar(&startedUTC, "started-utc", "", "UTC started timestamp")
+	cmd.Flags().StringVar(&started, "started", "", localTimestampHelp)
+	cmd.Flags().StringVar(&startedUTC, "started-utc", "", utcTimestampHelp)
 	cmd.Flags().StringVar(&duration, "duration", "", "Worklog duration")
 	cmd.Flags().StringVar(&description, "description", "", "Description")
 	cmd.Flags().BoolVar(&force, "force", false, "Bypass duplicate and overlap validation")
@@ -831,9 +855,10 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	var hardDelete bool
 
 	cmd := &cobra.Command{
-		Use:   "delete [id]",
-		Short: "Delete local worklogs",
-		Args:  cobra.MaximumNArgs(1),
+		Use:     "delete [id]",
+		Short:   "Delete local worklogs",
+		Args:    cobra.MaximumNArgs(1),
+		Example: "  workledger worklogs delete <id>\n  workledger worklogs delete --from 2026-05-14 --to 2026-05-16 --dry\n  workledger worklogs delete --today --yes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, true, "worklogs delete")
@@ -915,8 +940,8 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
 	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
-	cmd.Flags().StringVar(&from, "from", "", "From date")
-	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
 	cmd.Flags().BoolVar(&dry, "dry", false, "Preview matching deletes")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Execute filtered batch delete")
 	cmd.Flags().BoolVar(&hardDelete, "hard", false, "Delete without creating tombstones")
@@ -938,9 +963,10 @@ func (a *app) newWorklogsRestoreCommand() *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:   "restore",
-		Short: "Restore deleted local worklogs",
-		Args:  cobra.NoArgs,
+		Use:     "restore",
+		Short:   "Restore deleted local worklogs",
+		Args:    cobra.NoArgs,
+		Example: "  workledger worklogs restore --from 2026-05-14 --to 2026-05-16 --dry\n  workledger worklogs restore --today --yes",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs restore")
@@ -994,8 +1020,8 @@ func (a *app) newWorklogsRestoreCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
 	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Filter to the previous month")
-	cmd.Flags().StringVar(&from, "from", "", "From date")
-	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
 	cmd.Flags().BoolVar(&dry, "dry", false, "Preview matching restores")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Execute filtered batch restore")
 	cmd.Flags().BoolVar(&force, "force", false, "Restore even when duplicate or overlap conflicts exist")
@@ -1540,8 +1566,9 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 	var to string
 
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List cached issue metadata",
+		Use:     "list",
+		Short:   "List cached issue metadata",
+		Example: "  workledger issue-metadata list --issue PROJ-123\n  workledger issue-metadata list --from 2026-05-14 --to 2026-05-16",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, false, "")
@@ -1603,8 +1630,8 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
 	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Use the previous month")
-	cmd.Flags().StringVar(&from, "from", "", "From date")
-	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
 	return cmd
 }
 
@@ -1623,8 +1650,9 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 	var to string
 
 	cmd := &cobra.Command{
-		Use:   "refresh",
-		Short: "Refresh local issue metadata from an adapter",
+		Use:     "refresh",
+		Short:   "Refresh local issue metadata from an adapter",
+		Example: "  workledger issue-metadata refresh --adapter jira-cloud --field max-estimate --today\n  workledger issue-metadata refresh --adapter jira-data-center --field max-estimate --from 2026-05-14 --to 2026-05-16",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			if field != "max-estimate" {
@@ -1769,8 +1797,8 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
 	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Use the previous month")
-	cmd.Flags().StringVar(&from, "from", "", "From date")
-	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
 	return cmd
 }
 
@@ -1789,8 +1817,9 @@ func (a *app) newTotalsCommand() *cobra.Command {
 	var progressMode string
 
 	cmd := &cobra.Command{
-		Use:   "totals",
-		Short: "Summarize local totals or compare with remote adapter totals",
+		Use:     "totals",
+		Short:   "Summarize local totals or compare with remote adapter totals",
+		Example: totalsExample,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 
@@ -1876,8 +1905,8 @@ func (a *app) newTotalsCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
 	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Use the previous month")
-	cmd.Flags().StringVar(&from, "from", "", "From date")
-	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
 	cmd.Flags().BoolVar(&details, "details", false, "Show per-day totals")
 	cmd.Flags().StringVar(&progressMode, "progress", string(progress.ModeAuto), "Progress mode: auto, bar, plain, or off")
 	return cmd
@@ -2095,8 +2124,9 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 	var progressMode string
 
 	cmd := &cobra.Command{
-		Use:   "reconcile",
-		Short: "Create a saved reconcile plan",
+		Use:     "reconcile",
+		Short:   "Create a saved reconcile plan",
+		Example: planReconcileExample,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			if pull == push {
@@ -2158,6 +2188,9 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 				if err := renderTable(a.stdout, []string{"PLAN_ID", "STATUS", "ACTIONABLE", "INVALID_FINDINGS"}, [][]string{{plan.ID, plan.AggregateStatus, fmt.Sprint(countPlanItemsByStatus(plan.Items, "ready")), fmt.Sprint(len(plan.Findings))}}); err != nil {
 					return err
 				}
+				if err := renderReconcilePlanNextSteps(a.stdout, plan); err != nil {
+					return err
+				}
 			}
 			if hasPlanItemsWithStatus(plan.Items, "check_failed") {
 				return exitError{code: 6}
@@ -2178,8 +2211,8 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
 	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Use the previous month")
-	cmd.Flags().StringVar(&from, "from", "", "From date")
-	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
 	cmd.Flags().StringVar(&progressMode, "progress", string(progress.ModeAuto), "Progress mode: auto, bar, plain, or off")
 	return cmd
 }
@@ -2252,8 +2285,9 @@ func (a *app) newPlanListCommand() *cobra.Command {
 	var to string
 
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List saved plans",
+		Use:     "list",
+		Short:   "List saved plans",
+		Example: planListExample,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, store, cleanup, err := a.loadStore(mode, false, "")
@@ -2301,8 +2335,8 @@ func (a *app) newPlanListCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
 	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Use the previous month")
-	cmd.Flags().StringVar(&from, "from", "", "From date")
-	cmd.Flags().StringVar(&to, "to", "", "To date")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
 	return cmd
 }
 
@@ -2694,14 +2728,14 @@ func parsePlanDateSelector(value string, location *time.Location, now func() tim
 	if strings.HasSuffix(value, "d") && (strings.HasPrefix(value, "+") || strings.HasPrefix(value, "-")) {
 		offset := 0
 		if _, err := fmt.Sscanf(strings.TrimSuffix(value, "d"), "%d", &offset); err != nil {
-			return time.Time{}, errors.New("must use YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd")
+			return time.Time{}, errors.New(dateSelectorHelp)
 		}
 		return now().In(location).AddDate(0, 0, offset), nil
 	}
 
 	parsed, err := time.ParseInLocation("2006-01-02", value, location)
 	if err != nil {
-		return time.Time{}, errors.New("must use YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd")
+		return time.Time{}, errors.New(dateSelectorHelp)
 	}
 	return parsed, nil
 }
@@ -2861,6 +2895,18 @@ func renderReconcileNoPlanTable(w io.Writer, result reconcile.ReconcileNoPlanRes
 			fmt.Sprint(result.ActionableScopeCount),
 		}},
 	)
+}
+
+func renderReconcilePlanNextSteps(w io.Writer, plan reconcile.Plan) error {
+	_, err := fmt.Fprintf(w, "\nNext:\n  workledger plan show %s\n", plan.ID)
+	if err != nil {
+		return err
+	}
+	if countPlanItemsByStatus(plan.Items, "ready") == 0 {
+		return nil
+	}
+	_, err = fmt.Fprintf(w, "  workledger plan apply %s\n", plan.ID)
+	return err
 }
 
 func formatSavedPlanWindow(fromUTC, toUTC time.Time) string {

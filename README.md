@@ -104,6 +104,17 @@ workledger worklogs add \
 # tomorrowT09:00
 # +2dT09:00
 # -3dT09:00
+#
+# Supported date selector forms for --from/--to:
+# 2026-05-14
+# today
+# yesterday
+# tomorrow
+# +2d
+# -3d
+#
+# Supported --started-utc form:
+# 2026-05-14T09:00:00Z
 
 workledger worklogs list --today
 workledger worklogs context --today --output json
@@ -119,6 +130,9 @@ Create, review, and apply a remote sync plan:
 
 ```sh
 workledger plan reconcile --push --instance clockify --today
+Next:
+  workledger plan show <plan-id>
+  workledger plan apply <plan-id>
 workledger plan show
 workledger plan apply
 ```
@@ -274,7 +288,7 @@ workledger plan retry <plan-id> --only failed
 workledger plan retry <plan-id> --only uncertain
 ```
 
-`plan reconcile` is non-destructive. It creates a saved execution contract; it does not mutate canonical local worklogs or remote systems by itself.
+`plan reconcile` is non-destructive. It creates a saved execution contract; it does not mutate canonical local worklogs or remote systems by itself. In human-readable output it also prints the next saved-plan commands so operators can review or apply the result immediately.
 
 ## Output and automation contracts
 

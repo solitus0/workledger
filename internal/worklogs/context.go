@@ -503,10 +503,10 @@ func normalizeWorkdayWindow(cfg config.EffectiveConfig, input ContextInput) (wor
 func parseClockMinutes(value string) (int, error) {
 	var hour, minute int
 	if _, err := fmt.Sscanf(value, "%02d:%02d", &hour, &minute); err != nil {
-		return 0, fmt.Errorf("time must use HH:MM")
+		return 0, fmt.Errorf("%s", timeClockFormatMessage)
 	}
 	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
-		return 0, fmt.Errorf("time must use HH:MM")
+		return 0, fmt.Errorf("%s", timeClockFormatMessage)
 	}
 	return hour*60 + minute, nil
 }

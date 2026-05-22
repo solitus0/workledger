@@ -22,6 +22,8 @@ Placement rule:
 - [ ] FUNC-008: `workledger help` shall render root help to stdout and exit `0`.
 - [ ] FUNC-009: Every root, group, and leaf command shall accept `-h` and render command-specific plain-text help to stdout with exit code `0`.
 - [ ] FUNC-010: Every root, group, and leaf command shall accept `--help` and render command-specific plain-text help to stdout with exit code `0`.
+- [ ] FUNC-010a: Help for commands that accept date or time input shall name the accepted grammar for each relevant flag.
+- [ ] FUNC-010b: Help for commands that accept date or time input shall include at least one concrete accepted example per command.
 - [ ] FUNC-011: `workledger version` shall return the application version without requiring config presence.
 - [ ] FUNC-012: `workledger --version` shall behave like `workledger version`.
 - [ ] FUNC-013: `workledger -v` shall behave like `workledger version`.
@@ -301,6 +303,7 @@ Placement rule:
 - [ ] FUNC-242: `workledger plan reconcile --push --adapter=<family> --route-profile=<name>` shall select a named route profile for push planning.
 - [ ] FUNC-243: `workledger plan reconcile --push --adapter=<family>` shall use the configured `default` route profile when `--route-profile` is omitted.
 - [ ] FUNC-244: `workledger plan reconcile --push --adapter=<family>` shall compute local-versus-remote diffs for selected scopes against resolved target adapter instances.
+- [ ] FUNC-244a: human-readable `workledger plan reconcile` output shall include next-step commands for `plan show <plan-id>` and, when the saved plan contains one or more `ready` items, `plan apply <plan-id>`.
 
 ## Plan Review
 - [ ] FUNC-246: `workledger plan show` shall load a saved plan by requested plan ID when provided.

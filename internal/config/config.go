@@ -951,8 +951,8 @@ func excludeIssuesByInstance(instances map[string]any) map[string]map[string]str
 	return result
 }
 
-func issuePrefixOwners(instances map[string]any) map[string]map[string]string {
-	owners := map[string]map[string]string{}
+func issuePrefixOwners(instances map[string]any) map[string]map[string][]string {
+	owners := map[string]map[string][]string{}
 	for instanceName, raw := range instances {
 		entry, ok := raw.(map[string]any)
 		if !ok {
@@ -979,13 +979,19 @@ func issuePrefixOwners(instances map[string]any) map[string]map[string]string {
 				prefixes := routePrefixes(value)
 				for _, prefix := range prefixes {
 					if _, ok := owners[profileName]; !ok {
-						owners[profileName] = map[string]string{}
+						owners[profileName] = map[string][]string{}
 					}
-					if _, exists := owners[profileName][prefix]; !exists {
-						owners[profileName][prefix] = instanceName
+					if slices.Contains(owners[profileName][prefix], instanceName) {
+						continue
 					}
+					owners[profileName][prefix] = append(owners[profileName][prefix], instanceName)
 				}
 			}
+		}
+	}
+	for _, byPrefix := range owners {
+		for prefix := range byPrefix {
+			slices.Sort(byPrefix[prefix])
 		}
 	}
 	return owners
@@ -1044,7 +1050,7 @@ func validateStringMap(value any, field string) []ValidationIssue {
 	return issues
 }
 
-func validateJiraInstanceRouting(value any, field string, owners map[string]map[string]string) []ValidationIssue {
+func validateJiraInstanceRouting(value any, field string, owners map[string]map[string][]string) []ValidationIssue {
 	m, ok := value.(map[string]any)
 	if !ok {
 		return []ValidationIssue{{Field: field, Message: "must be a mapping"}}
@@ -1078,7 +1084,7 @@ func validateJiraInstanceRouting(value any, field string, owners map[string]map[
 		if hasIssuePrefixes {
 			issues = append(issues, validateStringList(profile["issue_prefixes"], prefix+".issue_prefixes")...)
 			for _, owned := range routePrefixes(profile["issue_prefixes"]) {
-				if owner, ok := owners[name][owned]; ok && owner != instanceName {
+				if owner := conflictingPrefixOwner(owners, name, owned, instanceName); owner != "" {
 					issues = append(issues, ValidationIssue{Field: prefix + ".issue_prefixes", Message: fmt.Sprintf("prefix %s is already owned by %s in profile %s", owned, owner, name)})
 				}
 			}
@@ -1090,7 +1096,7 @@ func validateJiraInstanceRouting(value any, field string, owners map[string]map[
 			targets := validateReportingTargets(profile["reporting_targets"], prefix+".reporting_targets")
 			issues = append(issues, targets...)
 			for owned, targetIssue := range reportingTargetMap(profile["reporting_targets"]) {
-				if owner, ok := owners[name][owned]; ok && owner != instanceName {
+				if owner := conflictingPrefixOwner(owners, name, owned, instanceName); owner != "" {
 					issues = append(issues, ValidationIssue{Field: prefix + ".reporting_targets", Message: fmt.Sprintf("prefix %s is already owned by %s in profile %s", owned, owner, name)})
 				}
 				_ = targetIssue
@@ -1098,6 +1104,19 @@ func validateJiraInstanceRouting(value any, field string, owners map[string]map[
 		}
 	}
 	return issues
+}
+
+func conflictingPrefixOwner(owners map[string]map[string][]string, profileName, prefix, instanceName string) string {
+	profileOwners, ok := owners[profileName]
+	if !ok {
+		return ""
+	}
+	for _, owner := range profileOwners[prefix] {
+		if owner != instanceName {
+			return owner
+		}
+	}
+	return ""
 }
 
 func pathBase(field string) string {

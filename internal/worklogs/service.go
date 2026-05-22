@@ -24,6 +24,13 @@ var (
 	issueKeyPattern          = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[1-9][0-9]*$`)
 )
 
+const (
+	dateSelectorFormatMessage   = "date must use YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd"
+	localTimestampFormatMessage = "started must use YYYY-MM-DDTHH:MM, todayTHH:MM, yesterdayTHH:MM, tomorrowTHH:MM, +NdTHH:MM, or -NdTHH:MM (time must use HH:MM, e.g. 09:00)"
+	timeClockFormatMessage      = "time must use HH:MM, e.g. 09:00"
+	startedUTCFormatMessage     = "started_utc must use RFC3339 UTC, e.g. 2026-05-14T09:00:00Z"
+)
+
 func IsValidIssueKey(value string) bool {
 	return issueKeyPattern.MatchString(value)
 }
@@ -953,7 +960,7 @@ func parseStartedAt(cfg config.EffectiveConfig, localValue, utcValue string) (ti
 	case utcValue != "":
 		parsed, err := time.Parse(time.RFC3339, utcValue)
 		if err != nil || parsed.Location() != time.UTC {
-			return time.Time{}, errors.New("started_utc must be RFC3339 UTC")
+			return time.Time{}, errors.New(startedUTCFormatMessage)
 		}
 		return parsed.UTC(), nil
 	default:
@@ -964,7 +971,7 @@ func parseStartedAt(cfg config.EffectiveConfig, localValue, utcValue string) (ti
 func parseLocalTimestamp(value string, location *time.Location) (time.Time, error) {
 	parts := strings.Split(value, "T")
 	if len(parts) != 2 {
-		return time.Time{}, errors.New("started must use YYYY-MM-DDTHH:MM or relative-day grammar")
+		return time.Time{}, errors.New(localTimestampFormatMessage)
 	}
 
 	dateValue, err := parseDateSelector(parts[0], location)
@@ -974,12 +981,12 @@ func parseLocalTimestamp(value string, location *time.Location) (time.Time, erro
 
 	clockParts := strings.Split(parts[1], ":")
 	if len(clockParts) != 2 {
-		return time.Time{}, errors.New("time must use HH:MM")
+		return time.Time{}, errors.New(localTimestampFormatMessage)
 	}
 
 	hour, minute := 0, 0
 	if _, err := fmt.Sscanf(parts[1], "%02d:%02d", &hour, &minute); err != nil {
-		return time.Time{}, errors.New("time must use HH:MM")
+		return time.Time{}, errors.New(localTimestampFormatMessage)
 	}
 
 	candidates := matchingLocalCandidates(dateValue.Year(), dateValue.Month(), dateValue.Day(), hour, minute, location)
@@ -1029,7 +1036,7 @@ func parseDateSelector(value string, location *time.Location) (time.Time, error)
 
 	parsed, err := time.ParseInLocation("2006-01-02", value, location)
 	if err != nil {
-		return time.Time{}, errors.New("date must use YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd")
+		return time.Time{}, errors.New(dateSelectorFormatMessage)
 	}
 
 	return parsed, nil
