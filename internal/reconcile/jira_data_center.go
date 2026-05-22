@@ -793,7 +793,7 @@ func resolveJiraDataRouteProfile(cfg config.EffectiveConfig, name string) (jiraR
 func (p jiraRouteProfile) resolve(issueKey string) (jiraResolvedRoute, bool, error) {
 	matches := make([]jiraResolvedRoute, 0, 1)
 	for _, route := range p.routes {
-		if !strings.HasPrefix(issueKey, route.prefix) {
+		if !strings.HasPrefix(issueKey, route.prefix+"-") {
 			continue
 		}
 		targetIssue := issueKey
