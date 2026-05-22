@@ -63,7 +63,13 @@ go run ./cmd/workledger --help
 
 ## Recommended agent workflow
 
-If you use an agent with `workledger`, install the `session-worklog-creator` skill to turn current coding-session context into local worklogs with minimal prompting.
+If you use an agent with `workledger`, install the `workledger-onboarding` skill for guided first-time setup — init, adapter configuration, environment variables, routing checks, and `doctor` diagnostics — before any worklog entry or remote sync workflow.
+
+```sh
+npx skills add solitus0/workledger --skill workledger-onboarding -g
+```
+
+Install the `session-worklog-creator` skill to turn current coding-session context into local worklogs with minimal prompting.
 
 ```sh
 npx skills add solitus0/workledger --skill session-worklog-creator -g
