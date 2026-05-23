@@ -190,6 +190,8 @@ Placement rule:
 - [ ] NFR-162: `worklogs add` normalized description shall remain non-empty.
 - [ ] NFR-163: `worklogs update` shall preserve the same non-empty normalized description invariant as `worklogs add`.
 - [ ] NFR-163a: `worklogs add --dry` shall preserve the same duration, timestamp, and description normalization rules as executed `worklogs add`.
+- [ ] NFR-163b: `worklogs add` shall reject snap-only date-window and workday-analysis flags unless `--snap` is present.
+- [ ] NFR-163c: `worklogs add --snap` shall skip any lunch-crossing candidate whose split fragments would place any created fragment below the effective configured minimum local worklog duration in seconds, continue searching later eligible slots and selected dates, and fail validation when no placement fits inside the selected date window.
 - [ ] NFR-164: `worklogs shift --by` shall normalize to non-zero whole seconds.
 - [ ] NFR-165: `worklogs apply` payload shall be JSON.
 - [ ] NFR-166: `worklogs apply` payload shall be one raw apply payload object.
@@ -287,6 +289,8 @@ Placement rule:
 - [ ] NFR-250: When `--fields` is set, each selected JSON item shall include only requested item fields in requested order.
 - [ ] NFR-250a: `worklogs add --output json --dry` shall return exactly `dry_run` and `record`.
 - [ ] NFR-250b: `worklogs add --output json --dry` `record` shall include `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description`.
+- [ ] NFR-250c: `worklogs add --snap --output json --dry` shall return `dry_run`, `records`, and optional `warnings`.
+- [ ] NFR-250d: `worklogs add --snap --output json` executed success shall return `records` and optional `warnings`.
 - [ ] NFR-251: `worklogs list` active table columns shall be `ID`, `ISSUE`, `WINDOW`, `DURATION`, and `DESCRIPTION`.
 - [ ] NFR-252: `worklogs list --only-deleted` table columns shall be `ID`, `ISSUE`, and `DELETED`.
 - [ ] NFR-253: Empty table results shall render selected table headers with zero data rows.
@@ -354,7 +358,7 @@ Placement rule:
 
 ## Atomicity
 - [ ] NFR-309: SQLite worklog mutations shall use explicit SQLite write transactions.
-- [ ] NFR-310: `worklogs add` atomic scope shall insert one active worklog.
+- [ ] NFR-310: `worklogs add` atomic scope shall insert one active worklog for explicit `--started` or `--started-utc` placement and one-or-more active worklogs for a snapped add.
 - [ ] NFR-311: `worklogs update` atomic scope shall validate and update one active worklog.
 - [ ] NFR-312: `worklogs delete <id>` atomic scope shall remove one active worklog and insert one tombstone unless `--hard` is set.
 - [ ] NFR-313: Filtered batch delete atomic scope shall remove all matched active worklogs and insert one tombstone per deleted row unless `--hard` is set.

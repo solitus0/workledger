@@ -198,6 +198,8 @@ Use local worklog commands when the canonical SQLite ledger should change.
 workledger worklogs list --today
 workledger worklogs search "reconciliation"
 workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description "Implement reconciliation flow"
+workledger worklogs add --issue PROJ-123 --snap --today --duration 2h --description "Implement reconciliation flow"
+workledger worklogs add --issue PROJ-123 --snap --from 2026-05-14 --to 2026-05-14 --duration 5h --description "Implement reconciliation flow"
 workledger worklogs update <id> --duration 1h45m --description "Refine reconciliation flow"
 workledger worklogs shift --today --issue PROJ-123 --by 15m --dry
 workledger worklogs delete <id>
@@ -206,6 +208,8 @@ workledger worklogs delete --today --issue PROJ-123 --yes
 workledger worklogs restore --today --issue PROJ-123 --dry
 workledger worklogs restore --today --issue PROJ-123 --yes
 ```
+
+`worklogs add --snap` reuses the same date-window and workday inputs as `worklogs context`, defaults to the current local day when no selector is provided, and may split one requested duration into two worklogs when lunch bisects the placement. A snapped add may warn when the final fragment extends past the effective `day_end`; table mode prints that warning to `stderr` and JSON mode returns it in top-level `warnings`.
 
 Write operations validate issue keys, timestamps, minimum duration, duplicate rows, and overlaps. Use `--force` only when you deliberately want to bypass duplicate or overlap rejection on supported write paths.
 

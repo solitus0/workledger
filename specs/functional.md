@@ -170,15 +170,23 @@ Placement rule:
 
 ## Worklog Creation
 - [ ] FUNC-136: `workledger worklogs add` shall require `--issue <KEY>`.
-- [ ] FUNC-137: `workledger worklogs add` shall require exactly one of `--started <LocalTimestamp>` or `--started-utc <RFC3339UTC>`.
+- [ ] FUNC-137: `workledger worklogs add` shall require exactly one of `--started <LocalTimestamp>`, `--started-utc <RFC3339UTC>`, or `--snap`.
 - [ ] FUNC-138: `workledger worklogs add` shall require `--duration <GoDuration>`.
 - [ ] FUNC-139: `workledger worklogs add` shall require `--description <text>`.
 - [ ] FUNC-140: `workledger worklogs add` shall accept description input through a flag.
 - [ ] FUNC-141: `workledger worklogs add --force` shall allow the operator to bypass duplicate or overlap rejection explicitly.
 - [ ] FUNC-141a: `workledger worklogs add --dry` shall validate and preview one would-be local worklog without writing it.
 - [ ] FUNC-141b: `workledger worklogs add --dry` shall use the same normalization, duplicate validation, overlap validation, and `--force` behavior as executed `worklogs add`.
+- [ ] FUNC-141c: `workledger worklogs add --snap` shall reuse the `worklogs context` date-window selectors and workday-analysis inputs: `--today`, `--yesterday`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, `--to`, `--day-start`, `--day-end`, `--lunch`, and `--no-lunch`.
+- [ ] FUNC-141d: `workledger worklogs add --snap` without an explicit date selector shall search the current local day.
+- [ ] FUNC-141e: `workledger worklogs add --snap` shall search selected dates in ascending order and choose the earliest free fitting start in that window.
+- [ ] FUNC-141f: `workledger worklogs add --snap` shall split at the effective lunch window when the requested duration crosses lunch, shall preserve the exact requested total duration across the created fragments, and shall allow that split only when every created fragment is greater than or equal to the effective configured minimum local worklog duration.
+- [ ] FUNC-141g: `workledger worklogs add --snap` may create one or two active worklogs atomically and shall not cross local midnight.
+- [ ] FUNC-141h: `workledger worklogs add --snap` may extend the final fragment past the effective `day_end` with a warning when no later active worklog blocks that overflow.
 - [ ] FUNC-142: `workledger worklogs add` shall auto-generate the created worklog `id`.
 - [ ] FUNC-143: `workledger worklogs add` shall return the created canonical worklog on success.
+- [ ] FUNC-143a: non-snap `workledger worklogs add` success output shall keep the single-record contract.
+- [ ] FUNC-143b: snap `workledger worklogs add` success output shall return one `records` item per created worklog and shall expose optional success warnings.
 
 ## Worklog Update
 - [ ] FUNC-144: `workledger worklogs update <id>` shall use patch-style flags `--issue`, `--started`, `--started-utc`, `--duration`, and `--description`.

@@ -1226,6 +1226,90 @@ func TestWorklogsAddDrySkipsLocalStorageWritabilityPrecheck(t *testing.T) {
 	}
 }
 
+func TestWorklogsAddRejectsMissingPlacementAndSnapOnlyFlagsWithoutSnap(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	missingPlacement := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--duration", "1h", "--description", "No placement", "--output", "json")
+	if missingPlacement.code != 2 {
+		t.Fatalf("expected validation exit 2, got code=%d stdout=%s stderr=%s", missingPlacement.code, missingPlacement.stdout, missingPlacement.stderr)
+	}
+
+	snapOnly := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started", "2026-05-03T09:00", "--today", "--duration", "1h", "--description", "Bad flags", "--output", "json")
+	if snapOnly.code != 2 {
+		t.Fatalf("expected validation exit 2, got code=%d stdout=%s stderr=%s", snapOnly.code, snapOnly.stdout, snapOnly.stderr)
+	}
+}
+
+func TestWorklogsAddSnapDryJSONReturnsSplitRecords(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	sqlitePath := filepath.Join(t.TempDir(), "worklogs.db")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\n  day_start: 09:00\n  day_end: 17:00\n  daily_lunch: 12:00-12:45\n")
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	seed := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T09:00:00Z", "--duration", "2h", "--description", "Morning", "--output", "json")
+	if seed.code != 0 {
+		t.Fatalf("seed add failed: code=%d stdout=%s stderr=%s", seed.code, seed.stdout, seed.stderr)
+	}
+
+	result := runCLI(t, "worklogs", "add", "--issue", "ABC-124", "--snap", "--from", "2026-05-03", "--to", "2026-05-03", "--duration", "2h", "--description", "Snapped", "--dry", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("snap dry add failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	payload := decodeJSONMap(t, []byte(result.stdout))
+	if payload["dry_run"] != true {
+		t.Fatalf("expected dry_run in %s", result.stdout)
+	}
+	records, ok := payload["records"].([]any)
+	if !ok || len(records) != 2 {
+		t.Fatalf("expected two preview records, got %s", result.stdout)
+	}
+	first := records[0].(map[string]any)
+	second := records[1].(map[string]any)
+	if first["started_at_utc"] != "2026-05-03T11:00:00Z" || first["duration_seconds"] != float64(3600) {
+		t.Fatalf("unexpected first record %v", first)
+	}
+	if second["started_at_utc"] != "2026-05-03T12:45:00Z" || second["duration_seconds"] != float64(3600) {
+		t.Fatalf("unexpected second record %v", second)
+	}
+}
+
+func TestWorklogsAddSnapTableWritesWarningsToStderr(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	sqlitePath := filepath.Join(t.TempDir(), "worklogs.db")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\n  day_start: 09:00\n  day_end: 17:00\n  daily_lunch: 12:00-12:45\n")
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	seed := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T09:00:00Z", "--duration", "7h", "--description", "Busy", "--output", "json")
+	if seed.code != 0 {
+		t.Fatalf("seed add failed: code=%d stdout=%s stderr=%s", seed.code, seed.stdout, seed.stderr)
+	}
+
+	result := runCLI(t, "worklogs", "add", "--issue", "ABC-124", "--snap", "--from", "2026-05-03", "--to", "2026-05-03", "--duration", "2h", "--description", "Overflow")
+	if result.code != 0 {
+		t.Fatalf("snap add failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stderr, "day_end boundary reached; snapped worklog extends past the effective workday end") {
+		t.Fatalf("expected warning on stderr, got %q", result.stderr)
+	}
+	if !strings.Contains(result.stdout, "2026-05-03 - 16:00 - 18:00") {
+		t.Fatalf("expected overflow row in stdout, got %q", result.stdout)
+	}
+}
+
 func TestClockifyMappingsValidateWarningsAndMissingProject(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	setClockifyTestEnv(t)

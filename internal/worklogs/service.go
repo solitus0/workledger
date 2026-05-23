@@ -92,12 +92,36 @@ type EffectiveFilters struct {
 }
 
 type AddInput struct {
-	IssueKey    string
-	Started     string
-	StartedUTC  string
-	Duration    string
-	Description string
-	Force       bool
+	IssueKey     string
+	Started      string
+	StartedUTC   string
+	Snap         bool
+	Today        bool
+	Yesterday    bool
+	CurrentWeek  bool
+	LastWeek     bool
+	CurrentMonth bool
+	LastMonth    bool
+	From         string
+	To           string
+	DayStart     string
+	DayEnd       string
+	Lunch        string
+	NoLunch      bool
+	Duration     string
+	Description  string
+	Force        bool
+}
+
+type AddWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type AddResult struct {
+	DryRun   bool
+	Records  []LocalWorklog
+	Warnings []AddWarning
 }
 
 type PatchInput struct {
@@ -236,43 +260,83 @@ func (s *Service) Show(id string) (LocalWorklog, error) {
 	return LocalWorklog{}, err
 }
 
-func (s *Service) PreviewAdd(cfg config.EffectiveConfig, input AddInput) (LocalWorklog, error) {
-	return s.prepareAddCandidate(cfg, input)
+func (s *Service) PreviewAdd(cfg config.EffectiveConfig, input AddInput) (AddResult, error) {
+	result, err := s.prepareAdd(cfg, input)
+	if err != nil {
+		return AddResult{}, err
+	}
+	result.DryRun = true
+	return result, nil
 }
 
-func (s *Service) Add(cfg config.EffectiveConfig, input AddInput) (LocalWorklog, error) {
-	candidate, err := s.prepareAddCandidate(cfg, input)
+func (s *Service) Add(cfg config.EffectiveConfig, input AddInput) (AddResult, error) {
+	result, err := s.prepareAdd(cfg, input)
 	if err != nil {
-		return LocalWorklog{}, err
+		return AddResult{}, err
 	}
 
 	now := s.now().UTC()
-	worklog := LocalWorklog{
-		ID:              uuid.NewString(),
-		IssueKey:        candidate.IssueKey,
-		StartedAtUTC:    candidate.StartedAtUTC,
-		DurationSeconds: candidate.DurationSeconds,
-		Description:     candidate.Description,
-	}
-
-	_, err = s.store.DB().Exec(
-		`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-		worklog.ID,
-		worklog.IssueKey,
-		sqlitestore.RFC3339UTC(worklog.StartedAtUTC),
-		worklog.DurationSeconds,
-		worklog.Description,
-		sqlitestore.RFC3339UTC(now),
-		sqlitestore.RFC3339UTC(now),
-	)
+	tx, err := s.store.DB().BeginTx(context.Background(), nil)
 	if err != nil {
-		return LocalWorklog{}, err
+		return AddResult{}, err
 	}
+	created := make([]LocalWorklog, 0, len(result.Records))
+	for _, candidate := range result.Records {
+		worklog := LocalWorklog{
+			ID:              uuid.NewString(),
+			IssueKey:        candidate.IssueKey,
+			StartedAtUTC:    candidate.StartedAtUTC,
+			DurationSeconds: candidate.DurationSeconds,
+			Description:     candidate.Description,
+		}
 
-	return worklog, nil
+		_, err = tx.Exec(
+			`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+			worklog.ID,
+			worklog.IssueKey,
+			sqlitestore.RFC3339UTC(worklog.StartedAtUTC),
+			worklog.DurationSeconds,
+			worklog.Description,
+			sqlitestore.RFC3339UTC(now),
+			sqlitestore.RFC3339UTC(now),
+		)
+		if err != nil {
+			_ = tx.Rollback()
+			return AddResult{}, err
+		}
+		created = append(created, worklog)
+	}
+	if err := tx.Commit(); err != nil {
+		return AddResult{}, err
+	}
+	result.Records = created
+
+	return result, nil
 }
 
-func (s *Service) prepareAddCandidate(cfg config.EffectiveConfig, input AddInput) (LocalWorklog, error) {
+func (s *Service) prepareAdd(cfg config.EffectiveConfig, input AddInput) (AddResult, error) {
+	candidates, warnings, err := s.prepareAddCandidates(cfg, input)
+	if err != nil {
+		return AddResult{}, err
+	}
+	if err := s.validateAddConflicts(cfg, candidates, input.Force); err != nil {
+		return AddResult{}, err
+	}
+	return AddResult{Records: candidates, Warnings: warnings}, nil
+}
+
+func (s *Service) prepareAddCandidates(cfg config.EffectiveConfig, input AddInput) ([]LocalWorklog, []AddWarning, error) {
+	if placementCount(input) != 1 {
+		return nil, nil, ValidationError{Issues: []ValidationIssue{{Field: "placement", Message: "provide exactly one of started, started_utc, or snap"}}}
+	}
+	if input.Snap {
+		return s.prepareSnapAddCandidates(cfg, input)
+	}
+
+	if hasSnapOnlyAddFlags(input) {
+		return nil, nil, ValidationError{Issues: []ValidationIssue{{Field: "snap", Message: "date-window and workday flags require snap"}}}
+	}
+
 	candidate, err := buildCandidate(cfg, AddCandidateInput{
 		IssueKey:    input.IssueKey,
 		Started:     input.Started,
@@ -281,14 +345,56 @@ func (s *Service) prepareAddCandidate(cfg config.EffectiveConfig, input AddInput
 		Description: input.Description,
 	})
 	if err != nil {
-		return LocalWorklog{}, err
+		return nil, nil, err
 	}
 
-	if err := s.validateConflicts(cfg, candidate, "", input.Force); err != nil {
-		return LocalWorklog{}, err
+	return []LocalWorklog{candidate}, nil, nil
+}
+
+func (s *Service) prepareSnapAddCandidates(cfg config.EffectiveConfig, input AddInput) ([]LocalWorklog, []AddWarning, error) {
+	candidateBase, err := buildAddBaseCandidate(cfg, input.IssueKey, input.Duration, input.Description)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return candidate, nil
+	filters, err := normalizeContextFiltersAt(cfg, ContextInput{
+		Today:        input.Today,
+		Yesterday:    input.Yesterday,
+		CurrentWeek:  input.CurrentWeek,
+		LastWeek:     input.LastWeek,
+		CurrentMonth: input.CurrentMonth,
+		LastMonth:    input.LastMonth,
+		From:         input.From,
+		To:           input.To,
+	}, s.now)
+	if err != nil {
+		return nil, nil, err
+	}
+	window, err := normalizeWorkdayWindow(cfg, ContextInput{
+		DayStart: input.DayStart,
+		DayEnd:   input.DayEnd,
+		Lunch:    input.Lunch,
+		NoLunch:  input.NoLunch,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	active, err := s.listActive(EffectiveFilters{})
+	if err != nil {
+		return nil, nil, err
+	}
+
+	selectedDates := selectedContextDates(filters.From, filters.To, cfg.Location)
+	for _, selectedDate := range selectedDates {
+		plan, warnings := buildSnapPlanForDate(cfg, selectedDate, window, active, candidateBase)
+		if len(plan) == 0 {
+			continue
+		}
+		return plan, warnings, nil
+	}
+
+	return nil, nil, ValidationError{Issues: []ValidationIssue{{Field: "snap", Message: "no snapped placement fits inside the selected date window"}}}
 }
 
 func (s *Service) Update(cfg config.EffectiveConfig, id string, patch PatchInput) (LocalWorklog, error) {
@@ -600,6 +706,62 @@ func buildCandidate(cfg config.EffectiveConfig, input AddCandidateInput) (LocalW
 	}, nil
 }
 
+func buildAddBaseCandidate(cfg config.EffectiveConfig, issueKey string, duration string, description string) (LocalWorklog, error) {
+	issues := make([]ValidationIssue, 0)
+	if !issueKeyPattern.MatchString(issueKey) {
+		issues = append(issues, ValidationIssue{Field: "issue", Message: "must match <PROJECTKEY>-<NUMBER>"})
+	}
+
+	durationSeconds, durationErr := parseDuration(duration, cfg.MinimumDurationSeconds)
+	if durationErr != nil {
+		issues = append(issues, ValidationIssue{Field: "duration", Message: durationErr.Error()})
+	}
+
+	normalizedDescription, descriptionErr := normalizeDescription(description)
+	if descriptionErr != nil {
+		issues = append(issues, ValidationIssue{Field: "description", Message: descriptionErr.Error()})
+	}
+
+	if len(issues) > 0 {
+		return LocalWorklog{}, ValidationError{Issues: issues}
+	}
+
+	return LocalWorklog{
+		IssueKey:        issueKey,
+		DurationSeconds: durationSeconds,
+		Description:     normalizedDescription,
+	}, nil
+}
+
+func placementCount(input AddInput) int {
+	count := 0
+	if input.Started != "" {
+		count++
+	}
+	if input.StartedUTC != "" {
+		count++
+	}
+	if input.Snap {
+		count++
+	}
+	return count
+}
+
+func hasSnapOnlyAddFlags(input AddInput) bool {
+	return input.Today ||
+		input.Yesterday ||
+		input.CurrentWeek ||
+		input.LastWeek ||
+		input.CurrentMonth ||
+		input.LastMonth ||
+		input.From != "" ||
+		input.To != "" ||
+		input.DayStart != "" ||
+		input.DayEnd != "" ||
+		input.Lunch != "" ||
+		input.NoLunch
+}
+
 func (s *Service) validateConflicts(cfg config.EffectiveConfig, candidate LocalWorklog, excludeID string, force bool) error {
 	if force {
 		return nil
@@ -646,6 +808,55 @@ func (s *Service) validateConflicts(cfg config.EffectiveConfig, candidate LocalW
 			ConflictingWindows: conflictingWindows,
 		},
 	}
+}
+
+func (s *Service) validateAddConflicts(cfg config.EffectiveConfig, candidates []LocalWorklog, force bool) error {
+	if force || len(candidates) == 0 {
+		return nil
+	}
+
+	existing, err := s.listActive(EffectiveFilters{})
+	if err != nil {
+		return err
+	}
+
+	checkSet := make([]LocalWorklog, 0, len(existing)+len(candidates))
+	checkSet = append(checkSet, existing...)
+	for index, candidate := range candidates {
+		conflictingIDs := make([]string, 0)
+		conflictingWindows := make([][2]string, 0)
+		reason := ""
+		for _, item := range checkSet {
+			if isDuplicate(candidate, item) {
+				reason = "duplicate"
+				conflictingIDs = append(conflictingIDs, item.ID)
+				continue
+			}
+			if overlaps(candidate, item) {
+				if reason == "" {
+					reason = "overlap"
+				}
+				conflictingIDs = append(conflictingIDs, item.ID)
+				conflictingWindows = append(conflictingWindows, [2]string{
+					sqlitestore.RFC3339UTC(item.StartedAtUTC),
+					sqlitestore.RFC3339UTC(item.StartedAtUTC.Add(time.Duration(item.DurationSeconds) * time.Second)),
+				})
+			}
+		}
+		if len(conflictingIDs) > 0 {
+			return ValidationError{
+				Conflict: &ConflictDetail{
+					Reason:             reason,
+					Attempted:          ToRecordView(candidate, cfg.Location),
+					ConflictingIDs:     conflictingIDs,
+					ConflictingWindows: conflictingWindows,
+				},
+			}
+		}
+		checkSet = append(checkSet, candidates[index])
+	}
+
+	return nil
 }
 
 func (s *Service) validateRestoreConflicts(cfg config.EffectiveConfig, candidates []LocalWorklog, force bool) error {
@@ -1090,6 +1301,146 @@ func normalizeDescription(value string) (string, error) {
 		return "", errors.New("description must be non-empty")
 	}
 	return normalized, nil
+}
+
+func buildSnapPlanForDate(cfg config.EffectiveConfig, selectedDate time.Time, window workdayWindow, active []LocalWorklog, base LocalWorklog) ([]LocalWorklog, []AddWarning) {
+	dayStart := time.Date(selectedDate.Year(), selectedDate.Month(), selectedDate.Day(), 0, 0, 0, 0, cfg.Location)
+	dayEnd := dayStart.Add(24 * time.Hour)
+
+	occupied := make([]localInterval, 0)
+	for _, item := range active {
+		startUTC := item.StartedAtUTC
+		endUTC := item.StartedAtUTC.Add(time.Duration(item.DurationSeconds) * time.Second)
+		startLocal := maxTime(startUTC.In(cfg.Location), dayStart)
+		endLocal := minTime(endUTC.In(cfg.Location), dayEnd)
+		if !startLocal.Before(endLocal) {
+			continue
+		}
+		occupied = append(occupied, localInterval{
+			Start: startLocal,
+			End:   endLocal,
+			ID:    item.ID,
+		})
+	}
+
+	freeSlots := buildFreeSlots(selectedDate, cfg.Location, window, sortIntervals(occupied))
+	if len(freeSlots) == 0 {
+		return nil, nil
+	}
+
+	lunchStart := time.Time{}
+	lunchEnd := time.Time{}
+	hasLunch := window.lunchStart != nil && window.lunchEnd != nil
+	if hasLunch {
+		lunchStart = applyClock(selectedDate, cfg.Location, *window.lunchStart)
+		lunchEnd = applyClock(selectedDate, cfg.Location, *window.lunchEnd)
+	}
+	workdayEnd := applyClock(selectedDate, cfg.Location, window.dayEndMinutes)
+
+	for _, slot := range freeSlots {
+		start := slot.Start
+		candidateEnd := start.Add(time.Duration(base.DurationSeconds) * time.Second)
+
+		if hasLunch && start.Before(lunchStart) && candidateEnd.After(lunchStart) {
+			firstDuration := int(lunchStart.Sub(start) / time.Second)
+			if firstDuration <= 0 {
+				continue
+			}
+			remainder := base.DurationSeconds - firstDuration
+			if remainder <= 0 {
+				continue
+			}
+			if firstDuration < cfg.MinimumDurationSeconds || remainder < cfg.MinimumDurationSeconds {
+				continue
+			}
+			if !isTimeFree(lunchEnd, selectedDate, occupied, dayEnd) {
+				continue
+			}
+			secondEnd := lunchEnd.Add(time.Duration(remainder) * time.Second)
+			if secondEnd.After(dayEnd) {
+				continue
+			}
+			if overlapsIntervals(occupied, lunchEnd, secondEnd) {
+				continue
+			}
+			warnings := []AddWarning(nil)
+			if secondEnd.After(workdayEnd) {
+				warnings = []AddWarning{{
+					Code:    "day_end_boundary_reached",
+					Message: "day_end boundary reached; snapped worklog extends past the effective workday end",
+				}}
+			}
+			return []LocalWorklog{
+				{
+					IssueKey:        base.IssueKey,
+					StartedAtUTC:    start.UTC(),
+					DurationSeconds: firstDuration,
+					Description:     base.Description,
+				},
+				{
+					IssueKey:        base.IssueKey,
+					StartedAtUTC:    lunchEnd.UTC(),
+					DurationSeconds: remainder,
+					Description:     base.Description,
+				},
+			}, warnings
+		}
+
+		if candidateEnd.Before(workdayEnd) || candidateEnd.Equal(workdayEnd) {
+			if !overlapsIntervals(occupied, start, candidateEnd) {
+				return []LocalWorklog{{
+					IssueKey:        base.IssueKey,
+					StartedAtUTC:    start.UTC(),
+					DurationSeconds: base.DurationSeconds,
+					Description:     base.Description,
+				}}, nil
+			}
+			continue
+		}
+
+		if !slot.End.Equal(workdayEnd) {
+			continue
+		}
+		if candidateEnd.After(dayEnd) {
+			continue
+		}
+		if overlapsIntervals(occupied, start, candidateEnd) {
+			continue
+		}
+
+		return []LocalWorklog{{
+				IssueKey:        base.IssueKey,
+				StartedAtUTC:    start.UTC(),
+				DurationSeconds: base.DurationSeconds,
+				Description:     base.Description,
+			}}, []AddWarning{{
+				Code:    "day_end_boundary_reached",
+				Message: "day_end boundary reached; snapped worklog extends past the effective workday end",
+			}}
+	}
+
+	return nil, nil
+}
+
+func isTimeFree(at time.Time, selectedDate time.Time, occupied []localInterval, dayEnd time.Time) bool {
+	if !at.Before(dayEnd) {
+		return false
+	}
+	for _, item := range occupied {
+		if !item.Start.After(at) && at.Before(item.End) {
+			return false
+		}
+	}
+	return at.Year() == selectedDate.Year() && at.Month() == selectedDate.Month() && at.Day() == selectedDate.Day()
+}
+
+func overlapsIntervals(occupied []localInterval, start, end time.Time) bool {
+	for _, item := range occupied {
+		if start.Before(item.End) && item.Start.Before(end) {
+			return true
+		}
+	}
+	return false
 }
 
 func isDuplicate(a, b LocalWorklog) bool {

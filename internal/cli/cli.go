@@ -42,7 +42,7 @@ const (
 	utcTimestampHelp       = "UTC started timestamp in RFC3339, e.g. 2026-05-14T09:00:00Z"
 	clockHelp              = "Clock time in HH:MM, e.g. 09:00"
 	lunchWindowHelp        = "Lunch exclusion window in HH:MM-HH:MM, e.g. 12:00-13:00"
-	worklogsAddExample     = "  workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started-utc 2026-05-14T09:00:00Z --duration 2h --description \"Implement reconciliation\""
+	worklogsAddExample     = "  workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started-utc 2026-05-14T09:00:00Z --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --snap --today --duration 2h --description \"Implement reconciliation\""
 	worklogsUpdateExample  = "  workledger worklogs update <id> --started 2026-05-14T09:00 --duration 1h30m\n  workledger worklogs update <id> --started-utc 2026-05-14T09:00:00Z"
 	worklogsContextExample = "  workledger worklogs context --today --day-start 09:00 --day-end 17:30\n  workledger worklogs context --from 2026-05-14 --to 2026-05-14 --lunch 12:00-13:00"
 	worklogsApplyExample   = "  workledger worklogs apply --file payload.json\n  workledger worklogs apply --stdin\n\nPayload timestamps:\n  started_at uses the same local timestamp grammar as --started\n  started_at_utc uses RFC3339 UTC, e.g. 2026-05-14T09:00:00Z"
@@ -721,6 +721,19 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	var issue string
 	var started string
 	var startedUTC string
+	var snap bool
+	var today bool
+	var yesterday bool
+	var currentWeek bool
+	var lastWeek bool
+	var currentMonth bool
+	var lastMonth bool
+	var from string
+	var to string
+	var dayStart string
+	var dayEnd string
+	var lunch string
+	var noLunch bool
 	var duration string
 	var description string
 	var dry bool
@@ -739,24 +752,58 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 			defer cleanup()
 
 			input := worklogs.AddInput{
-				IssueKey:    issue,
-				Started:     started,
-				StartedUTC:  startedUTC,
-				Duration:    duration,
-				Description: description,
-				Force:       force,
+				IssueKey:     issue,
+				Started:      started,
+				StartedUTC:   startedUTC,
+				Snap:         snap,
+				Today:        today,
+				Yesterday:    yesterday,
+				CurrentWeek:  currentWeek,
+				LastWeek:     lastWeek,
+				CurrentMonth: currentMonth,
+				LastMonth:    lastMonth,
+				From:         from,
+				To:           to,
+				DayStart:     dayStart,
+				DayEnd:       dayEnd,
+				Lunch:        lunch,
+				NoLunch:      noLunch,
+				Duration:     duration,
+				Description:  description,
+				Force:        force,
 			}
 
-			var record worklogs.LocalWorklog
+			var result worklogs.AddResult
 			if dry {
-				record, err = service.PreviewAdd(effective, input)
+				result, err = service.PreviewAdd(effective, input)
 			} else {
-				record, err = service.Add(effective, input)
+				result, err = service.Add(effective, input)
 			}
 			if err != nil {
 				return a.handleWorklogError(mode, effective, err)
 			}
 
+			if snap {
+				if mode == "json" {
+					payload := map[string]any{
+						"records": worklogRecordsJSON(result.Records, effective.Location, dry),
+					}
+					if dry {
+						payload["dry_run"] = true
+					}
+					if len(result.Warnings) > 0 {
+						payload["warnings"] = result.Warnings
+					}
+					return a.writeJSON(payload)
+				}
+				writeAddWarnings(a.stderr, result.Warnings)
+				if dry {
+					return renderTable(a.stdout, []string{"ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows(result.Records, effective.Location, []string{"issue_key", "started_at", "duration_seconds", "description"}, 0))
+				}
+				return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows(result.Records, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+			}
+
+			record := result.Records[0]
 			if mode == "json" {
 				if dry {
 					return a.writeJSON(map[string]any{
@@ -776,6 +823,19 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
 	cmd.Flags().StringVar(&started, "started", "", localTimestampHelp)
 	cmd.Flags().StringVar(&startedUTC, "started-utc", "", utcTimestampHelp)
+	cmd.Flags().BoolVar(&snap, "snap", false, "Snap to the earliest fitting time in the selected local date window")
+	cmd.Flags().BoolVar(&today, "today", false, "Use the current local day")
+	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use the previous local day")
+	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current local week")
+	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous local week")
+	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current local month")
+	cmd.Flags().BoolVar(&lastMonth, "last-month", false, "Use the previous local month")
+	cmd.Flags().StringVar(&from, "from", "", fromDateHelp)
+	cmd.Flags().StringVar(&to, "to", "", toDateHelp)
+	cmd.Flags().StringVar(&dayStart, "day-start", "", clockHelp)
+	cmd.Flags().StringVar(&dayEnd, "day-end", "", clockHelp)
+	cmd.Flags().StringVar(&lunch, "lunch", "", lunchWindowHelp)
+	cmd.Flags().BoolVar(&noLunch, "no-lunch", false, "Disable lunch exclusion for snap placement")
 	cmd.Flags().StringVar(&duration, "duration", "", "Worklog duration")
 	cmd.Flags().StringVar(&description, "description", "", "Description")
 	cmd.Flags().BoolVar(&dry, "dry", false, "Validate without writing")
@@ -3861,6 +3921,24 @@ func worklogPreviewJSON(item worklogs.LocalWorklog, location *time.Location) map
 		"started_at_utc":   item.StartedAtUTC.UTC().Format(time.RFC3339),
 		"duration_seconds": item.DurationSeconds,
 		"description":      item.Description,
+	}
+}
+
+func worklogRecordsJSON(items []worklogs.LocalWorklog, location *time.Location, preview bool) []map[string]any {
+	records := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if preview {
+			records = append(records, worklogPreviewJSON(item, location))
+			continue
+		}
+		records = append(records, worklogRecordJSON(item, location))
+	}
+	return records
+}
+
+func writeAddWarnings(w io.Writer, warnings []worklogs.AddWarning) {
+	for _, warning := range warnings {
+		_, _ = fmt.Fprintln(w, warning.Message)
 	}
 }
 
