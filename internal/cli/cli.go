@@ -331,6 +331,13 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 	var issue string
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -357,6 +364,13 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 				Issue:        issue,
 				Today:        today,
 				Yesterday:    yesterday,
+				Monday:       monday,
+				Tuesday:      tuesday,
+				Wednesday:    wednesday,
+				Thursday:     thursday,
+				Friday:       friday,
+				Saturday:     saturday,
+				Sunday:       sunday,
 				CurrentWeek:  currentWeek,
 				LastWeek:     lastWeek,
 				CurrentMonth: currentMonth,
@@ -375,6 +389,13 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 					Issue:        issue,
 					Today:        today,
 					Yesterday:    yesterday,
+					Monday:       monday,
+					Tuesday:      tuesday,
+					Wednesday:    wednesday,
+					Thursday:     thursday,
+					Friday:       friday,
+					Saturday:     saturday,
+					Sunday:       sunday,
 					CurrentWeek:  currentWeek,
 					LastWeek:     lastWeek,
 					CurrentMonth: currentMonth,
@@ -406,6 +427,13 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
 	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Filter to this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Filter to this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Filter to this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Filter to this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Filter to this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Filter to this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Filter to this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
@@ -421,6 +449,13 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 	var issue string
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -448,6 +483,13 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 				Issue:        issue,
 				Today:        today,
 				Yesterday:    yesterday,
+				Monday:       monday,
+				Tuesday:      tuesday,
+				Wednesday:    wednesday,
+				Thursday:     thursday,
+				Friday:       friday,
+				Saturday:     saturday,
+				Sunday:       sunday,
 				CurrentWeek:  currentWeek,
 				LastWeek:     lastWeek,
 				CurrentMonth: currentMonth,
@@ -489,6 +531,13 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
 	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Filter to this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Filter to this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Filter to this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Filter to this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Filter to this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Filter to this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Filter to this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
@@ -504,6 +553,13 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 	var issues []string
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -531,6 +587,13 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 				Issues:       issues,
 				Today:        today,
 				Yesterday:    yesterday,
+				Monday:       monday,
+				Tuesday:      tuesday,
+				Wednesday:    wednesday,
+				Thursday:     thursday,
+				Friday:       friday,
+				Saturday:     saturday,
+				Sunday:       sunday,
 				CurrentWeek:  currentWeek,
 				LastWeek:     lastWeek,
 				CurrentMonth: currentMonth,
@@ -551,6 +614,13 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 					Issues:       issues,
 					Today:        today,
 					Yesterday:    yesterday,
+					Monday:       monday,
+					Tuesday:      tuesday,
+					Wednesday:    wednesday,
+					Thursday:     thursday,
+					Friday:       friday,
+					Saturday:     saturday,
+					Sunday:       sunday,
 					CurrentWeek:  currentWeek,
 					LastWeek:     lastWeek,
 					CurrentMonth: currentMonth,
@@ -571,6 +641,13 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&issues, "issue", nil, "Planning issue key")
 	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Filter to this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Filter to this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Filter to this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Filter to this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Filter to this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Filter to this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Filter to this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
@@ -588,6 +665,13 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 	var issue string
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -613,6 +697,13 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 				Issue:        issue,
 				Today:        today,
 				Yesterday:    yesterday,
+				Monday:       monday,
+				Tuesday:      tuesday,
+				Wednesday:    wednesday,
+				Thursday:     thursday,
+				Friday:       friday,
+				Saturday:     saturday,
+				Sunday:       sunday,
 				CurrentWeek:  currentWeek,
 				LastWeek:     lastWeek,
 				CurrentMonth: currentMonth,
@@ -629,6 +720,13 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 					Issue:        issue,
 					Today:        today,
 					Yesterday:    yesterday,
+					Monday:       monday,
+					Tuesday:      tuesday,
+					Wednesday:    wednesday,
+					Thursday:     thursday,
+					Friday:       friday,
+					Saturday:     saturday,
+					Sunday:       sunday,
 					CurrentWeek:  currentWeek,
 					LastWeek:     lastWeek,
 					CurrentMonth: currentMonth,
@@ -649,6 +747,13 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
 	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Filter to this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Filter to this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Filter to this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Filter to this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Filter to this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Filter to this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Filter to this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
@@ -724,6 +829,13 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	var snap bool
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -758,6 +870,13 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 				Snap:         snap,
 				Today:        today,
 				Yesterday:    yesterday,
+				Monday:       monday,
+				Tuesday:      tuesday,
+				Wednesday:    wednesday,
+				Thursday:     thursday,
+				Friday:       friday,
+				Saturday:     saturday,
+				Sunday:       sunday,
 				CurrentWeek:  currentWeek,
 				LastWeek:     lastWeek,
 				CurrentMonth: currentMonth,
@@ -826,6 +945,13 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&snap, "snap", false, "Snap to the earliest fitting time in the selected local date window")
 	cmd.Flags().BoolVar(&today, "today", false, "Use the current local day")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use the previous local day")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Use this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Use this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Use this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Use this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Use this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Use this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Use this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current local week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous local week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current local month")
@@ -906,6 +1032,13 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	var issue string
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -959,6 +1092,13 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 				Issue:        issue,
 				Today:        today,
 				Yesterday:    yesterday,
+				Monday:       monday,
+				Tuesday:      tuesday,
+				Wednesday:    wednesday,
+				Thursday:     thursday,
+				Friday:       friday,
+				Saturday:     saturday,
+				Sunday:       sunday,
 				CurrentWeek:  currentWeek,
 				LastWeek:     lastWeek,
 				CurrentMonth: currentMonth,
@@ -975,6 +1115,13 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 					Issue:        issue,
 					Today:        today,
 					Yesterday:    yesterday,
+					Monday:       monday,
+					Tuesday:      tuesday,
+					Wednesday:    wednesday,
+					Thursday:     thursday,
+					Friday:       friday,
+					Saturday:     saturday,
+					Sunday:       sunday,
 					CurrentWeek:  currentWeek,
 					LastWeek:     lastWeek,
 					CurrentMonth: currentMonth,
@@ -998,6 +1145,13 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
 	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Filter to this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Filter to this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Filter to this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Filter to this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Filter to this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Filter to this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Filter to this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
@@ -1014,6 +1168,13 @@ func (a *app) newWorklogsRestoreCommand() *cobra.Command {
 	var issue string
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -1048,6 +1209,13 @@ func (a *app) newWorklogsRestoreCommand() *cobra.Command {
 				Issue:        issue,
 				Today:        today,
 				Yesterday:    yesterday,
+				Monday:       monday,
+				Tuesday:      tuesday,
+				Wednesday:    wednesday,
+				Thursday:     thursday,
+				Friday:       friday,
+				Saturday:     saturday,
+				Sunday:       sunday,
 				CurrentWeek:  currentWeek,
 				LastWeek:     lastWeek,
 				CurrentMonth: currentMonth,
@@ -1078,6 +1246,13 @@ func (a *app) newWorklogsRestoreCommand() *cobra.Command {
 	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
 	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Filter to this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Filter to this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Filter to this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Filter to this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Filter to this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Filter to this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Filter to this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Filter to the current week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Filter to the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Filter to the current month")
@@ -1217,7 +1392,7 @@ func (a *app) collectClockifyStatusRows(ctx context.Context, effective config.Ef
 	if clockifyCfg.WorkspaceID != user.ActiveWorkspace && clockifyCfg.WorkspaceID != user.DefaultWorkspace {
 		return nil, errors.New("configured clockify.workspace_id is not visible for the authenticated user")
 	}
-	windowFrom, windowTo, err := parsePlanWindow(effective, false, false, true, false, false, false, "", "")
+	windowFrom, windowTo, err := parsePlanWindow(effective, false, false, false, false, false, false, false, false, false, true, false, false, false, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -1620,6 +1795,13 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 	var issue string
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -1643,6 +1825,13 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 				Issue:        issue,
 				Today:        today,
 				Yesterday:    yesterday,
+				Monday:       monday,
+				Tuesday:      tuesday,
+				Wednesday:    wednesday,
+				Thursday:     thursday,
+				Friday:       friday,
+				Saturday:     saturday,
+				Sunday:       sunday,
 				CurrentWeek:  currentWeek,
 				LastWeek:     lastWeek,
 				CurrentMonth: currentMonth,
@@ -1688,6 +1877,13 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter to one issue")
 	cmd.Flags().BoolVar(&today, "today", false, "Use today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Use this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Use this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Use this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Use this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Use this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Use this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Use this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
@@ -1704,6 +1900,13 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 	var issue string
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -1730,6 +1933,13 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 				Issue:        issue,
 				Today:        today,
 				Yesterday:    yesterday,
+				Monday:       monday,
+				Tuesday:      tuesday,
+				Wednesday:    wednesday,
+				Thursday:     thursday,
+				Friday:       friday,
+				Saturday:     saturday,
+				Sunday:       sunday,
 				CurrentWeek:  currentWeek,
 				LastWeek:     lastWeek,
 				CurrentMonth: currentMonth,
@@ -1855,6 +2065,13 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter to one issue")
 	cmd.Flags().BoolVar(&today, "today", false, "Use today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Use this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Use this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Use this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Use this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Use this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Use this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Use this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
@@ -1868,6 +2085,13 @@ func (a *app) newTotalsCommand() *cobra.Command {
 	var adapter string
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -1891,7 +2115,7 @@ func (a *app) newTotalsCommand() *cobra.Command {
 			}
 			defer cleanup()
 
-			windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to)
+			windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to)
 			if err != nil {
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
@@ -1953,7 +2177,7 @@ func (a *app) newTotalsCommand() *cobra.Command {
 			}
 
 			if mode == "json" {
-				return a.renderTotalsJSON(adapter, resolvedInstance, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, effective, windowFrom, windowTo, result)
+				return a.renderTotalsJSON(adapter, resolvedInstance, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, effective, windowFrom, windowTo, result)
 			}
 			return a.renderTotalsTable(adapter, resolvedInstance, details, effective, windowFrom, windowTo, result)
 		},
@@ -1963,6 +2187,13 @@ func (a *app) newTotalsCommand() *cobra.Command {
 	cmd.Flags().StringVar(&instance, "instance", "", "Adapter instance")
 	cmd.Flags().BoolVar(&today, "today", false, "Use today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Use this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Use this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Use this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Use this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Use this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Use this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Use this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
@@ -2177,6 +2408,13 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 	var onlyDeleted bool
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -2204,7 +2442,7 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 			}
 			defer cleanup()
 
-			windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to)
+			windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to)
 			if err != nil {
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
@@ -2269,6 +2507,13 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&onlyDeleted, "only-deleted", false, "Push tombstoned local rows only")
 	cmd.Flags().BoolVar(&today, "today", false, "Use today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Use this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Use this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Use this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Use this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Use this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Use this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Use this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
@@ -2339,6 +2584,13 @@ func (a *app) newPlanShowCommand() *cobra.Command {
 func (a *app) newPlanListCommand() *cobra.Command {
 	var today bool
 	var yesterday bool
+	var monday bool
+	var tuesday bool
+	var wednesday bool
+	var thursday bool
+	var friday bool
+	var saturday bool
+	var sunday bool
 	var currentWeek bool
 	var lastWeek bool
 	var currentMonth bool
@@ -2362,8 +2614,8 @@ func (a *app) newPlanListCommand() *cobra.Command {
 			if err != nil {
 				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
 			}
-			if hasPlanWindowSelection(today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to) {
-				windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to)
+			if hasPlanWindowSelection(today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to) {
+				windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to)
 				if err != nil {
 					return a.fail(mode, 2, "validation_error", err.Error(), nil)
 				}
@@ -2393,6 +2645,13 @@ func (a *app) newPlanListCommand() *cobra.Command {
 
 	cmd.Flags().BoolVar(&today, "today", false, "Use today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
+	cmd.Flags().BoolVar(&monday, "mon", false, "Use this week's Monday")
+	cmd.Flags().BoolVar(&tuesday, "tue", false, "Use this week's Tuesday")
+	cmd.Flags().BoolVar(&wednesday, "wed", false, "Use this week's Wednesday")
+	cmd.Flags().BoolVar(&thursday, "thu", false, "Use this week's Thursday")
+	cmd.Flags().BoolVar(&friday, "fri", false, "Use this week's Friday")
+	cmd.Flags().BoolVar(&saturday, "sat", false, "Use this week's Saturday")
+	cmd.Flags().BoolVar(&sunday, "sun", false, "Use this week's Sunday")
 	cmd.Flags().BoolVar(&currentWeek, "current-week", false, "Use the current week")
 	cmd.Flags().BoolVar(&lastWeek, "last-week", false, "Use the previous week")
 	cmd.Flags().BoolVar(&currentMonth, "current-month", false, "Use the current month")
@@ -2715,26 +2974,26 @@ func matchesAnyIssuePrefix(issueKey string, issuePrefixes []string) bool {
 	return false
 }
 
-func parsePlanWindow(cfg config.EffectiveConfig, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string) (time.Time, time.Time, error) {
-	return parsePlanWindowAt(cfg, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, time.Now)
+func parsePlanWindow(cfg config.EffectiveConfig, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string) (time.Time, time.Time, error) {
+	return parsePlanWindowAt(cfg, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, time.Now)
 }
 
-func hasPlanWindowSelection(today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string) bool {
-	return today || yesterday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != ""
+func hasPlanWindowSelection(today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string) bool {
+	return today || yesterday || monday || tuesday || wednesday || thursday || friday || saturday || sunday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != ""
 }
 
-func parsePlanWindowAt(cfg config.EffectiveConfig, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, now func() time.Time) (time.Time, time.Time, error) {
+func parsePlanWindowAt(cfg config.EffectiveConfig, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, now func() time.Time) (time.Time, time.Time, error) {
 	selectedShortcuts := 0
-	for _, selected := range []bool{today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth} {
+	for _, selected := range []bool{today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth} {
 		if selected {
 			selectedShortcuts++
 		}
 	}
 	if selectedShortcuts > 1 {
-		return time.Time{}, time.Time{}, errors.New("today, yesterday, current-week, last-week, current-month, and last-month are mutually exclusive")
+		return time.Time{}, time.Time{}, errors.New("today, yesterday, mon, tue, wed, thu, fri, sat, sun, current-week, last-week, current-month, and last-month are mutually exclusive")
 	}
 	if selectedShortcuts > 0 && (from != "" || to != "") {
-		return time.Time{}, time.Time{}, errors.New("today, yesterday, current-week, last-week, current-month, and last-month cannot be combined with from or to")
+		return time.Time{}, time.Time{}, errors.New("today, yesterday, mon, tue, wed, thu, fri, sat, sun, current-week, last-week, current-month, and last-month cannot be combined with from or to")
 	}
 
 	var windowStart time.Time
@@ -2748,6 +3007,20 @@ func parsePlanWindowAt(cfg config.EffectiveConfig, today, yesterday, currentWeek
 		date := now().In(cfg.Location).AddDate(0, 0, -1)
 		windowStart = time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, cfg.Location)
 		windowEnd = time.Date(date.Year(), date.Month(), date.Day(), 23, 59, 59, 0, cfg.Location)
+	case monday:
+		windowStart, windowEnd = planWeekdayBounds(now().In(cfg.Location), time.Monday, cfg.Location)
+	case tuesday:
+		windowStart, windowEnd = planWeekdayBounds(now().In(cfg.Location), time.Tuesday, cfg.Location)
+	case wednesday:
+		windowStart, windowEnd = planWeekdayBounds(now().In(cfg.Location), time.Wednesday, cfg.Location)
+	case thursday:
+		windowStart, windowEnd = planWeekdayBounds(now().In(cfg.Location), time.Thursday, cfg.Location)
+	case friday:
+		windowStart, windowEnd = planWeekdayBounds(now().In(cfg.Location), time.Friday, cfg.Location)
+	case saturday:
+		windowStart, windowEnd = planWeekdayBounds(now().In(cfg.Location), time.Saturday, cfg.Location)
+	case sunday:
+		windowStart, windowEnd = planWeekdayBounds(now().In(cfg.Location), time.Sunday, cfg.Location)
 	case currentWeek:
 		windowStart, windowEnd = planWeekBounds(now().In(cfg.Location), cfg.Location)
 	case lastWeek:
@@ -2758,7 +3031,7 @@ func parsePlanWindowAt(cfg config.EffectiveConfig, today, yesterday, currentWeek
 		windowStart, windowEnd = planMonthBounds(now().In(cfg.Location).AddDate(0, -1, 0), cfg.Location)
 	default:
 		if from == "" || to == "" {
-			return time.Time{}, time.Time{}, errors.New("either --from and --to or exactly one of --today/--yesterday/--current-week/--last-week/--current-month/--last-month is required")
+			return time.Time{}, time.Time{}, errors.New("either --from and --to or exactly one of --today/--yesterday/--mon/--tue/--wed/--thu/--fri/--sat/--sun/--current-week/--last-week/--current-month/--last-month is required")
 		}
 		startDate, err := parsePlanDateSelector(from, cfg.Location, now)
 		if err != nil {
@@ -2810,6 +3083,21 @@ func planWeekBounds(date time.Time, location *time.Location) (time.Time, time.Ti
 	endDate := startDate.AddDate(0, 0, 6)
 	end := time.Date(endDate.Year(), endDate.Month(), endDate.Day(), 23, 59, 59, 0, location)
 	return start, end
+}
+
+func planWeekdayBounds(date time.Time, weekday time.Weekday, location *time.Location) (time.Time, time.Time) {
+	weekStart, _ := planWeekBounds(date, location)
+	target := weekStart.AddDate(0, 0, weekdayOffsetFromMonday(weekday))
+	start := time.Date(target.Year(), target.Month(), target.Day(), 0, 0, 0, 0, location)
+	end := time.Date(target.Year(), target.Month(), target.Day(), 23, 59, 59, 0, location)
+	return start, end
+}
+
+func weekdayOffsetFromMonday(weekday time.Weekday) int {
+	if weekday == time.Sunday {
+		return 6
+	}
+	return int(weekday) - 1
 }
 
 func planMonthBounds(date time.Time, location *time.Location) (time.Time, time.Time) {
@@ -3142,11 +3430,18 @@ func (a *app) handleReconcileAdapterError(mode, adapter string, err error) error
 	return a.fail(mode, 2, "validation_error", err.Error(), nil)
 }
 
-func (a *app) renderTotalsJSON(adapter, instance string, today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, result totals.Result) error {
+func (a *app) renderTotalsJSON(adapter, instance string, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, result totals.Result) error {
 	rawFilters := map[string]any{
 		"adapter":       emptyToNil(adapter),
 		"today":         today,
 		"yesterday":     yesterday,
+		"mon":           monday,
+		"tue":           tuesday,
+		"wed":           wednesday,
+		"thu":           thursday,
+		"fri":           friday,
+		"sat":           saturday,
+		"sun":           sunday,
 		"current_week":  currentWeek,
 		"last_week":     lastWeek,
 		"current_month": currentMonth,
@@ -3346,6 +3641,13 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 				"issue":         emptyToNil(raw.Issue),
 				"today":         raw.Today,
 				"yesterday":     raw.Yesterday,
+				"mon":           raw.Monday,
+				"tue":           raw.Tuesday,
+				"wed":           raw.Wednesday,
+				"thu":           raw.Thursday,
+				"fri":           raw.Friday,
+				"sat":           raw.Saturday,
+				"sun":           raw.Sunday,
 				"current_week":  raw.CurrentWeek,
 				"last_week":     raw.LastWeek,
 				"current_month": raw.CurrentMonth,
@@ -3402,6 +3704,13 @@ func (a *app) renderSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw 
 				"issue":         emptyToNil(raw.Issue),
 				"today":         raw.Today,
 				"yesterday":     raw.Yesterday,
+				"mon":           raw.Monday,
+				"tue":           raw.Tuesday,
+				"wed":           raw.Wednesday,
+				"thu":           raw.Thursday,
+				"fri":           raw.Friday,
+				"sat":           raw.Saturday,
+				"sun":           raw.Sunday,
 				"current_week":  raw.CurrentWeek,
 				"last_week":     raw.LastWeek,
 				"current_month": raw.CurrentMonth,
@@ -3457,6 +3766,13 @@ func (a *app) renderContextJSON(raw worklogs.ContextInput, result worklogs.Conte
 			"issue":         nilIfEmpty(raw.Issues),
 			"today":         raw.Today,
 			"yesterday":     raw.Yesterday,
+			"mon":           raw.Monday,
+			"tue":           raw.Tuesday,
+			"wed":           raw.Wednesday,
+			"thu":           raw.Thursday,
+			"fri":           raw.Friday,
+			"sat":           raw.Saturday,
+			"sun":           raw.Sunday,
 			"current_week":  raw.CurrentWeek,
 			"last_week":     raw.LastWeek,
 			"current_month": raw.CurrentMonth,
@@ -3621,6 +3937,13 @@ func selectorFiltersJSON(raw worklogs.ListFilters, effective worklogs.EffectiveF
 			"issue":         emptyToNil(raw.Issue),
 			"today":         raw.Today,
 			"yesterday":     raw.Yesterday,
+			"mon":           raw.Monday,
+			"tue":           raw.Tuesday,
+			"wed":           raw.Wednesday,
+			"thu":           raw.Thursday,
+			"fri":           raw.Friday,
+			"sat":           raw.Saturday,
+			"sun":           raw.Sunday,
 			"current_week":  raw.CurrentWeek,
 			"last_week":     raw.LastWeek,
 			"current_month": raw.CurrentMonth,
@@ -3649,6 +3972,13 @@ func (a *app) renderShiftJSON(raw worklogs.ListFilters, result worklogs.ShiftRes
 			"issue":         emptyToNil(raw.Issue),
 			"today":         raw.Today,
 			"yesterday":     raw.Yesterday,
+			"mon":           raw.Monday,
+			"tue":           raw.Tuesday,
+			"wed":           raw.Wednesday,
+			"thu":           raw.Thursday,
+			"fri":           raw.Friday,
+			"sat":           raw.Saturday,
+			"sun":           raw.Sunday,
 			"current_week":  raw.CurrentWeek,
 			"last_week":     raw.LastWeek,
 			"current_month": raw.CurrentMonth,
@@ -3869,7 +4199,7 @@ func splitFields(value string) []string {
 }
 
 func hasSelector(raw worklogs.ListFilters) bool {
-	return raw.Today || raw.Yesterday || raw.CurrentWeek || raw.LastWeek || raw.CurrentMonth || raw.LastMonth || raw.From != "" || raw.To != ""
+	return raw.Today || raw.Yesterday || raw.Monday || raw.Tuesday || raw.Wednesday || raw.Thursday || raw.Friday || raw.Saturday || raw.Sunday || raw.CurrentWeek || raw.LastWeek || raw.CurrentMonth || raw.LastMonth || raw.From != "" || raw.To != ""
 }
 
 func worklogRecordJSON(item worklogs.LocalWorklog, location *time.Location) map[string]any {

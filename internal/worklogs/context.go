@@ -28,6 +28,13 @@ type ContextInput struct {
 	Issues       []string
 	Today        bool
 	Yesterday    bool
+	Monday       bool
+	Tuesday      bool
+	Wednesday    bool
+	Thursday     bool
+	Friday       bool
+	Saturday     bool
+	Sunday       bool
 	CurrentWeek  bool
 	LastWeek     bool
 	CurrentMonth bool
@@ -345,7 +352,21 @@ func normalizeContextFilters(cfg config.EffectiveConfig, input ContextInput) (Co
 }
 
 func normalizeContextFiltersAt(cfg config.EffectiveConfig, input ContextInput, now func() time.Time) (ContextFilters, error) {
-	if err := validateDateWindowSelection(input.Today, input.Yesterday, input.CurrentWeek, input.LastWeek, input.CurrentMonth, input.LastMonth, input.From != "" || input.To != ""); err != nil {
+	if err := validateDateWindowSelection(dateWindowShortcutSelection{
+		Today:        input.Today,
+		Yesterday:    input.Yesterday,
+		Monday:       input.Monday,
+		Tuesday:      input.Tuesday,
+		Wednesday:    input.Wednesday,
+		Thursday:     input.Thursday,
+		Friday:       input.Friday,
+		Saturday:     input.Saturday,
+		Sunday:       input.Sunday,
+		CurrentWeek:  input.CurrentWeek,
+		LastWeek:     input.LastWeek,
+		CurrentMonth: input.CurrentMonth,
+		LastMonth:    input.LastMonth,
+	}, input.From != "" || input.To != ""); err != nil {
 		return ContextFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: err.Error()}}}
 	}
 
@@ -372,6 +393,34 @@ func normalizeContextFiltersAt(cfg config.EffectiveConfig, input ContextInput, n
 	case input.Yesterday:
 		current := now().In(cfg.Location).AddDate(0, 0, -1)
 		start, end := dayBounds(current, cfg.Location)
+		filters.From = &start
+		filters.To = &end
+	case input.Monday:
+		start, end := weekdayBounds(now().In(cfg.Location), time.Monday, cfg.Location)
+		filters.From = &start
+		filters.To = &end
+	case input.Tuesday:
+		start, end := weekdayBounds(now().In(cfg.Location), time.Tuesday, cfg.Location)
+		filters.From = &start
+		filters.To = &end
+	case input.Wednesday:
+		start, end := weekdayBounds(now().In(cfg.Location), time.Wednesday, cfg.Location)
+		filters.From = &start
+		filters.To = &end
+	case input.Thursday:
+		start, end := weekdayBounds(now().In(cfg.Location), time.Thursday, cfg.Location)
+		filters.From = &start
+		filters.To = &end
+	case input.Friday:
+		start, end := weekdayBounds(now().In(cfg.Location), time.Friday, cfg.Location)
+		filters.From = &start
+		filters.To = &end
+	case input.Saturday:
+		start, end := weekdayBounds(now().In(cfg.Location), time.Saturday, cfg.Location)
+		filters.From = &start
+		filters.To = &end
+	case input.Sunday:
+		start, end := weekdayBounds(now().In(cfg.Location), time.Sunday, cfg.Location)
 		filters.From = &start
 		filters.To = &end
 	case input.CurrentWeek:

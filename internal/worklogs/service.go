@@ -67,6 +67,13 @@ type ListFilters struct {
 	Issue        string
 	Today        bool
 	Yesterday    bool
+	Monday       bool
+	Tuesday      bool
+	Wednesday    bool
+	Thursday     bool
+	Friday       bool
+	Saturday     bool
+	Sunday       bool
 	CurrentWeek  bool
 	LastWeek     bool
 	CurrentMonth bool
@@ -98,6 +105,13 @@ type AddInput struct {
 	Snap         bool
 	Today        bool
 	Yesterday    bool
+	Monday       bool
+	Tuesday      bool
+	Wednesday    bool
+	Thursday     bool
+	Friday       bool
+	Saturday     bool
+	Sunday       bool
 	CurrentWeek  bool
 	LastWeek     bool
 	CurrentMonth bool
@@ -360,6 +374,13 @@ func (s *Service) prepareSnapAddCandidates(cfg config.EffectiveConfig, input Add
 	filters, err := normalizeContextFiltersAt(cfg, ContextInput{
 		Today:        input.Today,
 		Yesterday:    input.Yesterday,
+		Monday:       input.Monday,
+		Tuesday:      input.Tuesday,
+		Wednesday:    input.Wednesday,
+		Thursday:     input.Thursday,
+		Friday:       input.Friday,
+		Saturday:     input.Saturday,
+		Sunday:       input.Sunday,
 		CurrentWeek:  input.CurrentWeek,
 		LastWeek:     input.LastWeek,
 		CurrentMonth: input.CurrentMonth,
@@ -750,6 +771,13 @@ func placementCount(input AddInput) int {
 func hasSnapOnlyAddFlags(input AddInput) bool {
 	return input.Today ||
 		input.Yesterday ||
+		input.Monday ||
+		input.Tuesday ||
+		input.Wednesday ||
+		input.Thursday ||
+		input.Friday ||
+		input.Saturday ||
+		input.Sunday ||
 		input.CurrentWeek ||
 		input.LastWeek ||
 		input.CurrentMonth ||
@@ -1019,7 +1047,21 @@ func normalizeListFilters(cfg config.EffectiveConfig, filters ListFilters, allow
 }
 
 func normalizeListFiltersAt(cfg config.EffectiveConfig, filters ListFilters, allowDeleted bool, now func() time.Time) (EffectiveFilters, error) {
-	if err := validateDateWindowSelection(filters.Today, filters.Yesterday, filters.CurrentWeek, filters.LastWeek, filters.CurrentMonth, filters.LastMonth, filters.From != "" || filters.To != ""); err != nil {
+	if err := validateDateWindowSelection(dateWindowShortcutSelection{
+		Today:        filters.Today,
+		Yesterday:    filters.Yesterday,
+		Monday:       filters.Monday,
+		Tuesday:      filters.Tuesday,
+		Wednesday:    filters.Wednesday,
+		Thursday:     filters.Thursday,
+		Friday:       filters.Friday,
+		Saturday:     filters.Saturday,
+		Sunday:       filters.Sunday,
+		CurrentWeek:  filters.CurrentWeek,
+		LastWeek:     filters.LastWeek,
+		CurrentMonth: filters.CurrentMonth,
+		LastMonth:    filters.LastMonth,
+	}, filters.From != "" || filters.To != ""); err != nil {
 		return EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: err.Error()}}}
 	}
 
@@ -1056,6 +1098,34 @@ func normalizeListFiltersAt(cfg config.EffectiveConfig, filters ListFilters, all
 	case filters.Yesterday:
 		current := now().In(cfg.Location).AddDate(0, 0, -1)
 		from, to := dayBounds(current, cfg.Location)
+		effective.From = &from
+		effective.To = &to
+	case filters.Monday:
+		from, to := weekdayBounds(now().In(cfg.Location), time.Monday, cfg.Location)
+		effective.From = &from
+		effective.To = &to
+	case filters.Tuesday:
+		from, to := weekdayBounds(now().In(cfg.Location), time.Tuesday, cfg.Location)
+		effective.From = &from
+		effective.To = &to
+	case filters.Wednesday:
+		from, to := weekdayBounds(now().In(cfg.Location), time.Wednesday, cfg.Location)
+		effective.From = &from
+		effective.To = &to
+	case filters.Thursday:
+		from, to := weekdayBounds(now().In(cfg.Location), time.Thursday, cfg.Location)
+		effective.From = &from
+		effective.To = &to
+	case filters.Friday:
+		from, to := weekdayBounds(now().In(cfg.Location), time.Friday, cfg.Location)
+		effective.From = &from
+		effective.To = &to
+	case filters.Saturday:
+		from, to := weekdayBounds(now().In(cfg.Location), time.Saturday, cfg.Location)
+		effective.From = &from
+		effective.To = &to
+	case filters.Sunday:
+		from, to := weekdayBounds(now().In(cfg.Location), time.Sunday, cfg.Location)
 		effective.From = &from
 		effective.To = &to
 	case filters.CurrentWeek:
@@ -1105,24 +1175,54 @@ func normalizeListFiltersAt(cfg config.EffectiveConfig, filters ListFilters, all
 	return effective, nil
 }
 
-func validateDateWindowSelection(today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth, hasRange bool) error {
+type dateWindowShortcutSelection struct {
+	Today        bool
+	Yesterday    bool
+	Monday       bool
+	Tuesday      bool
+	Wednesday    bool
+	Thursday     bool
+	Friday       bool
+	Saturday     bool
+	Sunday       bool
+	CurrentWeek  bool
+	LastWeek     bool
+	CurrentMonth bool
+	LastMonth    bool
+}
+
+func validateDateWindowSelection(selection dateWindowShortcutSelection, hasRange bool) error {
 	shortcuts := 0
-	for _, selected := range []bool{today, yesterday, currentWeek, lastWeek, currentMonth, lastMonth} {
+	for _, selected := range []bool{
+		selection.Today,
+		selection.Yesterday,
+		selection.Monday,
+		selection.Tuesday,
+		selection.Wednesday,
+		selection.Thursday,
+		selection.Friday,
+		selection.Saturday,
+		selection.Sunday,
+		selection.CurrentWeek,
+		selection.LastWeek,
+		selection.CurrentMonth,
+		selection.LastMonth,
+	} {
 		if selected {
 			shortcuts++
 		}
 	}
 	if shortcuts > 1 {
-		return errors.New("today, yesterday, current-week, last-week, current-month, and last-month are mutually exclusive")
+		return errors.New("today, yesterday, mon, tue, wed, thu, fri, sat, sun, current-week, last-week, current-month, and last-month are mutually exclusive")
 	}
 	if shortcuts > 0 && hasRange {
-		return errors.New("today, yesterday, current-week, last-week, current-month, and last-month cannot be combined with from or to")
+		return errors.New("today, yesterday, mon, tue, wed, thu, fri, sat, sun, current-week, last-week, current-month, and last-month cannot be combined with from or to")
 	}
 	return nil
 }
 
 func hasListTimeSelector(filters ListFilters) bool {
-	return filters.Today || filters.Yesterday || filters.CurrentWeek || filters.LastWeek || filters.CurrentMonth || filters.LastMonth || filters.From != "" || filters.To != ""
+	return filters.Today || filters.Yesterday || filters.Monday || filters.Tuesday || filters.Wednesday || filters.Thursday || filters.Friday || filters.Saturday || filters.Sunday || filters.CurrentWeek || filters.LastWeek || filters.CurrentMonth || filters.LastMonth || filters.From != "" || filters.To != ""
 }
 
 func normalizeSearchQuery(value string) (string, error) {
@@ -1257,6 +1357,19 @@ func dayBounds(date time.Time, location *time.Location) (time.Time, time.Time) {
 	start := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, location)
 	end := time.Date(date.Year(), date.Month(), date.Day(), 23, 59, 59, 0, location)
 	return start, end
+}
+
+func weekdayBounds(date time.Time, weekday time.Weekday, location *time.Location) (time.Time, time.Time) {
+	weekStart, _ := weekBounds(date, location)
+	target := weekStart.AddDate(0, 0, weekdayOffsetFromMonday(weekday))
+	return dayBounds(target, location)
+}
+
+func weekdayOffsetFromMonday(weekday time.Weekday) int {
+	if weekday == time.Sunday {
+		return 6
+	}
+	return int(weekday) - 1
 }
 
 func weekBounds(date time.Time, location *time.Location) (time.Time, time.Time) {

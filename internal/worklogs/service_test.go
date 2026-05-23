@@ -45,6 +45,35 @@ func TestNormalizeListFiltersAtWeekShortcuts(t *testing.T) {
 	}
 }
 
+func TestNormalizeListFiltersAtWeekdayShortcuts(t *testing.T) {
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	fixedNow := func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	}
+
+	monday, err := normalizeListFiltersAt(cfg, ListFilters{Monday: true}, false, fixedNow)
+	if err != nil {
+		t.Fatalf("monday filters failed: %v", err)
+	}
+	if got := monday.From.Format(time.RFC3339); got != "2026-05-04T00:00:00Z" {
+		t.Fatalf("unexpected monday from %s", got)
+	}
+	if got := monday.To.Format(time.RFC3339); got != "2026-05-04T23:59:59Z" {
+		t.Fatalf("unexpected monday to %s", got)
+	}
+
+	sunday, err := normalizeListFiltersAt(cfg, ListFilters{Sunday: true}, false, fixedNow)
+	if err != nil {
+		t.Fatalf("sunday filters failed: %v", err)
+	}
+	if got := sunday.From.Format(time.RFC3339); got != "2026-05-10T00:00:00Z" {
+		t.Fatalf("unexpected sunday from %s", got)
+	}
+	if got := sunday.To.Format(time.RFC3339); got != "2026-05-10T23:59:59Z" {
+		t.Fatalf("unexpected sunday to %s", got)
+	}
+}
+
 func TestNormalizeListFiltersAtMonthShortcuts(t *testing.T) {
 	cfg := config.EffectiveConfig{Location: time.UTC}
 	fixedNow := func() time.Time {
@@ -136,6 +165,24 @@ func TestNormalizeContextFiltersAtWeekShortcuts(t *testing.T) {
 	}
 }
 
+func TestNormalizeContextFiltersAtWeekdayShortcuts(t *testing.T) {
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	fixedNow := func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	}
+
+	friday, err := normalizeContextFiltersAt(cfg, ContextInput{Friday: true}, fixedNow)
+	if err != nil {
+		t.Fatalf("friday context failed: %v", err)
+	}
+	if got := friday.From.Format(time.RFC3339); got != "2026-05-08T00:00:00Z" {
+		t.Fatalf("unexpected friday from %s", got)
+	}
+	if got := friday.To.Format(time.RFC3339); got != "2026-05-08T23:59:59Z" {
+		t.Fatalf("unexpected friday to %s", got)
+	}
+}
+
 func TestNormalizeContextFiltersAtMonthShortcuts(t *testing.T) {
 	cfg := config.EffectiveConfig{Location: time.UTC}
 	fixedNow := func() time.Time {
@@ -186,6 +233,9 @@ func TestNormalizeListFiltersAtAcceptsMonthSelectorAsExplicitTimeSelector(t *tes
 	}
 	if !hasListTimeSelector(ListFilters{LastMonth: true}) {
 		t.Fatal("expected last-month to count as explicit selector")
+	}
+	if !hasListTimeSelector(ListFilters{Friday: true}) {
+		t.Fatal("expected friday to count as explicit selector")
 	}
 	_, err := normalizeListFiltersAt(cfg, ListFilters{CurrentMonth: true, From: "2026-05-01"}, false, time.Now)
 	if err == nil {

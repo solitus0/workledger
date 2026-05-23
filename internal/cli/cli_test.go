@@ -4344,7 +4344,7 @@ func TestParsePlanWindowAtWeekShortcutsAndRelativeDates(t *testing.T) {
 		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	}
 
-	todayFrom, todayTo, err := parsePlanWindowAt(cfg, true, false, false, false, false, false, "", "", fixedNow)
+	todayFrom, todayTo, err := parsePlanWindowAt(cfg, true, false, false, false, false, false, false, false, false, false, false, false, false, "", "", fixedNow)
 	if err != nil {
 		t.Fatalf("today parse failed: %v", err)
 	}
@@ -4355,7 +4355,7 @@ func TestParsePlanWindowAtWeekShortcutsAndRelativeDates(t *testing.T) {
 		t.Fatalf("unexpected today to %s", got)
 	}
 
-	yesterdayFrom, yesterdayTo, err := parsePlanWindowAt(cfg, false, true, false, false, false, false, "", "", fixedNow)
+	yesterdayFrom, yesterdayTo, err := parsePlanWindowAt(cfg, false, true, false, false, false, false, false, false, false, false, false, false, false, "", "", fixedNow)
 	if err != nil {
 		t.Fatalf("yesterday parse failed: %v", err)
 	}
@@ -4366,7 +4366,7 @@ func TestParsePlanWindowAtWeekShortcutsAndRelativeDates(t *testing.T) {
 		t.Fatalf("unexpected yesterday to %s", got)
 	}
 
-	currentFrom, currentTo, err := parsePlanWindowAt(cfg, false, false, true, false, false, false, "", "", fixedNow)
+	currentFrom, currentTo, err := parsePlanWindowAt(cfg, false, false, false, false, false, false, false, false, false, true, false, false, false, "", "", fixedNow)
 	if err != nil {
 		t.Fatalf("current week parse failed: %v", err)
 	}
@@ -4377,7 +4377,7 @@ func TestParsePlanWindowAtWeekShortcutsAndRelativeDates(t *testing.T) {
 		t.Fatalf("unexpected current week to %s", got)
 	}
 
-	lastFrom, lastTo, err := parsePlanWindowAt(cfg, false, false, false, true, false, false, "", "", fixedNow)
+	lastFrom, lastTo, err := parsePlanWindowAt(cfg, false, false, false, false, false, false, false, false, false, false, true, false, false, "", "", fixedNow)
 	if err != nil {
 		t.Fatalf("last week parse failed: %v", err)
 	}
@@ -4388,7 +4388,7 @@ func TestParsePlanWindowAtWeekShortcutsAndRelativeDates(t *testing.T) {
 		t.Fatalf("unexpected last week to %s", got)
 	}
 
-	currentMonthFrom, currentMonthTo, err := parsePlanWindowAt(cfg, false, false, false, false, true, false, "", "", fixedNow)
+	currentMonthFrom, currentMonthTo, err := parsePlanWindowAt(cfg, false, false, false, false, false, false, false, false, false, false, false, true, false, "", "", fixedNow)
 	if err != nil {
 		t.Fatalf("current month parse failed: %v", err)
 	}
@@ -4399,7 +4399,7 @@ func TestParsePlanWindowAtWeekShortcutsAndRelativeDates(t *testing.T) {
 		t.Fatalf("unexpected current month to %s", got)
 	}
 
-	lastMonthFrom, lastMonthTo, err := parsePlanWindowAt(cfg, false, false, false, false, false, true, "", "", fixedNow)
+	lastMonthFrom, lastMonthTo, err := parsePlanWindowAt(cfg, false, false, false, false, false, false, false, false, false, false, false, false, true, "", "", fixedNow)
 	if err != nil {
 		t.Fatalf("last month parse failed: %v", err)
 	}
@@ -4413,7 +4413,7 @@ func TestParsePlanWindowAtWeekShortcutsAndRelativeDates(t *testing.T) {
 	januaryNow := func() time.Time {
 		return time.Date(2026, 1, 6, 12, 0, 0, 0, time.UTC)
 	}
-	lastMonthFrom, lastMonthTo, err = parsePlanWindowAt(cfg, false, false, false, false, false, true, "", "", januaryNow)
+	lastMonthFrom, lastMonthTo, err = parsePlanWindowAt(cfg, false, false, false, false, false, false, false, false, false, false, false, false, true, "", "", januaryNow)
 	if err != nil {
 		t.Fatalf("year-boundary last month parse failed: %v", err)
 	}
@@ -4424,7 +4424,7 @@ func TestParsePlanWindowAtWeekShortcutsAndRelativeDates(t *testing.T) {
 		t.Fatalf("unexpected year-boundary last month to %s", got)
 	}
 
-	relativeFrom, relativeTo, err := parsePlanWindowAt(cfg, false, false, false, false, false, false, "-2d", "today", fixedNow)
+	relativeFrom, relativeTo, err := parsePlanWindowAt(cfg, false, false, false, false, false, false, false, false, false, false, false, false, false, "-2d", "today", fixedNow)
 	if err != nil {
 		t.Fatalf("relative parse failed: %v", err)
 	}
@@ -4435,8 +4435,37 @@ func TestParsePlanWindowAtWeekShortcutsAndRelativeDates(t *testing.T) {
 		t.Fatalf("unexpected relative to %s", got)
 	}
 
-	if _, _, err := parsePlanWindowAt(cfg, true, false, true, false, false, false, "", "", fixedNow); err == nil {
+	if _, _, err := parsePlanWindowAt(cfg, true, false, false, false, false, false, false, false, false, true, false, false, false, "", "", fixedNow); err == nil {
 		t.Fatal("expected mutually exclusive shortcut validation error")
+	}
+}
+
+func TestParsePlanWindowAtWeekdayShortcuts(t *testing.T) {
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	fixedNow := func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	}
+
+	mondayFrom, mondayTo, err := parsePlanWindowAt(cfg, false, false, true, false, false, false, false, false, false, false, false, false, false, "", "", fixedNow)
+	if err != nil {
+		t.Fatalf("monday parse failed: %v", err)
+	}
+	if got := mondayFrom.Format(time.RFC3339); got != "2026-05-04T00:00:00Z" {
+		t.Fatalf("unexpected monday from %s", got)
+	}
+	if got := mondayTo.Format(time.RFC3339); got != "2026-05-04T23:59:59Z" {
+		t.Fatalf("unexpected monday to %s", got)
+	}
+
+	sundayFrom, sundayTo, err := parsePlanWindowAt(cfg, false, false, false, false, false, false, false, false, true, false, false, false, false, "", "", fixedNow)
+	if err != nil {
+		t.Fatalf("sunday parse failed: %v", err)
+	}
+	if got := sundayFrom.Format(time.RFC3339); got != "2026-05-10T00:00:00Z" {
+		t.Fatalf("unexpected sunday from %s", got)
+	}
+	if got := sundayTo.Format(time.RFC3339); got != "2026-05-10T23:59:59Z" {
+		t.Fatalf("unexpected sunday to %s", got)
 	}
 }
 
@@ -4458,6 +4487,14 @@ func TestPlanReconcileAcceptsShortcutFlags(t *testing.T) {
 	}
 	if strings.Contains(yesterday.stderr, "unknown flag: --yesterday") || strings.Contains(yesterday.stdout, "unknown flag: --yesterday") {
 		t.Fatalf("expected --yesterday to be recognized, got stdout=%s stderr=%s", yesterday.stdout, yesterday.stderr)
+	}
+
+	monday := runCLI(t, "plan", "reconcile", "--pull", "--adapter", "clockify", "--mon", "--output", "json")
+	if monday.code != 2 {
+		t.Fatalf("expected validation error for missing clockify config, got code=%d stdout=%s stderr=%s", monday.code, monday.stdout, monday.stderr)
+	}
+	if strings.Contains(monday.stderr, "unknown flag: --mon") || strings.Contains(monday.stdout, "unknown flag: --mon") {
+		t.Fatalf("expected --mon to be recognized, got stdout=%s stderr=%s", monday.stdout, monday.stderr)
 	}
 
 	currentMonth := runCLI(t, "plan", "reconcile", "--pull", "--adapter", "clockify", "--current-month", "--output", "json")
@@ -4540,6 +4577,14 @@ func TestTotalsAcceptsMonthShortcutFlags(t *testing.T) {
 	}
 	if strings.Contains(currentMonth.stderr, "unknown flag: --current-month") || strings.Contains(currentMonth.stdout, "unknown flag: --current-month") {
 		t.Fatalf("expected --current-month to be recognized, got stdout=%s stderr=%s", currentMonth.stdout, currentMonth.stderr)
+	}
+
+	friday := runCLI(t, "totals", "--adapter", "clockify", "--fri", "--output", "json")
+	if friday.code != 2 {
+		t.Fatalf("expected validation error for missing clockify config, got code=%d stdout=%s stderr=%s", friday.code, friday.stdout, friday.stderr)
+	}
+	if strings.Contains(friday.stderr, "unknown flag: --fri") || strings.Contains(friday.stdout, "unknown flag: --fri") {
+		t.Fatalf("expected --fri to be recognized, got stdout=%s stderr=%s", friday.stdout, friday.stderr)
 	}
 
 	lastMonth := runCLI(t, "totals", "--adapter", "clockify", "--last-month", "--output", "json")

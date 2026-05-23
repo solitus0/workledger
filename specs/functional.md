@@ -137,8 +137,8 @@ Placement rule:
 - [ ] FUNC-104: `workledger totals --details` shall not change JSON output.
 
 ## Worklog Selectors
-- [ ] FUNC-105: Date-window selectors shall support `--today`, `--yesterday`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
-- [ ] FUNC-106: Active-worklog selectors shall support `--issue`, `--today`, `--yesterday`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
+- [ ] FUNC-105: Date-window selectors shall support `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
+- [ ] FUNC-106: Active-worklog selectors shall support `--issue`, `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
 - [ ] FUNC-107: Active-worklog selectors shall support at most one `--issue` filter value per invocation.
 - [ ] FUNC-108: `--only-deleted` shall switch `worklogs list` from active worklogs to deleted tombstones.
 - [ ] FUNC-109: `--fields` shall accept a comma-separated ordered subset of the selected record shape.
@@ -177,7 +177,7 @@ Placement rule:
 - [ ] FUNC-141: `workledger worklogs add --force` shall allow the operator to bypass duplicate or overlap rejection explicitly.
 - [ ] FUNC-141a: `workledger worklogs add --dry` shall validate and preview one would-be local worklog without writing it.
 - [ ] FUNC-141b: `workledger worklogs add --dry` shall use the same normalization, duplicate validation, overlap validation, and `--force` behavior as executed `worklogs add`.
-- [ ] FUNC-141c: `workledger worklogs add --snap` shall reuse the `worklogs context` date-window selectors and workday-analysis inputs: `--today`, `--yesterday`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, `--to`, `--day-start`, `--day-end`, `--lunch`, and `--no-lunch`.
+- [ ] FUNC-141c: `workledger worklogs add --snap` shall reuse the `worklogs context` date-window selectors and workday-analysis inputs: `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, `--to`, `--day-start`, `--day-end`, `--lunch`, and `--no-lunch`.
 - [ ] FUNC-141d: `workledger worklogs add --snap` without an explicit date selector shall search the current local day.
 - [ ] FUNC-141e: `workledger worklogs add --snap` shall search selected dates in ascending order and choose the earliest free fitting start in that window.
 - [ ] FUNC-141f: `workledger worklogs add --snap` shall split at the effective lunch window when the requested duration crosses lunch, shall preserve the exact requested total duration across the created fragments, and shall allow that split only when every created fragment is greater than or equal to the effective configured minimum local worklog duration.
