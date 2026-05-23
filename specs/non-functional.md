@@ -138,10 +138,10 @@ Placement rule:
 - [ ] NFR-112: SQLite shall store one canonical `started_at_utc` instant per worklog.
 - [ ] NFR-113: `started_at_utc` shall be an explicit UTC input field for write operations.
 - [ ] NFR-114: `started_at_utc` shall be a default field in active-worklog JSON output.
-- [ ] NFR-115: Operator-facing `started_at` values shall render in the effective local timezone as RFC3339 with an explicit offset.
+- [ ] NFR-115: Active-worklog JSON `started_at` values shall render in the effective local timezone as RFC3339 with an explicit offset.
 - [ ] NFR-116: `local_timezone` shall affect local `started_at` input resolution for worklog writes.
 - [ ] NFR-117: `local_timezone` shall affect date-based filters such as `--today`, `--yesterday`, `--from`, and `--to`.
-- [ ] NFR-118: `local_timezone` shall affect operator-facing `started_at` rendering.
+- [ ] NFR-118: `local_timezone` shall affect active-worklog JSON `started_at` rendering and table `WINDOW` rendering.
 - [ ] NFR-119: Date-window selector shortcut flags shall be mutually exclusive with each other.
 - [ ] NFR-120: Date-window selector shortcut flags shall be mutually exclusive with `--from` and `--to`.
 - [ ] NFR-121: `--from` and `--to` shall accept `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, and signed day offsets in `+Nd` or `-Nd` form.
@@ -287,7 +287,7 @@ Placement rule:
 - [ ] NFR-250: When `--fields` is set, each selected JSON item shall include only requested item fields in requested order.
 - [ ] NFR-250a: `worklogs add --output json --dry` shall return exactly `dry_run` and `record`.
 - [ ] NFR-250b: `worklogs add --output json --dry` `record` shall include `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description`.
-- [ ] NFR-251: `worklogs list` active table columns shall be `ID`, `ISSUE`, `STARTED`, `DURATION`, and `DESCRIPTION`.
+- [ ] NFR-251: `worklogs list` active table columns shall be `ID`, `ISSUE`, `WINDOW`, `DURATION`, and `DESCRIPTION`.
 - [ ] NFR-252: `worklogs list --only-deleted` table columns shall be `ID`, `ISSUE`, and `DELETED`.
 - [ ] NFR-253: Empty table results shall render selected table headers with zero data rows.
 - [ ] NFR-254: Human-facing table output shall render aligned columns rather than raw tab-delimited cells.

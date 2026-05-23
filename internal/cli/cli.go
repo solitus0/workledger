@@ -639,10 +639,10 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 			}
 
 			if dry {
-				return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED_BEFORE", "STARTED_AFTER", "DURATION", "DESCRIPTION"}, shiftPreviewRows(result.PreviewItems))
+				return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW_BEFORE", "WINDOW_AFTER", "DURATION", "DESCRIPTION"}, shiftPreviewRows(result.PreviewItems, effective.Location))
 			}
 
-			return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows(result.Items, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+			return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows(result.Items, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
 		},
 	}
 
@@ -706,7 +706,7 @@ func (a *app) newWorklogsApplyCommand() *cobra.Command {
 				return a.renderApplyJSON(result, effective.Location)
 			}
 
-			return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows(result.Records, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+			return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows(result.Records, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
 		},
 	}
 
@@ -767,9 +767,9 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 				return a.writeJSON(worklogRecordJSON(record, effective.Location))
 			}
 			if dry {
-				return renderTable(a.stdout, []string{"ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"issue_key", "started_at", "duration_seconds", "description"}, 0))
+				return renderTable(a.stdout, []string{"ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"issue_key", "started_at", "duration_seconds", "description"}, 0))
 			}
-			return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+			return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
 		},
 	}
 
@@ -829,7 +829,7 @@ func (a *app) newWorklogsUpdateCommand() *cobra.Command {
 			if mode == "json" {
 				return a.writeJSON(worklogRecordJSON(record, effective.Location))
 			}
-			return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+			return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
 		},
 	}
 
@@ -925,7 +925,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 			}
 
 			if dry {
-				return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION"}, activeRows(result.Items, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+				return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows(result.Items, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
 			}
 			rows := make([][]string, 0, len(result.Deleted))
 			for _, id := range result.Deleted {
@@ -1005,7 +1005,7 @@ func (a *app) newWorklogsRestoreCommand() *cobra.Command {
 			}
 
 			if dry {
-				return renderTable(a.stdout, []string{"ID", "ISSUE", "STARTED", "DURATION", "DESCRIPTION", "DELETED"}, restorePreviewRows(result.Items, effective.Location))
+				return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION", "DELETED"}, restorePreviewRows(result.Items, effective.Location))
 			}
 			rows := make([][]string, 0, len(result.Restored))
 			for _, item := range result.Items {
@@ -3823,6 +3823,37 @@ func worklogRecordJSON(item worklogs.LocalWorklog, location *time.Location) map[
 	}
 }
 
+func worklogTableRecord(item worklogs.LocalWorklog, location *time.Location) map[string]any {
+	return map[string]any{
+		"id":               item.ID,
+		"issue_key":        item.IssueKey,
+		"started_at":       localizedWorklogWindow(item.StartedAtUTC, item.DurationSeconds, location),
+		"started_at_utc":   item.StartedAtUTC.UTC().Format(time.RFC3339),
+		"duration_seconds": tableDurationMinutes(item.DurationSeconds),
+		"description":      item.Description,
+	}
+}
+
+func localizedWorklogWindow(startedAtUTC time.Time, durationSeconds int, location *time.Location) string {
+	start := startedAtUTC.In(location)
+	end := start.Add(time.Duration(durationSeconds) * time.Second)
+	return fmt.Sprintf("%s - %s - %s", start.Format("2006-01-02"), start.Format("15:04"), end.Format("15:04"))
+}
+
+func tableDurationMinutes(durationSeconds int) string {
+	sign := ""
+	if durationSeconds < 0 {
+		sign = "-"
+		durationSeconds = -durationSeconds
+	}
+
+	minutes := durationSeconds / 60
+	if durationSeconds%60 != 0 {
+		minutes++
+	}
+	return fmt.Sprintf("%s%dm", sign, minutes)
+}
+
 func worklogPreviewJSON(item worklogs.LocalWorklog, location *time.Location) map[string]any {
 	return map[string]any{
 		"issue_key":        item.IssueKey,
@@ -3862,7 +3893,7 @@ func issueMetadataRecordJSON(item worklogs.IssueMetadata) map[string]any {
 func activeRows(items []worklogs.LocalWorklog, location *time.Location, fields []string, descriptionMaxWidth int) [][]string {
 	rows := make([][]string, 0, len(items))
 	for _, item := range items {
-		record := worklogRecordJSON(item, location)
+		record := worklogTableRecord(item, location)
 		row := make([]string, 0, len(fields))
 		for _, field := range fields {
 			row = append(row, formatActiveRowValue(field, record[field], descriptionMaxWidth))
@@ -3885,15 +3916,15 @@ func formatActiveRowValue(field string, value any, descriptionMaxWidth int) stri
 	return formatted
 }
 
-func shiftPreviewRows(items []worklogs.ShiftPreviewItem) [][]string {
+func shiftPreviewRows(items []worklogs.ShiftPreviewItem, location *time.Location) [][]string {
 	rows := make([][]string, 0, len(items))
 	for _, item := range items {
 		rows = append(rows, []string{
 			item.ID,
 			item.IssueKey,
-			item.StartedAtBefore.Format(time.RFC3339),
-			item.StartedAtAfter.Format(time.RFC3339),
-			fmt.Sprint(item.DurationSeconds),
+			localizedWorklogWindow(item.StartedAtUTCBefore, item.DurationSeconds, location),
+			localizedWorklogWindow(item.StartedAtUTCAfter, item.DurationSeconds, location),
+			tableDurationMinutes(item.DurationSeconds),
 			item.Description,
 		})
 	}
@@ -3924,12 +3955,13 @@ func deleteResultRows(items []worklogs.DeleteResult) [][]string {
 func restorePreviewRows(items []worklogs.RestorePreviewItem, location *time.Location) [][]string {
 	rows := make([][]string, 0, len(items))
 	for _, item := range items {
+		record := worklogTableRecord(item.Record, location)
 		rows = append(rows, []string{
-			item.Record.ID,
-			item.Record.IssueKey,
-			item.Record.StartedAtUTC.In(location).Format(time.RFC3339),
-			fmt.Sprint(item.Record.DurationSeconds),
-			item.Record.Description,
+			record["id"].(string),
+			record["issue_key"].(string),
+			record["started_at"].(string),
+			record["duration_seconds"].(string),
+			record["description"].(string),
 			item.Tombstone.DeletedAt.UTC().Format(time.RFC3339),
 		})
 	}
@@ -3945,7 +3977,7 @@ func tableHeaders(fields []string) []string {
 		case "issue_key":
 			headers = append(headers, "ISSUE")
 		case "started_at":
-			headers = append(headers, "STARTED")
+			headers = append(headers, "WINDOW")
 		case "started_at_utc":
 			headers = append(headers, "STARTED_AT_UTC")
 		case "duration_seconds":

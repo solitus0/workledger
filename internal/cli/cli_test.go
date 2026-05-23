@@ -1069,12 +1069,94 @@ func TestWorklogsAddDryTableOmitsID(t *testing.T) {
 		t.Fatalf("expected header and one row, got %q", result.stdout)
 	}
 	headers := strings.Fields(lines[0])
-	expected := []string{"ISSUE", "STARTED", "DURATION", "DESCRIPTION"}
+	expected := []string{"ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}
 	if !reflect.DeepEqual(headers, expected) {
 		t.Fatalf("unexpected headers %v in %q", headers, result.stdout)
 	}
 	if strings.Contains(lines[0], "ID") {
 		t.Fatalf("expected no ID column, got %q", result.stdout)
+	}
+	if !strings.Contains(result.stdout, "2026-05-03 - 09:00 - 10:00") {
+		t.Fatalf("expected localized window in %q", result.stdout)
+	}
+	if !strings.Contains(result.stdout, "60m") {
+		t.Fatalf("expected duration in minutes in %q", result.stdout)
+	}
+}
+
+func TestWorklogsListTableUsesLocalizedWindowWhileJSONStaysPrecise(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	sqlitePath := filepath.Join(t.TempDir(), "worklogs.db")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: Europe/Vilnius\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\n")
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	add := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:30:00Z", "--duration", "30m", "--description", "Localized row", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	table := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03")
+	if table.code != 0 {
+		t.Fatalf("list table failed: code=%d stdout=%s stderr=%s", table.code, table.stdout, table.stderr)
+	}
+	if !strings.Contains(table.stdout, "WINDOW") || !strings.Contains(table.stdout, "DURATION") {
+		t.Fatalf("expected WINDOW and DURATION headers, stdout=%q", table.stdout)
+	}
+	if !strings.Contains(table.stdout, "2026-05-03 - 09:30 - 10:00") {
+		t.Fatalf("expected localized window, stdout=%q", table.stdout)
+	}
+	if !strings.Contains(table.stdout, "30m") {
+		t.Fatalf("expected minute duration, stdout=%q", table.stdout)
+	}
+	if strings.Contains(table.stdout, "2026-05-03T09:30:00+03:00") {
+		t.Fatalf("expected table output without RFC3339 timestamp, stdout=%q", table.stdout)
+	}
+
+	jsonResult := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--fields", "issue_key,started_at,started_at_utc,duration_seconds", "--output", "json")
+	if jsonResult.code != 0 {
+		t.Fatalf("list json failed: code=%d stdout=%s stderr=%s", jsonResult.code, jsonResult.stdout, jsonResult.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(jsonResult.stdout))
+	item := payload["items"].([]any)[0].(map[string]any)
+	if item["started_at"] != "2026-05-03T09:30:00+03:00" {
+		t.Fatalf("expected precise local started_at, got %#v", item)
+	}
+	if item["started_at_utc"] != "2026-05-03T06:30:00Z" {
+		t.Fatalf("expected precise UTC started_at_utc, got %#v", item)
+	}
+	if item["duration_seconds"] != float64(1800) {
+		t.Fatalf("expected precise duration_seconds, got %#v", item)
+	}
+}
+
+func TestWorklogsShiftDryTableUsesWindowColumns(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	add := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:00:00Z", "--duration", "1h", "--description", "First", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	dry := runCLI(t, "worklogs", "shift", "--issue", "ABC-123", "--by", "15m", "--dry")
+	if dry.code != 0 {
+		t.Fatalf("shift dry table failed: code=%d stdout=%s stderr=%s", dry.code, dry.stdout, dry.stderr)
+	}
+	if !strings.Contains(dry.stdout, "WINDOW_BEFORE") || !strings.Contains(dry.stdout, "WINDOW_AFTER") {
+		t.Fatalf("expected window headers, stdout=%q", dry.stdout)
+	}
+	if !strings.Contains(dry.stdout, "2026-05-03 - 06:00 - 07:00") || !strings.Contains(dry.stdout, "2026-05-03 - 06:15 - 07:15") {
+		t.Fatalf("expected localized before/after windows, stdout=%q", dry.stdout)
+	}
+	if !strings.Contains(dry.stdout, "60m") {
+		t.Fatalf("expected minute duration, stdout=%q", dry.stdout)
 	}
 }
 
