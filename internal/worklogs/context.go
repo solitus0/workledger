@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	defaultContextDayStart = "08:00"
-	defaultContextDayEnd   = "17:00"
+	defaultContextDayStart = config.DefaultWorkdayStart
+	defaultContextDayEnd   = config.DefaultWorkdayEnd
 )
 
 type IssueMetadata struct {
@@ -436,10 +436,16 @@ func normalizeContextFiltersAt(cfg config.EffectiveConfig, input ContextInput, n
 
 func normalizeWorkdayWindow(cfg config.EffectiveConfig, input ContextInput) (workdayWindow, error) {
 	startValue := defaultContextDayStart
+	if strings.TrimSpace(cfg.DayStart) != "" {
+		startValue = strings.TrimSpace(cfg.DayStart)
+	}
 	if input.DayStart != "" {
 		startValue = input.DayStart
 	}
 	endValue := defaultContextDayEnd
+	if strings.TrimSpace(cfg.DayEnd) != "" {
+		endValue = strings.TrimSpace(cfg.DayEnd)
+	}
 	if input.DayEnd != "" {
 		endValue = input.DayEnd
 	}

@@ -21,6 +21,8 @@ const (
 	DefaultMinimumDurationSecond = 900
 	DefaultDailyMinimumQuota     = 28800
 	DefaultDailyLunch            = "12:00-12:45"
+	DefaultWorkdayStart          = "08:00"
+	DefaultWorkdayEnd            = "17:00"
 	DefaultSQLitePath            = "~/.local/share/workledger/worklogs.db"
 	ClockifyInstanceName         = "clockify"
 )
@@ -44,6 +46,8 @@ type StorageConfig struct {
 type WorklogConfig struct {
 	MinimumDurationSeconds   int    `yaml:"minimum_duration_seconds"`
 	DailyMinimumQuotaSeconds int    `yaml:"daily_minimum_quota_seconds"`
+	DayStart                 string `yaml:"day_start"`
+	DayEnd                   string `yaml:"day_end"`
 	DailyLunch               string `yaml:"daily_lunch"`
 }
 
@@ -121,6 +125,8 @@ type EffectiveConfig struct {
 	SQLitePath               string
 	MinimumDurationSeconds   int
 	DailyMinimumQuotaSeconds int
+	DayStart                 string
+	DayEnd                   string
 	DailyLunch               string
 	TimezoneName             string
 	Location                 *time.Location
@@ -343,6 +349,9 @@ func DefaultConfigBytes(clockifyConfig *ClockifyConfig) []byte {
 		"  minimum_duration_seconds: 900",
 		"  # daily_minimum_quota_seconds is for workledger worklogs context",
 		"  daily_minimum_quota_seconds: 28800",
+		"  # day_start and day_end are only used for workledger worklogs context",
+		"  day_start: 08:00",
+		"  day_end: 17:00",
 		"  # daily_lunch is only used for workledger worklogs context",
 		"  daily_lunch: 12:00-12:45",
 		"",
@@ -519,12 +528,20 @@ func loadEffective(configPath string, data []byte) (EffectiveConfig, error) {
 
 	minimumDuration := DefaultMinimumDurationSecond
 	dailyMinimumQuota := DefaultDailyMinimumQuota
+	dayStart := DefaultWorkdayStart
+	dayEnd := DefaultWorkdayEnd
 	dailyLunch := DefaultDailyLunch
 	if fileConfig.Worklogs != nil && fileConfig.Worklogs.MinimumDurationSeconds > 0 {
 		minimumDuration = fileConfig.Worklogs.MinimumDurationSeconds
 	}
 	if fileConfig.Worklogs != nil && fileConfig.Worklogs.DailyMinimumQuotaSeconds > 0 {
 		dailyMinimumQuota = fileConfig.Worklogs.DailyMinimumQuotaSeconds
+	}
+	if fileConfig.Worklogs != nil && strings.TrimSpace(fileConfig.Worklogs.DayStart) != "" {
+		dayStart = strings.TrimSpace(fileConfig.Worklogs.DayStart)
+	}
+	if fileConfig.Worklogs != nil && strings.TrimSpace(fileConfig.Worklogs.DayEnd) != "" {
+		dayEnd = strings.TrimSpace(fileConfig.Worklogs.DayEnd)
 	}
 	if fileConfig.Worklogs != nil && strings.TrimSpace(fileConfig.Worklogs.DailyLunch) != "" {
 		dailyLunch = strings.TrimSpace(fileConfig.Worklogs.DailyLunch)
@@ -541,6 +558,8 @@ func loadEffective(configPath string, data []byte) (EffectiveConfig, error) {
 		SQLitePath:               sqlitePath,
 		MinimumDurationSeconds:   minimumDuration,
 		DailyMinimumQuotaSeconds: dailyMinimumQuota,
+		DayStart:                 dayStart,
+		DayEnd:                   dayEnd,
 		DailyLunch:               dailyLunch,
 		TimezoneName:             timezoneName,
 		Location:                 location,
@@ -580,6 +599,8 @@ func FingerprintEffective(effective EffectiveConfig) (string, error) {
 		SQLitePath               string     `json:"sqlite_path"`
 		MinimumDurationSeconds   int        `json:"minimum_duration_seconds"`
 		DailyMinimumQuotaSeconds int        `json:"daily_minimum_quota_seconds"`
+		DayStart                 string     `json:"day_start"`
+		DayEnd                   string     `json:"day_end"`
 		DailyLunch               string     `json:"daily_lunch"`
 		Timezone                 string     `json:"timezone"`
 		File                     FileConfig `json:"file"`
@@ -588,6 +609,8 @@ func FingerprintEffective(effective EffectiveConfig) (string, error) {
 		SQLitePath:               effective.SQLitePath,
 		MinimumDurationSeconds:   effective.MinimumDurationSeconds,
 		DailyMinimumQuotaSeconds: effective.DailyMinimumQuotaSeconds,
+		DayStart:                 effective.DayStart,
+		DayEnd:                   effective.DayEnd,
 		DailyLunch:               effective.DailyLunch,
 		Timezone:                 effective.TimezoneName,
 		File:                     effective.File,
@@ -735,7 +758,7 @@ func validateWorklogs(value any) []ValidationIssue {
 		return []ValidationIssue{{Field: "worklogs", Message: "must be a mapping"}}
 	}
 
-	issues := unknownKeyIssues("worklogs", m, []string{"minimum_duration_seconds", "daily_minimum_quota_seconds", "daily_lunch"})
+	issues := unknownKeyIssues("worklogs", m, []string{"minimum_duration_seconds", "daily_minimum_quota_seconds", "day_start", "day_end", "daily_lunch"})
 	if minimum, ok := m["minimum_duration_seconds"]; ok {
 		intValue, ok := yamlInt(minimum)
 		if !ok || intValue <= 0 {
@@ -748,12 +771,52 @@ func validateWorklogs(value any) []ValidationIssue {
 			issues = append(issues, ValidationIssue{Field: "worklogs.daily_minimum_quota_seconds", Message: "must be a positive whole number of seconds"})
 		}
 	}
+	startValue := DefaultWorkdayStart
+	if dayStart, ok := m["day_start"]; ok {
+		str, ok := dayStart.(string)
+		if !ok {
+			issues = append(issues, ValidationIssue{Field: "worklogs.day_start", Message: "must use HH:MM"})
+		} else {
+			trimmed := strings.TrimSpace(str)
+			if _, err := parseClockMinutesWithFormat(trimmed, "must use HH:MM"); err != nil {
+				issues = append(issues, ValidationIssue{Field: "worklogs.day_start", Message: err.Error()})
+			} else {
+				startValue = trimmed
+			}
+		}
+	}
+	endValue := DefaultWorkdayEnd
+	if dayEnd, ok := m["day_end"]; ok {
+		str, ok := dayEnd.(string)
+		if !ok {
+			issues = append(issues, ValidationIssue{Field: "worklogs.day_end", Message: "must use HH:MM"})
+		} else {
+			trimmed := strings.TrimSpace(str)
+			if _, err := parseClockMinutesWithFormat(trimmed, "must use HH:MM"); err != nil {
+				issues = append(issues, ValidationIssue{Field: "worklogs.day_end", Message: err.Error()})
+			} else {
+				endValue = trimmed
+			}
+		}
+	}
+	startMinutes, startErr := parseClockMinutesWithFormat(startValue, "must use HH:MM")
+	endMinutes, endErr := parseClockMinutesWithFormat(endValue, "must use HH:MM")
+	if startErr == nil && endErr == nil && startMinutes >= endMinutes {
+		issues = append(issues, ValidationIssue{Field: "worklogs", Message: "day_start must be earlier than day_end"})
+	}
 	if lunch, ok := m["daily_lunch"]; ok {
 		str, ok := lunch.(string)
 		if !ok {
 			issues = append(issues, ValidationIssue{Field: "worklogs.daily_lunch", Message: "must use HH:MM-HH:MM"})
 		} else if err := ValidateDailyLunchWindow(strings.TrimSpace(str)); err != nil {
 			issues = append(issues, ValidationIssue{Field: "worklogs.daily_lunch", Message: err.Error()})
+		} else if startErr == nil && endErr == nil {
+			parts := strings.Split(strings.TrimSpace(str), "-")
+			lunchStart, _ := parseClockMinutesWithFormat(strings.TrimSpace(parts[0]), "must use HH:MM")
+			lunchEnd, _ := parseClockMinutesWithFormat(strings.TrimSpace(parts[1]), "must use HH:MM")
+			if lunchStart <= startMinutes || lunchEnd >= endMinutes {
+				issues = append(issues, ValidationIssue{Field: "worklogs.daily_lunch", Message: "must fit strictly inside the configured workday"})
+			}
 		}
 	}
 
@@ -766,11 +829,11 @@ func ValidateDailyLunchWindow(value string) error {
 		return fmt.Errorf("must use HH:MM-HH:MM")
 	}
 
-	start, err := parseClockMinutes(strings.TrimSpace(parts[0]))
+	start, err := parseClockMinutesWithFormat(strings.TrimSpace(parts[0]), "must use HH:MM-HH:MM")
 	if err != nil {
 		return err
 	}
-	end, err := parseClockMinutes(strings.TrimSpace(parts[1]))
+	end, err := parseClockMinutesWithFormat(strings.TrimSpace(parts[1]), "must use HH:MM-HH:MM")
 	if err != nil {
 		return err
 	}
@@ -782,12 +845,16 @@ func ValidateDailyLunchWindow(value string) error {
 }
 
 func parseClockMinutes(value string) (int, error) {
+	return parseClockMinutesWithFormat(value, "must use HH:MM-HH:MM")
+}
+
+func parseClockMinutesWithFormat(value string, formatMessage string) (int, error) {
 	var hour, minute int
 	if _, err := fmt.Sscanf(value, "%02d:%02d", &hour, &minute); err != nil {
-		return 0, fmt.Errorf("must use HH:MM-HH:MM")
+		return 0, errors.New(formatMessage)
 	}
 	if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
-		return 0, fmt.Errorf("must use HH:MM-HH:MM")
+		return 0, errors.New(formatMessage)
 	}
 	return hour*60 + minute, nil
 }

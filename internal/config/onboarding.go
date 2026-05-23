@@ -46,6 +46,8 @@ type ConfigSummary struct {
 	LocalTimezone            string
 	MinimumDurationSeconds   int
 	DailyMinimumQuotaSeconds int
+	DayStart                 string
+	DayEnd                   string
 	DailyLunch               string
 	JiraInstanceCount        int
 	UniqueEnvVarCount        int
@@ -161,6 +163,8 @@ func Summary(cfg EffectiveConfig) ConfigSummary {
 		LocalTimezone:            cfg.TimezoneName,
 		MinimumDurationSeconds:   cfg.MinimumDurationSeconds,
 		DailyMinimumQuotaSeconds: cfg.DailyMinimumQuotaSeconds,
+		DayStart:                 cfg.DayStart,
+		DayEnd:                   cfg.DayEnd,
 		DailyLunch:               cfg.DailyLunch,
 		JiraInstanceCount:        jiraInstances,
 		UniqueEnvVarCount:        len(envRefs),

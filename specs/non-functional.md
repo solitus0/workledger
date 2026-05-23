@@ -76,8 +76,9 @@ Placement rule:
 - [ ] NFR-057b: Write-capable local commands shall verify the resolved SQLite path parent directory remains writable before opening a write transaction.
 - [ ] NFR-057c: Local storage checks shall verify that SQLite journal or WAL sidecar files can be created in the resolved SQLite path parent directory.
 - [ ] NFR-058: `worklogs.minimum_duration_seconds` and `worklogs.daily_minimum_quota_seconds`, when present, shall be positive whole numbers of seconds.
-- [ ] NFR-059: The effective local worklog minimum duration shall default to `900` when `worklogs.minimum_duration_seconds` is absent, the effective daily minimum quota shall default to `28800` when `worklogs.daily_minimum_quota_seconds` is absent, and the effective default lunch shall default to `12:00-12:45` when `worklogs.daily_lunch` is absent.
-- [ ] NFR-059a: `worklogs.daily_lunch`, when present, shall use `HH:MM-HH:MM` and define a positive interval.
+- [ ] NFR-059: The effective local worklog minimum duration shall default to `900` when `worklogs.minimum_duration_seconds` is absent, the effective daily minimum quota shall default to `28800` when `worklogs.daily_minimum_quota_seconds` is absent, the effective workday start shall default to `08:00` when `worklogs.day_start` is absent, the effective workday end shall default to `17:00` when `worklogs.day_end` is absent, and the effective default lunch shall default to `12:00-12:45` when `worklogs.daily_lunch` is absent.
+- [ ] NFR-059a: `worklogs.day_start` and `worklogs.day_end`, when present, shall use `HH:MM`, and `worklogs.day_start` shall be earlier than `worklogs.day_end`.
+- [ ] NFR-059b: `worklogs.daily_lunch`, when present, shall use `HH:MM-HH:MM`, define a positive interval, and fit strictly inside the configured workday when config also defines the effective workday window.
 - [ ] NFR-060: `local_timezone`, when present, shall be a valid timezone.
 - [ ] NFR-061: Local timestamp resolution and date selection shall fall back to the system local timezone when `local_timezone` is absent.
 - [ ] NFR-062: `default_output`, when present, shall be `table` or `json`.
@@ -210,7 +211,7 @@ Placement rule:
 - [ ] NFR-182: `worklogs context --lunch` shall define a positive interval.
 - [ ] NFR-183: `worklogs context --lunch` shall fit strictly inside the effective workday window.
 - [ ] NFR-183a: `worklogs context` effective lunch precedence shall be `--no-lunch`, then `--lunch`, then config `worklogs.daily_lunch`, then built-in fallback `12:00-12:45`.
-- [ ] NFR-183b: Config validation shall validate `worklogs.daily_lunch` format and positive interval, but workday-fit validation shall remain a runtime `worklogs context` check after combining flags and config.
+- [ ] NFR-183b: Config validation shall validate `worklogs.daily_lunch` format and positive interval and shall reject a configured lunch window that does not fit strictly inside the configured workday, but runtime `worklogs context` shall still recheck workday fit after combining flags and config.
 
 ## Conflict Validation
 - [ ] NFR-184: Duplicate detection shall evaluate active local worklogs before insert.

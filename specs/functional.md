@@ -39,7 +39,7 @@ Placement rule:
 - [ ] FUNC-021: `workledger init` shall bootstrap `default_output: table` in a new starter config.
 - [ ] FUNC-022: `workledger init` shall bootstrap `local_timezone: Europe/Vilnius` in a new starter config.
 - [ ] FUNC-023: `workledger init` shall bootstrap `storage.sqlite_path: ~/.local/share/workledger/worklogs.db` in a new starter config.
-- [ ] FUNC-024: `workledger init` shall bootstrap `worklogs.minimum_duration_seconds: 900`, `worklogs.daily_minimum_quota_seconds: 28800`, and `worklogs.daily_lunch: 12:00-12:45` in a new starter config, with comments that `daily_minimum_quota_seconds` and `daily_lunch` are for `workledger worklogs context`.
+- [ ] FUNC-024: `workledger init` shall bootstrap `worklogs.minimum_duration_seconds: 900`, `worklogs.daily_minimum_quota_seconds: 28800`, `worklogs.day_start: 08:00`, `worklogs.day_end: 17:00`, and `worklogs.daily_lunch: 12:00-12:45` in a new starter config, with comments that `daily_minimum_quota_seconds`, `day_start`, `day_end`, and `daily_lunch` are for `workledger worklogs context`.
 - [ ] FUNC-025: `workledger init` shall write commented adapter reference scaffolds for `clockify`, `jira_cloud`, and `jira_data_center`.
 - [ ] FUNC-026: The commented Clockify reference scaffold shall include a `project_mapping` example.
 - [ ] FUNC-027: The commented Jira Cloud reference scaffold shall include `pull.exclude_issues` and a non-default reporting route profile example.
@@ -60,7 +60,7 @@ Placement rule:
 - [ ] FUNC-040: `workledger config validate` shall support `json` output.
 - [ ] FUNC-041: `workledger config validate` shall print an explicit success line to stdout in table output.
 - [ ] FUNC-042: `workledger config validate` shall return a JSON success payload on stdout in JSON output.
-- [ ] FUNC-042a: `workledger config validate --output json` effective `worklogs` payload shall include `daily_lunch`.
+- [ ] FUNC-042a: `workledger config validate --output json` effective `worklogs` payload shall include `day_start`, `day_end`, and `daily_lunch`.
 - [ ] FUNC-043: `workledger config validate` shall return a JSON error payload with all discovered validation errors on failure in JSON output.
 - [ ] FUNC-044: `workledger setup jira-cloud` shall append one Jira Cloud instance block to an existing valid local config.
 - [ ] FUNC-045: `workledger setup jira-cloud` shall accept `--instance`, `--base-url`, `--email`, `--token-env`, and repeated `--issue-prefix`.
@@ -83,7 +83,7 @@ Placement rule:
 - [ ] FUNC-062: `workledger config env --print-export-template` shall print one `export NAME=` line per unique referenced env var.
 - [ ] FUNC-063: `workledger config env --dotenv-template` shall print one `NAME=` line per unique referenced env var.
 - [ ] FUNC-064: `workledger config summary` shall report config path, effective settings, configured-adapter counts, env-var counts, routing counts, reporting-target counts, and Clockify mapping counts.
-- [ ] FUNC-064a: `workledger config summary` shall expose the effective `daily_lunch` setting in table and JSON output.
+- [ ] FUNC-064a: `workledger config summary` shall expose the effective `day_start`, `day_end`, and `daily_lunch` settings in table and JSON output.
 - [ ] FUNC-065: `workledger doctor` shall run local config validation, env-var checks, and routing checks when invoked without a check-group flag.
 - [ ] FUNC-066: `workledger doctor --local` shall enable local checks.
 - [ ] FUNC-067: `workledger doctor --env` shall enable env-var checks.
@@ -258,6 +258,7 @@ Placement rule:
 - [ ] FUNC-205: `workledger worklogs context` shall reuse date-window selectors.
 - [ ] FUNC-206: `workledger worklogs context` shall reuse repeated planning issue selectors.
 - [ ] FUNC-207: `workledger worklogs context` shall support optional workday-analysis inputs `--day-start`, `--day-end`, `--lunch`, and `--no-lunch`.
+- [ ] FUNC-207aa: `workledger worklogs context` shall resolve effective day-start precedence as `--day-start`, then config `worklogs.day_start`, then built-in fallback `08:00`, and effective day-end precedence as `--day-end`, then config `worklogs.day_end`, then built-in fallback `17:00`.
 - [ ] FUNC-207a: `workledger worklogs context` shall resolve effective lunch in this order: `--no-lunch`, `--lunch`, config `worklogs.daily_lunch`, then built-in fallback `12:00-12:45`.
 - [ ] FUNC-208: `workledger worklogs context` shall return one first-class planning snapshot for the selected scope.
 - [ ] FUNC-209: `workledger worklogs context` shall structure the planning snapshot per selected local day.

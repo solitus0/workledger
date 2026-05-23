@@ -169,6 +169,8 @@ storage:
 worklogs:
   minimum_duration_seconds: 900
   daily_minimum_quota_seconds: 28800
+  day_start: 08:00
+  day_end: 17:00
   daily_lunch: 12:00-12:45
 ```
 

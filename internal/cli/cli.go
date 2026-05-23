@@ -281,6 +281,8 @@ func (a *app) newConfigCommand() *cobra.Command {
 					"worklogs": map[string]any{
 						"minimum_duration_seconds":    effective.MinimumDurationSeconds,
 						"daily_minimum_quota_seconds": effective.DailyMinimumQuotaSeconds,
+						"day_start":                   effective.DayStart,
+						"day_end":                     effective.DayEnd,
 						"daily_lunch":                 effective.DailyLunch,
 					},
 				},

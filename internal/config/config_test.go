@@ -13,7 +13,7 @@ func TestDefaultConfigBytesIncludesFullCommentedAdapterReference(t *testing.T) {
 	fragments := []string{
 		"default_output: table\n",
 		"local_timezone: Europe/Vilnius\n",
-		"worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # daily_lunch is only used for workledger worklogs context\n  daily_lunch: 12:00-12:45\n",
+		"worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # day_start and day_end are only used for workledger worklogs context\n  day_start: 08:00\n  day_end: 17:00\n  # daily_lunch is only used for workledger worklogs context\n  daily_lunch: 12:00-12:45\n",
 		"# clockify:\n#   workspace_id: your-workspace-id\n#   user_id: your-user-id\n#   auth:\n#     api_key_env: CLOCKIFY_API_KEY\n#   project_mapping:\n#     issue_prefixes:\n#       WEB: App Project\n#     default_project: Default Project # fallback project when no issue prefix matches\n#     create_issue_tag_if_missing: true # automation default; create missing issue tags on push\n",
 		"# jira_cloud:\n#   instances:\n#     product:\n#       base_url: https://example.atlassian.net\n#       auth:\n#         email: user@example.com\n#         token_env: WORKLEDGER_JIRA_CLOUD_PRODUCT_TOKEN\n#       pull:\n#         exclude_issues: # issue keys that pull must never import into local storage; reporting issues are excluded by default\n#           - REPORT-2\n#       routing:\n#         profiles:\n#           default:\n#             issue_prefixes:\n#               - WEB\n#           # Reconcile this reporting profile with:\n#           # workledger plan reconcile --push --adapter=jira-cloud --instance product --route-profile reporting --today\n#           reporting: # non-default profile for fixed reporting issue routing\n#             reporting_targets: # canonical prefix -> fixed reporting issue key; OPS matches jira_data_center.instances.internal.routing.profiles.default.issue_prefixes\n#               OPS: REPORT-1\n",
 		"# jira_data_center:\n#   instances:\n#     internal:\n#       base_url: https://jira.example.com\n#       auth:\n#         bearer:\n#           token_env: WORKLEDGER_JIRA_DC_INTERNAL_TOKEN\n#       routing:\n#         profiles:\n#           default:\n#             issue_prefixes:\n#               - OPS\n",
@@ -36,7 +36,7 @@ func TestDefaultConfigBytesWithClockifyBootstrapIncludesCommentedProjectMappingE
 	}))
 
 	fragments := []string{
-		"worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # daily_lunch is only used for workledger worklogs context\n  daily_lunch: 12:00-12:45\n",
+		"worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # day_start and day_end are only used for workledger worklogs context\n  day_start: 08:00\n  day_end: 17:00\n  # daily_lunch is only used for workledger worklogs context\n  daily_lunch: 12:00-12:45\n",
 		"clockify:\n  workspace_id: ws-active\n  user_id: user-1\n  auth:\n    api_key_env: CLOCKIFY_API_KEY\n  # project_mapping:\n  #   issue_prefixes:\n  #     WEB: App Project\n  #   default_project: Default Project # fallback project when no issue prefix matches\n  #   create_issue_tag_if_missing: true # automation default; create missing issue tags on push\n",
 		"# jira_cloud:\n#   instances:\n#     product:\n#       base_url: https://example.atlassian.net\n",
 		"# jira_data_center:\n#   instances:\n#     internal:\n#       base_url: https://jira.example.com\n",
@@ -127,6 +127,56 @@ worklogs:
 	}
 }
 
+func TestValidateConfigBytesAcceptsConfiguredWorkday(t *testing.T) {
+	data := []byte(`
+storage:
+  sqlite_path: /tmp/workledger-test.db
+worklogs:
+  day_start: 09:00
+  day_end: 17:30
+  daily_lunch: 12:00-12:45
+`)
+
+	issues, cfg := validateConfigBytes(data)
+	if len(issues) != 0 {
+		t.Fatalf("expected valid config, got %#v", issues)
+	}
+	if cfg.Worklogs == nil || cfg.Worklogs.DayStart != "09:00" || cfg.Worklogs.DayEnd != "17:30" {
+		t.Fatalf("expected configured workday to decode, got %#v", cfg.Worklogs)
+	}
+}
+
+func TestValidateConfigBytesRejectsInvalidConfiguredWorkday(t *testing.T) {
+	cases := []struct {
+		name          string
+		fragment      string
+		expectedField string
+	}{
+		{name: "invalid day_start format", fragment: "day_start: 9am", expectedField: "worklogs.day_start"},
+		{name: "invalid day_end format", fragment: "day_end: 5pm", expectedField: "worklogs.day_end"},
+		{name: "day_start after day_end", fragment: "day_start: 17:00\n  day_end: 08:00", expectedField: "worklogs"},
+	}
+
+	for _, tc := range cases {
+		data := []byte("storage:\n  sqlite_path: /tmp/workledger-test.db\nworklogs:\n  " + tc.fragment + "\n")
+
+		issues, _ := validateConfigBytes(data)
+		if len(issues) == 0 {
+			t.Fatalf("expected validation issues for %q", tc.name)
+		}
+		found := false
+		for _, issue := range issues {
+			if issue.Field == tc.expectedField {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected %s issue for %q, got %#v", tc.expectedField, tc.name, issues)
+		}
+	}
+}
+
 func TestValidateConfigBytesRejectsInvalidDailyLunch(t *testing.T) {
 	cases := []string{
 		"daily_lunch: noon",
@@ -151,6 +201,32 @@ func TestValidateConfigBytesRejectsInvalidDailyLunch(t *testing.T) {
 		if !found {
 			t.Fatalf("expected daily_lunch issue for %q, got %#v", fragment, issues)
 		}
+	}
+}
+
+func TestValidateConfigBytesRejectsConfiguredLunchOutsideConfiguredWorkday(t *testing.T) {
+	data := []byte(`
+storage:
+  sqlite_path: /tmp/workledger-test.db
+worklogs:
+  day_start: 09:00
+  day_end: 17:00
+  daily_lunch: 08:30-09:15
+`)
+
+	issues, _ := validateConfigBytes(data)
+	if len(issues) == 0 {
+		t.Fatal("expected validation issues")
+	}
+	found := false
+	for _, issue := range issues {
+		if issue.Field == "worklogs.daily_lunch" && strings.Contains(issue.Message, "fit strictly inside the configured workday") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected configured workday fit issue, got %#v", issues)
 	}
 }
 
