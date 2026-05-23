@@ -701,7 +701,7 @@ func (s *Service) listActive(filters EffectiveFilters) ([]LocalWorklog, error) {
 	query := `SELECT id, issue_key, started_at_utc, duration_seconds, description FROM worklogs`
 	args := make([]any, 0)
 	where := buildWhereClause(filters, false, &args)
-	query += where + ` ORDER BY started_at_utc DESC, id ASC`
+	query += where + ` ORDER BY started_at_utc ASC, id ASC`
 
 	rows, err := s.store.DB().Query(query, args...)
 	if err != nil {
@@ -725,7 +725,7 @@ func (s *Service) listDeleted(filters EffectiveFilters) ([]Tombstone, error) {
 	query := `SELECT worklog_id, issue_key, started_at_utc, duration_seconds, description, deleted_at FROM worklog_tombstones`
 	args := make([]any, 0)
 	where := buildWhereClause(filters, true, &args)
-	query += where + ` ORDER BY started_at_utc DESC, worklog_id ASC`
+	query += where + ` ORDER BY started_at_utc ASC, worklog_id ASC`
 
 	rows, err := s.store.DB().Query(query, args...)
 	if err != nil {

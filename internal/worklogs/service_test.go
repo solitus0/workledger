@@ -294,6 +294,87 @@ func TestSearchSupportsIssueDateLiteralAndDeletedMode(t *testing.T) {
 	}
 }
 
+func TestListOrdersActiveWorklogsOldestFirst(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{Location: time.UTC}
+
+	later := mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-124",
+		StartedUTC:  "2026-05-04T06:00:00Z",
+		Duration:    "30m",
+		Description: "Later",
+	})
+	earlier := mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-123",
+		StartedUTC:  "2026-05-03T06:00:00Z",
+		Duration:    "30m",
+		Description: "Earlier",
+	})
+
+	active, deleted, _, err := service.List(cfg, ListFilters{
+		From: "2026-05-03",
+		To:   "2026-05-04",
+	})
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("expected no tombstones, got %d", len(deleted))
+	}
+	if len(active) != 2 {
+		t.Fatalf("expected two active worklogs, got %d", len(active))
+	}
+	if active[0].ID != earlier.ID || active[1].ID != later.ID {
+		t.Fatalf("unexpected ordering: %#v", active)
+	}
+}
+
+func TestListOrdersDeletedWorklogsOldestFirst(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{Location: time.UTC}
+
+	later := mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-124",
+		StartedUTC:  "2026-05-04T06:00:00Z",
+		Duration:    "30m",
+		Description: "Later",
+	})
+	earlier := mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-123",
+		StartedUTC:  "2026-05-03T06:00:00Z",
+		Duration:    "30m",
+		Description: "Earlier",
+	})
+	if _, err := service.Delete(later.ID, false); err != nil {
+		t.Fatalf("delete later failed: %v", err)
+	}
+	if _, err := service.Delete(earlier.ID, false); err != nil {
+		t.Fatalf("delete earlier failed: %v", err)
+	}
+
+	active, deleted, _, err := service.List(cfg, ListFilters{
+		From:        "2026-05-03",
+		To:          "2026-05-04",
+		OnlyDeleted: true,
+	})
+	if err != nil {
+		t.Fatalf("deleted list failed: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("expected no active worklogs, got %d", len(active))
+	}
+	if len(deleted) != 2 {
+		t.Fatalf("expected two tombstones, got %d", len(deleted))
+	}
+	if deleted[0].ID != earlier.ID || deleted[1].ID != later.ID {
+		t.Fatalf("unexpected deleted ordering: %#v", deleted)
+	}
+}
+
 func TestSearchRejectsBlankQuery(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()

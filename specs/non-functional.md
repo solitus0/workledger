@@ -371,11 +371,11 @@ Placement rule:
 - [ ] NFR-321c: `worklogs add --dry` shall remain read-only and shall not require local storage writability.
 
 ## Determinism
-- [ ] NFR-322: `worklogs list` sorting shall be fixed by `started_at desc`, then stable local `id`.
+- [ ] NFR-322: `worklogs list` sorting shall be fixed by `started_at asc`, then stable local `id`.
 - [ ] NFR-323: `worklogs search` sorting shall be fixed by `started_at desc`, then stable local `id`.
 - [ ] NFR-324: `worklogs list` shall not expose sort-selection flags.
 - [ ] NFR-325: `worklogs search` shall not expose sort-selection flags.
-- [ ] NFR-326: Deleted-only ordering shall use `started_at desc`, then stable local `id`.
+- [ ] NFR-326: Deleted-only ordering shall use `started_at asc`, then stable local `id`.
 - [ ] NFR-327: `worklogs context` free-slot order shall be ascending by local start time.
 - [ ] NFR-328: `planning.slot_order` shall indicate free slots are ordered by ascending local day and ascending slot start.
 - [ ] NFR-329: `worklogs shift` shall preserve relative spacing between selected worklogs.
