@@ -41,3 +41,7 @@ Current history uses short, imperative subjects such as `plan refinement`. Keep 
 ## Security & Configuration Tips
 
 Do not commit real Jira credentials or local config files. Treat `~/.config/workledger/config.yaml` as an operator-local path referenced by docs, not a tracked artifact.
+
+## Collaboration Boundary
+
+- When the user is asking questions, requesting suggestions, or asking for an opinion, answer directly and do not implement changes unless the user explicitly asks you to implement, apply, or make the suggested changes.
