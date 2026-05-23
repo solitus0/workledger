@@ -39,7 +39,7 @@ Placement rule:
 - [ ] FUNC-021: `workledger init` shall bootstrap `default_output: table` in a new starter config.
 - [ ] FUNC-022: `workledger init` shall bootstrap `local_timezone: Europe/Vilnius` in a new starter config.
 - [ ] FUNC-023: `workledger init` shall bootstrap `storage.sqlite_path: ~/.local/share/workledger/worklogs.db` in a new starter config.
-- [ ] FUNC-024: `workledger init` shall bootstrap `worklogs.minimum_duration_seconds: 900`, `worklogs.daily_minimum_quota_seconds: 28800`, and `worklogs.daily_lunch: 12:00-13:00` in a new starter config, with comments that `daily_minimum_quota_seconds` and `daily_lunch` are for `workledger worklogs context`.
+- [ ] FUNC-024: `workledger init` shall bootstrap `worklogs.minimum_duration_seconds: 900`, `worklogs.daily_minimum_quota_seconds: 28800`, and `worklogs.daily_lunch: 12:00-12:45` in a new starter config, with comments that `daily_minimum_quota_seconds` and `daily_lunch` are for `workledger worklogs context`.
 - [ ] FUNC-025: `workledger init` shall write commented adapter reference scaffolds for `clockify`, `jira_cloud`, and `jira_data_center`.
 - [ ] FUNC-026: The commented Clockify reference scaffold shall include a `project_mapping` example.
 - [ ] FUNC-027: The commented Jira Cloud reference scaffold shall include `pull.exclude_issues` and a non-default reporting route profile example.
@@ -258,7 +258,7 @@ Placement rule:
 - [ ] FUNC-205: `workledger worklogs context` shall reuse date-window selectors.
 - [ ] FUNC-206: `workledger worklogs context` shall reuse repeated planning issue selectors.
 - [ ] FUNC-207: `workledger worklogs context` shall support optional workday-analysis inputs `--day-start`, `--day-end`, `--lunch`, and `--no-lunch`.
-- [ ] FUNC-207a: `workledger worklogs context` shall resolve effective lunch in this order: `--no-lunch`, `--lunch`, config `worklogs.daily_lunch`, then built-in fallback `12:00-13:00`.
+- [ ] FUNC-207a: `workledger worklogs context` shall resolve effective lunch in this order: `--no-lunch`, `--lunch`, config `worklogs.daily_lunch`, then built-in fallback `12:00-12:45`.
 - [ ] FUNC-208: `workledger worklogs context` shall return one first-class planning snapshot for the selected scope.
 - [ ] FUNC-209: `workledger worklogs context` shall structure the planning snapshot per selected local day.
 - [ ] FUNC-210: `workledger worklogs context` shall include empty selected days when no worklogs exist for those days.

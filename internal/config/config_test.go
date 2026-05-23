@@ -13,7 +13,7 @@ func TestDefaultConfigBytesIncludesFullCommentedAdapterReference(t *testing.T) {
 	fragments := []string{
 		"default_output: table\n",
 		"local_timezone: Europe/Vilnius\n",
-		"worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # daily_lunch is only used for workledger worklogs context\n  daily_lunch: 12:00-13:00\n",
+		"worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # daily_lunch is only used for workledger worklogs context\n  daily_lunch: 12:00-12:45\n",
 		"# clockify:\n#   workspace_id: your-workspace-id\n#   user_id: your-user-id\n#   auth:\n#     api_key_env: CLOCKIFY_API_KEY\n#   project_mapping:\n#     issue_prefixes:\n#       WEB: App Project\n#     default_project: Default Project # fallback project when no issue prefix matches\n#     create_issue_tag_if_missing: true # automation default; create missing issue tags on push\n",
 		"# jira_cloud:\n#   instances:\n#     product:\n#       base_url: https://example.atlassian.net\n#       auth:\n#         email: user@example.com\n#         token_env: WORKLEDGER_JIRA_CLOUD_PRODUCT_TOKEN\n#       pull:\n#         exclude_issues: # issue keys that pull must never import into local storage; reporting issues are excluded by default\n#           - REPORT-2\n#       routing:\n#         profiles:\n#           default:\n#             issue_prefixes:\n#               - WEB\n#           # Reconcile this reporting profile with:\n#           # workledger plan reconcile --push --adapter=jira-cloud --instance product --route-profile reporting --today\n#           reporting: # non-default profile for fixed reporting issue routing\n#             reporting_targets: # canonical prefix -> fixed reporting issue key; OPS matches jira_data_center.instances.internal.routing.profiles.default.issue_prefixes\n#               OPS: REPORT-1\n",
 		"# jira_data_center:\n#   instances:\n#     internal:\n#       base_url: https://jira.example.com\n#       auth:\n#         bearer:\n#           token_env: WORKLEDGER_JIRA_DC_INTERNAL_TOKEN\n#       routing:\n#         profiles:\n#           default:\n#             issue_prefixes:\n#               - OPS\n",
@@ -36,7 +36,7 @@ func TestDefaultConfigBytesWithClockifyBootstrapIncludesCommentedProjectMappingE
 	}))
 
 	fragments := []string{
-		"worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # daily_lunch is only used for workledger worklogs context\n  daily_lunch: 12:00-13:00\n",
+		"worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # daily_lunch is only used for workledger worklogs context\n  daily_lunch: 12:00-12:45\n",
 		"clockify:\n  workspace_id: ws-active\n  user_id: user-1\n  auth:\n    api_key_env: CLOCKIFY_API_KEY\n  # project_mapping:\n  #   issue_prefixes:\n  #     WEB: App Project\n  #   default_project: Default Project # fallback project when no issue prefix matches\n  #   create_issue_tag_if_missing: true # automation default; create missing issue tags on push\n",
 		"# jira_cloud:\n#   instances:\n#     product:\n#       base_url: https://example.atlassian.net\n",
 		"# jira_data_center:\n#   instances:\n#     internal:\n#       base_url: https://jira.example.com\n",

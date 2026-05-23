@@ -169,7 +169,7 @@ storage:
 worklogs:
   minimum_duration_seconds: 900
   daily_minimum_quota_seconds: 28800
-  daily_lunch: 12:00-13:00
+  daily_lunch: 12:00-12:45
 ```
 
 Adapter secrets are referenced through environment variable names. Inline tokens and API keys are intentionally invalid configuration.

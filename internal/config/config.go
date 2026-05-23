@@ -20,7 +20,7 @@ const (
 	DefaultOutputMode            = "table"
 	DefaultMinimumDurationSecond = 900
 	DefaultDailyMinimumQuota     = 28800
-	DefaultDailyLunch            = "12:00-13:00"
+	DefaultDailyLunch            = "12:00-12:45"
 	DefaultSQLitePath            = "~/.local/share/workledger/worklogs.db"
 	ClockifyInstanceName         = "clockify"
 )
@@ -344,7 +344,7 @@ func DefaultConfigBytes(clockifyConfig *ClockifyConfig) []byte {
 		"  # daily_minimum_quota_seconds is for workledger worklogs context",
 		"  daily_minimum_quota_seconds: 28800",
 		"  # daily_lunch is only used for workledger worklogs context",
-		"  daily_lunch: 12:00-13:00",
+		"  daily_lunch: 12:00-12:45",
 		"",
 	}
 	if clockifyConfig == nil {
