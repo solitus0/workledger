@@ -1,73 +1,80 @@
 # Worklog creation contract
 
-Use this reference only while creating local `workledger` worklogs from current session context.
+Exact contract for local `workledger` worklog creation.
 
-## Evidence extraction
+## Evidence
 
-Evidence must come from the current visible session:
+Use only current-session evidence:
 
-1. Explicit user instructions in the current request.
-2. Current coding-agent transcript or session summary.
-3. Tool output already present in the session.
-4. Branch names, commit messages, PR titles, issue keys, or file paths already visible in the session.
-5. User-provided notes or uploaded files in the same conversation.
+- user request
+- chat, agent transcript, or session summary
+- visible tool output
+- visible branch, commit, PR, issue, or file context
+- notes/uploads in this conversation
 
-Do not search unrelated historical conversations. Do not infer issue keys from weak associations.
+No unrelated conversation search. No weak issue-key inference.
 
-## Empty versus incomplete context
+## Missing data
 
-Empty context means there is no concrete work evidence beyond the invocation. Stop immediately and request full worklog data.
+- Duration gate comes first: if the user invocation/request lacks explicit duration, stop before commands and ask for duration only.
+- Never derive duration from elapsed session time, timestamps, tool history, commit count, calendar gaps, or `workledger` context.
+- Normalize user-provided duration formats when safe, for example `90 minutes` to `1h30m` or `5400` seconds.
+- Empty context after duration is known: request issue key(s), date if not today, and summary.
+- Incomplete context: ask only for the missing required field.
+- Date may default to today after issue, duration, and summary are known.
+- Without an explicit issue key, run `git branch --show-current` before asking.
+- Never invent issue keys, durations, or completed work.
 
-Incomplete context means there is some usable evidence, but a required field is missing. Ask only for the missing field:
+## Command scope
 
-- missing issue key: ask for issue key
-- missing duration: ask for duration
-- missing summary: ask what work should be logged
-
-Default the date to today when the issue, summary, and duration are known or inferable.
-
-## Placement workflow
-
-Run context inspection before creating rows:
+Allowed command families only:
 
 ```text
-workledger worklogs context --today --output json
-workledger worklogs context --from 2026-05-15 --to 2026-05-15 --output json
+git branch --show-current
+
+workledger worklogs add --issue KEY --snap DATE_WINDOW --duration DURATION --description "..." --dry --output json
+workledger worklogs add --issue KEY --snap DATE_WINDOW --duration DURATION --description "..." --output json
+workledger worklogs add --issue KEY --started LOCAL_TIME --duration DURATION --description "..." --dry --output json
+workledger worklogs add --issue KEY --started LOCAL_TIME --duration DURATION --description "..." --output json
+workledger worklogs add --issue KEY --started-utc UTC_TIME --duration DURATION --description "..." --dry --output json
+workledger worklogs add --issue KEY --started-utc UTC_TIME --duration DURATION --description "..." --output json
+
+workledger worklogs context DATE_WINDOW --output json
+workledger worklogs context DATE_WINDOW --issue KEY --output json
+
+workledger worklogs apply --stdin --dry --output json
+workledger worklogs apply --stdin --output json
+workledger worklogs apply --file payload.json --dry --output json
+workledger worklogs apply --file payload.json --output json
 ```
 
-Use the returned free slots and collisions to place candidate entries. Prefer primary workday slots. Use overtime only when the context explicitly supports it.
+`DATE_WINDOW` is a supported date selector such as `--today`, `--yesterday`, or `--from YYYY-MM-DD --to YYYY-MM-DD`. Prefer stdin for apply. Use files only for debugging or when requested.
 
-## Allocation rules
+## Single-entry path
 
-Apply rules in this order:
+Use `worklogs add` directly only after the user has provided duration. Dry-run first; apply after success.
 
-1. Exact user/session constraints.
-2. Existing free slots from `worklogs context`.
-3. Evidence strength per issue.
-4. Equal split fallback.
+- Unknown exact start: use `--snap DATE_WINDOW`.
+- Known local start: use `--started`, for example `todayT09:00`.
+- Known UTC start: use `--started-utc`, for example `2026-05-15T07:00:00Z`.
+- Do not run `context` before a `--snap` add.
 
-Use 15-minute increments. Match the supported total duration exactly. Do not create tiny rows just because many files or messages are mentioned.
+## Multi-entry path
 
-## Description rules
+1. Require user-provided duration coverage before commands:
+   - use explicit per-entry durations when supplied
+   - use one explicit total duration only when the user also provides an explicit split rule or grants equal split
+   - stop and ask when any duration would need inference
+2. Run `worklogs context DATE_WINDOW --output json` only after duration coverage is clear.
+3. Bundle evidence by issue, not by chat turn, command, commit, or file.
+4. Place entries in free slots, preferring primary workday slots before overtime.
+5. Split only for user-approved duration splits, slot boundaries, or genuinely distinct issue work.
+6. Preserve the user's duration. If CLI rules require a different increment or format, ask for the corrected duration unless the conversion is purely syntactic.
+7. Validate with `apply --stdin --dry`; apply after success.
 
-Descriptions should be concise and concrete:
+## Apply payload
 
-- `implement session worklog creation flow`
-- `validate worklog apply payload handling`
-- `review and narrow skill invocation scope`
-- `investigate cli dry-run failure`
-
-Avoid vague descriptions:
-
-- `work on task`
-- `misc updates`
-- `chatgpt session`
-
-Do not include issue keys in descriptions unless the user explicitly asks.
-
-## Payload validation
-
-Payloads must be one JSON object with top-level `adds`:
+Use one JSON object with top-level `adds`:
 
 ```json
 {
@@ -84,39 +91,21 @@ Payloads must be one JSON object with top-level `adds`:
 
 Each add requires:
 
-- `issue_key`: jira-style key such as `PROJ-123`
-- `duration_seconds`: positive whole seconds
-- `description`: non-empty single-line text
-- exactly one timestamp field:
-  - `started_at` for local workledger grammar such as `todayT09:00`
-  - `started_at_utc` for explicit utc rfc3339 such as `2026-05-15T07:00:00Z`
+- `issue_key`: Jira-style key, for example `PROJ-123`
+- `duration_seconds`: positive whole seconds from explicit user-provided duration only
+- `description`: concise single-line text; omit issue key unless requested
+- exactly one timestamp: `started_at` for local grammar or `started_at_utc` for UTC RFC3339
 
-Authoritative dry-run and validation:
+## Description style
 
-```text
-workledger worklogs apply --file payload.json --dry --output json
-```
+Good: `implement session worklog creation flow`, `validate worklog apply payload handling`, `review skill invocation scope`, `investigate cli dry-run failure`.
 
-Apply after successful dry-run:
-
-```text
-workledger worklogs apply --file payload.json --output json
-```
+Bad: `work on task`, `misc updates`, `chatgpt session`.
 
 ## Failure handling
 
-Treat dry-run failures as repairable by default. Do not immediately ask the user or stop at the first CLI error.
+Treat dry-run failures as repairable when context supports the fix. Repair payload shape, extra fields, known missing fields, timestamp grammar/exclusivity, slot collisions, boundary splits, or weak descriptions. Convert duration only when the user supplied it explicitly and the conversion is purely syntactic, such as `90 minutes` to `1h30m`. Rerun dry-run after each evidence-based repair.
 
-When dry-run validation fails:
+Ask the user when the fix needs unavailable information or any duration change beyond syntax: issue key, user-provided duration, duration increment, allocation, date, summary, split rule, or conflict priority.
 
-1. Read the CLI error and identify the smallest payload or placement change likely to fix it.
-2. Repair anything derivable from current context, including JSON shape, required fields, timestamp field exclusivity, local timestamp grammar, duration increment rounding, slot placement, collision avoidance, description length/content, and unnecessary extra fields.
-3. Re-run `workledger worklogs apply --file payload.json --dry --output json` or the equivalent stdin command.
-4. Repeat only while each attempt has a clear, evidence-based correction. Do not loop blindly.
-5. Ask the user only when the remaining failure requires information that is not available in the current session, such as the correct issue key, exact duration, date choice, or which conflicting worklog should take priority.
-
-If dry-run still cannot be repaired, no worklog was created. Report the exact CLI error or warning and the smallest missing correction needed from the user.
-
-If dry-run succeeds but apply fails, do not claim success. If the failure is a transient or command-shape problem that can be fixed without changing user intent, repair and retry once. Otherwise report the CLI error exactly enough for the user to act.
-
-If a storage path or SQLite permission issue appears, state that the payload passed validation but local persistence failed.
+If dry-run succeeds but apply fails, do not claim success. Retry once only for command-shape or transient persistence failures that preserve intent. For storage or SQLite permission errors, say validation passed but local persistence failed.
