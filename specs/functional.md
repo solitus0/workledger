@@ -138,8 +138,9 @@ Placement rule:
 
 ## Worklog Selectors
 - [ ] FUNC-105: Date-window selectors shall support `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
-- [ ] FUNC-106: Active-worklog selectors shall support `--issue`, `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
+- [ ] FUNC-106: Active-worklog selectors shall support `--issue`, `--issue-prefix`, `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
 - [ ] FUNC-107: Active-worklog selectors shall support at most one `--issue` filter value per invocation.
+- [ ] FUNC-107a: Active-worklog selectors shall support at most one `--issue-prefix` filter value per invocation.
 - [ ] FUNC-108: `--only-deleted` shall switch `worklogs list` from active worklogs to deleted tombstones.
 - [ ] FUNC-109: `--fields` shall accept a comma-separated ordered subset of the selected record shape.
 - [ ] FUNC-110: Planning issue selectors shall allow repeated `--issue <KEY>` values.

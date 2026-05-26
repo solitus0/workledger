@@ -177,6 +177,8 @@ Placement rule:
 - [ ] NFR-148: Jira-family routing prefixes shall start with an uppercase ASCII letter.
 - [ ] NFR-149: Jira-family routing prefixes may contain uppercase ASCII letters or digits after the first character.
 - [ ] NFR-150: Jira routing prefixes shall be matched exactly.
+- [ ] NFR-150a: `--issue-prefix` shall use the same uppercase Jira-family prefix grammar as routing prefixes.
+- [ ] NFR-150b: `--issue-prefix <PREFIX>` shall match local issue keys only at the exact `<PREFIX>-` boundary.
 - [ ] NFR-151: `worklogs search <query>` shall trim outer whitespace from `<query>` before validation.
 - [ ] NFR-152: `worklogs search <query>` shall fail validation when the trimmed query is empty.
 - [ ] NFR-153: `worklogs search <query>` shall preserve remaining internal query text exactly.
@@ -283,6 +285,8 @@ Placement rule:
 - [ ] NFR-243: `worklogs search --output json` shall return `filters`, `items`, and `total`.
 - [ ] NFR-244: `worklogs list` JSON `filters` shall expose raw operator inputs.
 - [ ] NFR-245: `worklogs list` JSON `filters` shall expose effective normalized values.
+- [ ] NFR-245a: `worklogs list` and `worklogs search` JSON `filters.raw.issue_prefix` shall expose the raw `--issue-prefix` input when provided.
+- [ ] NFR-245b: `worklogs list` and `worklogs search` JSON `filters.effective.issue_prefix` shall expose the normalized effective prefix when provided.
 - [ ] NFR-246: `worklogs search` JSON `filters.raw.query` shall preserve the operator-supplied query.
 - [ ] NFR-247: `worklogs search` JSON `filters.effective.query` shall contain the trimmed normalized query used for matching.
 - [ ] NFR-248: `--fields` shall not remove `filters` from `worklogs list` or `worklogs search` JSON output.

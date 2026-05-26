@@ -243,6 +243,114 @@ func TestNormalizeListFiltersAtAcceptsMonthSelectorAsExplicitTimeSelector(t *tes
 	}
 }
 
+func TestNormalizeListFiltersAtIssuePrefixValidation(t *testing.T) {
+	cfg := config.EffectiveConfig{Location: time.UTC}
+
+	effective, err := normalizeListFiltersAt(cfg, ListFilters{IssuePrefix: "IRW"}, false, time.Now)
+	if err != nil {
+		t.Fatalf("expected valid issue prefix, got %v", err)
+	}
+	if effective.IssuePrefix == nil || *effective.IssuePrefix != "IRW" {
+		t.Fatalf("unexpected effective issue prefix %#v", effective.IssuePrefix)
+	}
+
+	_, err = normalizeListFiltersAt(cfg, ListFilters{IssuePrefix: "irw"}, false, time.Now)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	validation, ok := err.(ValidationError)
+	if !ok || len(validation.Issues) == 0 || validation.Issues[0].Field != "issue_prefix" {
+		t.Fatalf("expected issue_prefix validation error, got %#v", err)
+	}
+}
+
+func TestListAndSearchSupportExactIssuePrefixBoundary(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	service.now = func() time.Time { return time.Date(2026, 5, 10, 12, 0, 0, 0, time.UTC) }
+
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "IRW-1",
+		StartedUTC:  "2026-05-03T06:00:00Z",
+		Duration:    "30m",
+		Description: "IRW current month item",
+	})
+	nearMiss := mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "IRW2-1",
+		StartedUTC:  "2026-05-04T06:00:00Z",
+		Duration:    "45m",
+		Description: "IRW2 current month item",
+	})
+	exact := mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "IRW-2",
+		StartedUTC:  "2026-05-05T06:00:00Z",
+		Duration:    "1h",
+		Description: "IRW docs item",
+	})
+
+	active, deleted, effective, err := service.List(cfg, ListFilters{
+		IssuePrefix:  "IRW",
+		CurrentMonth: true,
+	})
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("expected no deleted rows, got %d", len(deleted))
+	}
+	if effective.IssuePrefix == nil || *effective.IssuePrefix != "IRW" {
+		t.Fatalf("unexpected effective issue prefix %#v", effective.IssuePrefix)
+	}
+	if len(active) != 2 {
+		t.Fatalf("expected two IRW rows, got %#v", active)
+	}
+	if active[0].IssueKey != "IRW-1" || active[1].IssueKey != "IRW-2" {
+		t.Fatalf("unexpected list matches %#v", active)
+	}
+
+	filtered, _, _, err := service.List(cfg, ListFilters{
+		Issue:        exact.IssueKey,
+		IssuePrefix:  "IRW",
+		CurrentMonth: true,
+	})
+	if err != nil {
+		t.Fatalf("intersection list failed: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].IssueKey != exact.IssueKey {
+		t.Fatalf("expected intersection to keep %s, got %#v", exact.IssueKey, filtered)
+	}
+
+	empty, _, _, err := service.List(cfg, ListFilters{
+		Issue:        nearMiss.IssueKey,
+		IssuePrefix:  "IRW",
+		CurrentMonth: true,
+	})
+	if err != nil {
+		t.Fatalf("near-miss intersection list failed: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("expected no IRW matches for %s, got %#v", nearMiss.IssueKey, empty)
+	}
+
+	search, _, _, _, err := service.Search(cfg, SearchInput{
+		Query: "item",
+		ListFilters: ListFilters{
+			IssuePrefix: "IRW",
+		},
+	})
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+	if len(search) != 2 {
+		t.Fatalf("expected two search matches, got %#v", search)
+	}
+	if search[0].IssueKey != "IRW-2" || search[1].IssueKey != "IRW-1" {
+		t.Fatalf("unexpected search matches %#v", search)
+	}
+}
+
 func TestSearchMatchesCaseInsensitiveLiteralSubstringAndOrdering(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()

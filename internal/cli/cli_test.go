@@ -5306,6 +5306,84 @@ func TestWorklogsListMonthSelectorsAndSearchContextJSON(t *testing.T) {
 	}
 }
 
+func TestWorklogsIssuePrefixSelectorAcrossListSearchAndDeleteDryRun(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	result := runCLI(t, "init", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	now := time.Now().UTC()
+	currentMonthDate := time.Date(now.Year(), now.Month(), 3, 9, 0, 0, 0, time.UTC)
+	currentMonthDay := currentMonthDate.Format("2006-01-02")
+
+	for _, args := range [][]string{
+		{"worklogs", "add", "--issue", "IRW-123", "--started", currentMonthDay + "T09:00", "--duration", "1h", "--description", "IRW current month item", "--output", "json"},
+		{"worklogs", "add", "--issue", "IRW2-123", "--started", currentMonthDay + "T10:30", "--duration", "30m", "--description", "IRW2 current month item", "--output", "json"},
+		{"worklogs", "add", "--issue", "IRW-124", "--started", currentMonthDay + "T11:30", "--duration", "45m", "--description", "IRW second item", "--output", "json"},
+	} {
+		add := runCLI(t, args...)
+		if add.code != 0 {
+			t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+		}
+	}
+
+	list := runCLI(t, "worklogs", "list", "--issue-prefix", "IRW", "--current-month", "--output", "json")
+	if list.code != 0 {
+		t.Fatalf("list failed: code=%d stdout=%s stderr=%s", list.code, list.stdout, list.stderr)
+	}
+	listPayload := decodeJSONMap(t, []byte(list.stdout))
+	if listPayload["total"].(float64) != 2 {
+		t.Fatalf("expected two IRW rows, got %s", list.stdout)
+	}
+	listFilters := listPayload["filters"].(map[string]any)
+	listRaw := listFilters["raw"].(map[string]any)
+	listEffective := listFilters["effective"].(map[string]any)
+	if listRaw["issue_prefix"] != "IRW" || listEffective["issue_prefix"] != "IRW" {
+		t.Fatalf("expected issue prefix filters, got raw=%#v effective=%#v", listRaw, listEffective)
+	}
+
+	search := runCLI(t, "worklogs", "search", "item", "--issue-prefix", "IRW", "--current-month", "--output", "json")
+	if search.code != 0 {
+		t.Fatalf("search failed: code=%d stdout=%s stderr=%s", search.code, search.stdout, search.stderr)
+	}
+	searchPayload := decodeJSONMap(t, []byte(search.stdout))
+	if searchPayload["total"].(float64) != 2 {
+		t.Fatalf("expected two IRW search rows, got %s", search.stdout)
+	}
+	searchFilters := searchPayload["filters"].(map[string]any)
+	searchRaw := searchFilters["raw"].(map[string]any)
+	searchEffective := searchFilters["effective"].(map[string]any)
+	if searchRaw["issue_prefix"] != "IRW" || searchEffective["issue_prefix"] != "IRW" {
+		t.Fatalf("expected search issue prefix filters, got raw=%#v effective=%#v", searchRaw, searchEffective)
+	}
+
+	deleteDry := runCLI(t, "worklogs", "delete", "--issue-prefix", "IRW", "--current-month", "--dry", "--output", "json")
+	if deleteDry.code != 0 {
+		t.Fatalf("delete dry-run failed: code=%d stdout=%s stderr=%s", deleteDry.code, deleteDry.stdout, deleteDry.stderr)
+	}
+	deletePayload := decodeJSONMap(t, []byte(deleteDry.stdout))
+	if deletePayload["matched"].(float64) != 2 {
+		t.Fatalf("expected two dry-run matches, got %s", deleteDry.stdout)
+	}
+	deleteFilters := deletePayload["filters"].(map[string]any)
+	deleteRaw := deleteFilters["raw"].(map[string]any)
+	deleteEffective := deleteFilters["effective"].(map[string]any)
+	if deleteRaw["issue_prefix"] != "IRW" || deleteEffective["issue_prefix"] != "IRW" {
+		t.Fatalf("expected delete issue prefix filters, got raw=%#v effective=%#v", deleteRaw, deleteEffective)
+	}
+
+	invalid := runCLI(t, "worklogs", "list", "--issue-prefix", "irw", "--current-month", "--output", "json")
+	if invalid.code != 2 {
+		t.Fatalf("expected invalid issue-prefix to fail, got code=%d stdout=%s stderr=%s", invalid.code, invalid.stdout, invalid.stderr)
+	}
+	if !strings.Contains(invalid.stdout, "issue_prefix") && !strings.Contains(invalid.stderr, "issue_prefix") {
+		t.Fatalf("expected issue_prefix validation message, got stdout=%s stderr=%s", invalid.stdout, invalid.stderr)
+	}
+}
+
 func TestWorklogsListTableFooterIncludesCountAndHumanDuration(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTC(t)

@@ -329,6 +329,7 @@ func (a *app) newWorklogsCommand() *cobra.Command {
 
 func (a *app) newWorklogsListCommand() *cobra.Command {
 	var issue string
+	var issuePrefix string
 	var today bool
 	var yesterday bool
 	var monday bool
@@ -362,6 +363,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 			fieldList := splitFields(fields)
 			active, deleted, effectiveFilters, err := service.List(effective, worklogs.ListFilters{
 				Issue:        issue,
+				IssuePrefix:  issuePrefix,
 				Today:        today,
 				Yesterday:    yesterday,
 				Monday:       monday,
@@ -387,6 +389,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 			if mode == "json" {
 				return a.renderListJSON(effective, worklogs.ListFilters{
 					Issue:        issue,
+					IssuePrefix:  issuePrefix,
 					Today:        today,
 					Yesterday:    yesterday,
 					Monday:       monday,
@@ -425,6 +428,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
+	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
 	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
 	cmd.Flags().BoolVar(&monday, "mon", false, "Filter to this week's Monday")
@@ -447,6 +451,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 
 func (a *app) newWorklogsSearchCommand() *cobra.Command {
 	var issue string
+	var issuePrefix string
 	var today bool
 	var yesterday bool
 	var monday bool
@@ -481,6 +486,7 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 			fieldList := splitFields(fields)
 			rawFilters := worklogs.ListFilters{
 				Issue:        issue,
+				IssuePrefix:  issuePrefix,
 				Today:        today,
 				Yesterday:    yesterday,
 				Monday:       monday,
@@ -529,6 +535,7 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
+	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
 	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
 	cmd.Flags().BoolVar(&monday, "mon", false, "Filter to this week's Monday")
@@ -663,6 +670,7 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 
 func (a *app) newWorklogsShiftCommand() *cobra.Command {
 	var issue string
+	var issuePrefix string
 	var today bool
 	var yesterday bool
 	var monday bool
@@ -695,6 +703,7 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 
 			result, err := service.Shift(effective, worklogs.ListFilters{
 				Issue:        issue,
+				IssuePrefix:  issuePrefix,
 				Today:        today,
 				Yesterday:    yesterday,
 				Monday:       monday,
@@ -718,6 +727,7 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 			if mode == "json" {
 				return a.renderShiftJSON(worklogs.ListFilters{
 					Issue:        issue,
+					IssuePrefix:  issuePrefix,
 					Today:        today,
 					Yesterday:    yesterday,
 					Monday:       monday,
@@ -745,6 +755,7 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
+	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
 	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
 	cmd.Flags().BoolVar(&monday, "mon", false, "Filter to this week's Monday")
@@ -1030,6 +1041,7 @@ func (a *app) newWorklogsUpdateCommand() *cobra.Command {
 
 func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	var issue string
+	var issuePrefix string
 	var today bool
 	var yesterday bool
 	var monday bool
@@ -1063,7 +1075,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 			defer cleanup()
 
 			if len(args) == 1 {
-				if dry || yes || issue != "" || today || yesterday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != "" {
+				if dry || yes || issue != "" || issuePrefix != "" || today || yesterday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != "" {
 					return a.fail(mode, 2, "validation_error", "single delete cannot be combined with batch delete flags", nil)
 				}
 				record, err := service.Delete(args[0], hardDelete)
@@ -1090,6 +1102,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 
 			result, err := service.DeleteBatch(effective, worklogs.ListFilters{
 				Issue:        issue,
+				IssuePrefix:  issuePrefix,
 				Today:        today,
 				Yesterday:    yesterday,
 				Monday:       monday,
@@ -1113,6 +1126,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 			if mode == "json" {
 				return a.renderDeleteBatchJSON(worklogs.ListFilters{
 					Issue:        issue,
+					IssuePrefix:  issuePrefix,
 					Today:        today,
 					Yesterday:    yesterday,
 					Monday:       monday,
@@ -1143,6 +1157,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
+	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Issue prefix")
 	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
 	cmd.Flags().BoolVar(&monday, "mon", false, "Filter to this week's Monday")
@@ -1166,6 +1181,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 
 func (a *app) newWorklogsRestoreCommand() *cobra.Command {
 	var issue string
+	var issuePrefix string
 	var today bool
 	var yesterday bool
 	var monday bool
@@ -1207,6 +1223,7 @@ func (a *app) newWorklogsRestoreCommand() *cobra.Command {
 
 			raw := worklogs.ListFilters{
 				Issue:        issue,
+				IssuePrefix:  issuePrefix,
 				Today:        today,
 				Yesterday:    yesterday,
 				Monday:       monday,
@@ -1244,6 +1261,7 @@ func (a *app) newWorklogsRestoreCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
+	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Issue prefix")
 	cmd.Flags().BoolVar(&today, "today", false, "Filter to today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Filter to yesterday")
 	cmd.Flags().BoolVar(&monday, "mon", false, "Filter to this week's Monday")
@@ -1793,6 +1811,7 @@ func (a *app) newIssueMetadataCommand() *cobra.Command {
 
 func (a *app) newIssueMetadataListCommand() *cobra.Command {
 	var issue string
+	var issuePrefix string
 	var today bool
 	var yesterday bool
 	var monday bool
@@ -1823,6 +1842,7 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 
 			raw := worklogs.ListFilters{
 				Issue:        issue,
+				IssuePrefix:  issuePrefix,
 				Today:        today,
 				Yesterday:    yesterday,
 				Monday:       monday,
@@ -1875,6 +1895,7 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter to one issue")
+	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
 	cmd.Flags().BoolVar(&today, "today", false, "Use today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
 	cmd.Flags().BoolVar(&monday, "mon", false, "Use this week's Monday")
@@ -1898,6 +1919,7 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 	var field string
 	var instance string
 	var issue string
+	var issuePrefix string
 	var today bool
 	var yesterday bool
 	var monday bool
@@ -1931,6 +1953,7 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 
 			items, _, _, err := service.List(effective, worklogs.ListFilters{
 				Issue:        issue,
+				IssuePrefix:  issuePrefix,
 				Today:        today,
 				Yesterday:    yesterday,
 				Monday:       monday,
@@ -2063,6 +2086,7 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 	cmd.Flags().StringVar(&field, "field", "", "Metadata field")
 	cmd.Flags().StringVar(&instance, "instance", "", "Jira instance")
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter to one issue")
+	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
 	cmd.Flags().BoolVar(&today, "today", false, "Use today")
 	cmd.Flags().BoolVar(&yesterday, "yesterday", false, "Use yesterday")
 	cmd.Flags().BoolVar(&monday, "mon", false, "Use this week's Monday")
@@ -3639,6 +3663,7 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 		"filters": map[string]any{
 			"raw": map[string]any{
 				"issue":         emptyToNil(raw.Issue),
+				"issue_prefix":  emptyToNil(raw.IssuePrefix),
 				"today":         raw.Today,
 				"yesterday":     raw.Yesterday,
 				"mon":           raw.Monday,
@@ -3666,6 +3691,9 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 	}
 	if effective.IssueKey != nil {
 		payload["filters"].(map[string]any)["effective"].(map[string]any)["issue_key"] = *effective.IssueKey
+	}
+	if effective.IssuePrefix != nil {
+		payload["filters"].(map[string]any)["effective"].(map[string]any)["issue_prefix"] = *effective.IssuePrefix
 	}
 	if effective.From != nil {
 		payload["filters"].(map[string]any)["effective"].(map[string]any)["from"] = effective.From.In(cfg.Location).Format(time.RFC3339)
@@ -3702,6 +3730,7 @@ func (a *app) renderSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw 
 			"raw": map[string]any{
 				"query":         rawQuery,
 				"issue":         emptyToNil(raw.Issue),
+				"issue_prefix":  emptyToNil(raw.IssuePrefix),
 				"today":         raw.Today,
 				"yesterday":     raw.Yesterday,
 				"mon":           raw.Monday,
@@ -3730,6 +3759,9 @@ func (a *app) renderSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw 
 	}
 	if effective.IssueKey != nil {
 		payload["filters"].(map[string]any)["effective"].(map[string]any)["issue_key"] = *effective.IssueKey
+	}
+	if effective.IssuePrefix != nil {
+		payload["filters"].(map[string]any)["effective"].(map[string]any)["issue_prefix"] = *effective.IssuePrefix
 	}
 	if effective.From != nil {
 		payload["filters"].(map[string]any)["effective"].(map[string]any)["from"] = effective.From.In(cfg.Location).Format(time.RFC3339)
@@ -3935,6 +3967,7 @@ func selectorFiltersJSON(raw worklogs.ListFilters, effective worklogs.EffectiveF
 	filters := map[string]any{
 		"raw": map[string]any{
 			"issue":         emptyToNil(raw.Issue),
+			"issue_prefix":  emptyToNil(raw.IssuePrefix),
 			"today":         raw.Today,
 			"yesterday":     raw.Yesterday,
 			"mon":           raw.Monday,
@@ -3955,6 +3988,9 @@ func selectorFiltersJSON(raw worklogs.ListFilters, effective worklogs.EffectiveF
 	}
 	if effective.IssueKey != nil {
 		filters["effective"].(map[string]any)["issue_key"] = *effective.IssueKey
+	}
+	if effective.IssuePrefix != nil {
+		filters["effective"].(map[string]any)["issue_prefix"] = *effective.IssuePrefix
 	}
 	if effective.From != nil {
 		filters["effective"].(map[string]any)["from"] = effective.From.In(location).Format(time.RFC3339)

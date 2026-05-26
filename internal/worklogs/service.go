@@ -22,6 +22,7 @@ var (
 	ErrValidation            = errors.New("validation failed")
 	ErrConflict              = errors.New("worklog conflict")
 	issueKeyPattern          = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[1-9][0-9]*$`)
+	issuePrefixPattern       = regexp.MustCompile(`^[A-Z][A-Z0-9]*$`)
 )
 
 const (
@@ -33,6 +34,10 @@ const (
 
 func IsValidIssueKey(value string) bool {
 	return issueKeyPattern.MatchString(value)
+}
+
+func IsValidIssuePrefix(value string) bool {
+	return issuePrefixPattern.MatchString(value)
 }
 
 func NormalizeDescription(value string) (string, error) {
@@ -65,6 +70,7 @@ type DeleteResult struct {
 
 type ListFilters struct {
 	Issue        string
+	IssuePrefix  string
 	Today        bool
 	Yesterday    bool
 	Monday       bool
@@ -91,6 +97,7 @@ type SearchInput struct {
 
 type EffectiveFilters struct {
 	IssueKey    *string
+	IssuePrefix *string
 	From        *time.Time
 	To          *time.Time
 	Timezone    string
@@ -1088,6 +1095,13 @@ func normalizeListFiltersAt(cfg config.EffectiveConfig, filters ListFilters, all
 		issue := filters.Issue
 		effective.IssueKey = &issue
 	}
+	if filters.IssuePrefix != "" {
+		if !issuePrefixPattern.MatchString(filters.IssuePrefix) {
+			return EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "issue_prefix", Message: "must match <PROJECTKEY>"}}}
+		}
+		issuePrefix := filters.IssuePrefix
+		effective.IssuePrefix = &issuePrefix
+	}
 
 	switch {
 	case filters.Today:
@@ -1612,6 +1626,10 @@ func buildWhereClause(filters EffectiveFilters, deleted bool, args *[]any) strin
 	if filters.IssueKey != nil {
 		whereParts = append(whereParts, "issue_key = ?")
 		*args = append(*args, *filters.IssueKey)
+	}
+	if filters.IssuePrefix != nil {
+		whereParts = append(whereParts, "issue_key LIKE ?")
+		*args = append(*args, *filters.IssuePrefix+"-%")
 	}
 
 	column := "started_at_utc"
