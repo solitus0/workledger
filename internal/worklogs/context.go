@@ -25,26 +25,28 @@ type IssueMetadata struct {
 }
 
 type ContextInput struct {
-	Issues       []string
-	Today        bool
-	Yesterday    bool
-	Monday       bool
-	Tuesday      bool
-	Wednesday    bool
-	Thursday     bool
-	Friday       bool
-	Saturday     bool
-	Sunday       bool
-	CurrentWeek  bool
-	LastWeek     bool
-	CurrentMonth bool
-	LastMonth    bool
-	From         string
-	To           string
-	DayStart     string
-	DayEnd       string
-	Lunch        string
-	NoLunch      bool
+	Issues        []string
+	Today         bool
+	Yesterday     bool
+	Monday        bool
+	Tuesday       bool
+	Wednesday     bool
+	Thursday      bool
+	Friday        bool
+	Saturday      bool
+	Sunday        bool
+	CurrentWeek   bool
+	LastWeek      bool
+	CurrentMonth  bool
+	LastMonth     bool
+	From          string
+	To            string
+	WeekOffset    int
+	WeekOffsetSet bool
+	DayStart      string
+	DayEnd        string
+	Lunch         string
+	NoLunch       bool
 }
 
 type ContextFilters struct {
@@ -352,21 +354,26 @@ func normalizeContextFilters(cfg config.EffectiveConfig, input ContextInput) (Co
 }
 
 func normalizeContextFiltersAt(cfg config.EffectiveConfig, input ContextInput, now func() time.Time) (ContextFilters, error) {
-	if err := validateDateWindowSelection(dateWindowShortcutSelection{
-		Today:        input.Today,
-		Yesterday:    input.Yesterday,
-		Monday:       input.Monday,
-		Tuesday:      input.Tuesday,
-		Wednesday:    input.Wednesday,
-		Thursday:     input.Thursday,
-		Friday:       input.Friday,
-		Saturday:     input.Saturday,
-		Sunday:       input.Sunday,
-		CurrentWeek:  input.CurrentWeek,
-		LastWeek:     input.LastWeek,
-		CurrentMonth: input.CurrentMonth,
-		LastMonth:    input.LastMonth,
-	}, input.From != "" || input.To != ""); err != nil {
+	from, to, err := ResolveDateWindowSelectionAt(cfg, DateWindowSelection{
+		Today:         input.Today,
+		Yesterday:     input.Yesterday,
+		Monday:        input.Monday,
+		Tuesday:       input.Tuesday,
+		Wednesday:     input.Wednesday,
+		Thursday:      input.Thursday,
+		Friday:        input.Friday,
+		Saturday:      input.Saturday,
+		Sunday:        input.Sunday,
+		CurrentWeek:   input.CurrentWeek,
+		LastWeek:      input.LastWeek,
+		CurrentMonth:  input.CurrentMonth,
+		LastMonth:     input.LastMonth,
+		From:          input.From,
+		To:            input.To,
+		WeekOffset:    input.WeekOffset,
+		WeekOffsetSet: input.WeekOffsetSet,
+	}, now)
+	if err != nil {
 		return ContextFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: err.Error()}}}
 	}
 
@@ -384,101 +391,15 @@ func normalizeContextFiltersAt(cfg config.EffectiveConfig, input ContextInput, n
 		filters.Issues = append(filters.Issues, issueKey)
 	}
 
-	switch {
-	case input.Today:
+	if from == nil || to == nil {
 		current := now().In(cfg.Location)
 		start, end := dayBounds(current, cfg.Location)
 		filters.From = &start
 		filters.To = &end
-	case input.Yesterday:
-		current := now().In(cfg.Location).AddDate(0, 0, -1)
-		start, end := dayBounds(current, cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.Monday:
-		start, end := weekdayBounds(now().In(cfg.Location), time.Monday, cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.Tuesday:
-		start, end := weekdayBounds(now().In(cfg.Location), time.Tuesday, cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.Wednesday:
-		start, end := weekdayBounds(now().In(cfg.Location), time.Wednesday, cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.Thursday:
-		start, end := weekdayBounds(now().In(cfg.Location), time.Thursday, cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.Friday:
-		start, end := weekdayBounds(now().In(cfg.Location), time.Friday, cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.Saturday:
-		start, end := weekdayBounds(now().In(cfg.Location), time.Saturday, cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.Sunday:
-		start, end := weekdayBounds(now().In(cfg.Location), time.Sunday, cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.CurrentWeek:
-		start, end := weekBounds(now().In(cfg.Location), cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.LastWeek:
-		start, end := weekBounds(now().In(cfg.Location).AddDate(0, 0, -7), cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.CurrentMonth:
-		start, end := monthBounds(now().In(cfg.Location), cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.LastMonth:
-		start, end := monthBounds(now().In(cfg.Location).AddDate(0, -1, 0), cfg.Location)
-		filters.From = &start
-		filters.To = &end
-	case input.From != "" || input.To != "":
-		var fromValue *time.Time
-		var toValue *time.Time
-		if input.From != "" {
-			parsed, err := parseDateSelector(input.From, cfg.Location)
-			if err != nil {
-				return ContextFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "from", Message: err.Error()}}}
-			}
-			start, _ := dayBounds(parsed, cfg.Location)
-			fromValue = &start
-		}
-		if input.To != "" {
-			parsed, err := parseDateSelector(input.To, cfg.Location)
-			if err != nil {
-				return ContextFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "to", Message: err.Error()}}}
-			}
-			_, end := dayBounds(parsed, cfg.Location)
-			toValue = &end
-		}
-		if fromValue == nil {
-			start, _ := dayBounds(*toValue, cfg.Location)
-			fromValue = &start
-		}
-		if toValue == nil {
-			_, end := dayBounds(*fromValue, cfg.Location)
-			toValue = &end
-		}
-		if fromValue.After(*toValue) {
-			filters.From = toValue
-			filters.To = fromValue
-		} else {
-			filters.From = fromValue
-			filters.To = toValue
-		}
-	default:
-		current := now().In(cfg.Location)
-		start, end := dayBounds(current, cfg.Location)
-		filters.From = &start
-		filters.To = &end
+		return filters, nil
 	}
+	filters.From = from
+	filters.To = to
 
 	return filters, nil
 }

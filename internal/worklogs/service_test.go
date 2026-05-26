@@ -74,6 +74,35 @@ func TestNormalizeListFiltersAtWeekdayShortcuts(t *testing.T) {
 	}
 }
 
+func TestNormalizeListFiltersAtWeekdayShortcutsWithWeekOffset(t *testing.T) {
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	fixedNow := func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	}
+
+	previousMonday, err := normalizeListFiltersAt(cfg, ListFilters{Monday: true, WeekOffset: -1, WeekOffsetSet: true}, false, fixedNow)
+	if err != nil {
+		t.Fatalf("previous monday filters failed: %v", err)
+	}
+	if got := previousMonday.From.Format(time.RFC3339); got != "2026-04-27T00:00:00Z" {
+		t.Fatalf("unexpected previous monday from %s", got)
+	}
+	if got := previousMonday.To.Format(time.RFC3339); got != "2026-04-27T23:59:59Z" {
+		t.Fatalf("unexpected previous monday to %s", got)
+	}
+
+	nextFriday, err := normalizeListFiltersAt(cfg, ListFilters{Friday: true, WeekOffset: 1, WeekOffsetSet: true}, false, fixedNow)
+	if err != nil {
+		t.Fatalf("next friday filters failed: %v", err)
+	}
+	if got := nextFriday.From.Format(time.RFC3339); got != "2026-05-15T00:00:00Z" {
+		t.Fatalf("unexpected next friday from %s", got)
+	}
+	if got := nextFriday.To.Format(time.RFC3339); got != "2026-05-15T23:59:59Z" {
+		t.Fatalf("unexpected next friday to %s", got)
+	}
+}
+
 func TestNormalizeListFiltersAtMonthShortcuts(t *testing.T) {
 	cfg := config.EffectiveConfig{Location: time.UTC}
 	fixedNow := func() time.Time {
@@ -183,6 +212,24 @@ func TestNormalizeContextFiltersAtWeekdayShortcuts(t *testing.T) {
 	}
 }
 
+func TestNormalizeContextFiltersAtWeekdayShortcutsWithWeekOffset(t *testing.T) {
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	fixedNow := func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	}
+
+	previousFriday, err := normalizeContextFiltersAt(cfg, ContextInput{Friday: true, WeekOffset: -1, WeekOffsetSet: true}, fixedNow)
+	if err != nil {
+		t.Fatalf("previous friday context failed: %v", err)
+	}
+	if got := previousFriday.From.Format(time.RFC3339); got != "2026-05-01T00:00:00Z" {
+		t.Fatalf("unexpected previous friday from %s", got)
+	}
+	if got := previousFriday.To.Format(time.RFC3339); got != "2026-05-01T23:59:59Z" {
+		t.Fatalf("unexpected previous friday to %s", got)
+	}
+}
+
 func TestNormalizeContextFiltersAtMonthShortcuts(t *testing.T) {
 	cfg := config.EffectiveConfig{Location: time.UTC}
 	fixedNow := func() time.Time {
@@ -223,6 +270,24 @@ func TestNormalizeListFiltersAtRejectsMixedShortcuts(t *testing.T) {
 	_, err := normalizeListFiltersAt(cfg, ListFilters{Today: true, CurrentWeek: true}, false, time.Now)
 	if err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestNormalizeListFiltersAtRejectsInvalidWeekOffsetUsage(t *testing.T) {
+	cfg := config.EffectiveConfig{Location: time.UTC}
+
+	tests := []ListFilters{
+		{WeekOffset: -1, WeekOffsetSet: true},
+		{Monday: true, Tuesday: true, WeekOffset: -1, WeekOffsetSet: true},
+		{Today: true, WeekOffset: -1, WeekOffsetSet: true},
+		{From: "2026-05-01", To: "2026-05-01", WeekOffset: -1, WeekOffsetSet: true},
+	}
+
+	for _, filters := range tests {
+		_, err := normalizeListFiltersAt(cfg, filters, false, time.Now)
+		if err == nil {
+			t.Fatalf("expected validation error for %#v", filters)
+		}
 	}
 }
 

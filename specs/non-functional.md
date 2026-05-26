@@ -149,6 +149,7 @@ Placement rule:
 - [ ] NFR-123: `--current-week` shall expand to the start of the current local Monday and the end of the current local Sunday.
 - [ ] NFR-124: `--last-week` shall expand to the start of the previous local Monday and the end of the previous local Sunday.
 - [ ] NFR-124a: `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, and `--sun` shall each expand to one local-calendar day inside the current local Monday-through-Sunday week.
+- [ ] NFR-124b: `--week-offset <int>` shall shift a selected weekday selector by whole local Monday-through-Sunday weeks, where `0` means the current week and the modifier is invalid without exactly one weekday selector.
 - [ ] NFR-125: Month ranges shall be calendar-month windows in the effective local timezone.
 - [ ] NFR-126: `--current-month` shall expand to the start of the first local day and the end of the last local day of the current calendar month.
 - [ ] NFR-127: `--last-month` shall expand to the start of the first local day and the end of the last local day of the previous calendar month.
