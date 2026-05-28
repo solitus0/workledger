@@ -1077,7 +1077,7 @@ func (s *Service) executeSavedPlan(cfg config.EffectiveConfig, id, retryScope st
 		return ApplyResult{}, err
 	}
 	if fingerprint != plan.ConfigFingerprint {
-		return ApplyResult{}, fmt.Errorf("saved plan config fingerprint does not match current config")
+		return ApplyResult{}, fmt.Errorf("saved plan config fingerprint does not match current config; run 'workledger plan reconcile' to generate a new plan")
 	}
 
 	ready := make([]PlanItem, 0)

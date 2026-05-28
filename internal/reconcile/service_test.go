@@ -404,7 +404,7 @@ func TestRetryPlanRejectsFingerprintMismatchAndNoEligibleReturnsNoOp(t *testing.
 	}
 	seedDeliveryAttempt(t, store, plan.ID, plan.Items[0].ID, "succeeded", "done", "2026-05-02T10:00:00Z")
 
-	if _, err := service.RetryPlan(testClockifyConfig(false), plan.ID, "failed"); err == nil || err.Error() != "saved plan config fingerprint does not match current config" {
+	if _, err := service.RetryPlan(testClockifyConfig(false), plan.ID, "failed"); err == nil || err.Error() != "saved plan config fingerprint does not match current config; run 'workledger plan reconcile' to generate a new plan" {
 		t.Fatalf("expected fingerprint mismatch, got %v", err)
 	}
 
