@@ -430,6 +430,11 @@ func (s *Service) CreateMultiPullPlan(ctx context.Context, cfg config.EffectiveC
 		}
 	}
 	if len(plans) == 1 {
+		fingerprint, err := config.FingerprintEffective(cfg)
+		if err != nil {
+			return Plan{}, err
+		}
+		plans[0].ConfigFingerprint = fingerprint
 		if err := s.insertPlan(plans[0]); err != nil {
 			return Plan{}, err
 		}
@@ -618,6 +623,11 @@ func (s *Service) ReconcileMultiPushPlan(ctx context.Context, cfg config.Effecti
 		}}, nil
 	}
 	if len(plans) == 1 {
+		fingerprint, err := config.FingerprintEffective(cfg)
+		if err != nil {
+			return ReconcileResult{}, err
+		}
+		plans[0].ConfigFingerprint = fingerprint
 		if err := s.insertPlan(plans[0]); err != nil {
 			return ReconcileResult{}, err
 		}
