@@ -326,7 +326,7 @@ Placement rule:
 - [ ] FUNC-251: `workledger plan show` shall report `planned_action` per scope.
 - [ ] FUNC-252: `workledger plan show` shall report comparison status per scope.
 - [ ] FUNC-253: `workledger plan show` shall report target adapter family, target issue, saved reconcile time window, local row count, remote row count, and execution state per scope.
-- [ ] FUNC-253a: `workledger plan show --only-ready` shall limit rendered scopes to saved plan items whose `plan_status` is `ready`.
+- [ ] FUNC-253a: `workledger plan show` shall limit rendered scopes to saved plan items whose `plan_status` is `ready` by default; `workledger plan show --all` shall render all saved plan items regardless of status.
 
 ## Plan Listing
 - [ ] FUNC-254: `workledger plan list` shall load saved-plan metadata from SQLite only.

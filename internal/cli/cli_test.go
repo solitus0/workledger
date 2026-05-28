@@ -3997,7 +3997,7 @@ func TestPlanShowDeleteOnlyScopeReportsZeroLocalRowsAndMatch(t *testing.T) {
 		t.Fatalf("reconcile failed: code=%d stdout=%s stderr=%s", reconcile.code, reconcile.stdout, reconcile.stderr)
 	}
 
-	show := runCLI(t, "plan", "show", "--output", "json")
+	show := runCLI(t, "plan", "show", "--all", "--output", "json")
 	if show.code != 0 {
 		t.Fatalf("show failed: code=%d stdout=%s stderr=%s", show.code, show.stdout, show.stderr)
 	}
@@ -4015,7 +4015,7 @@ func TestPlanShowDeleteOnlyScopeReportsZeroLocalRowsAndMatch(t *testing.T) {
 	}
 }
 
-func TestPlanShowOnlyReadyFiltersItems(t *testing.T) {
+func TestPlanShowDefaultFiltersToReady(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTC(t)
 
@@ -4056,24 +4056,39 @@ func TestPlanShowOnlyReadyFiltersItems(t *testing.T) {
 		t.Fatalf("mark saved plan failed: %v", err)
 	}
 
-	result := runCLI(t, "plan", "show", "plan-ready-filter", "--only-ready", "--output", "json")
-	if result.code != 0 {
-		t.Fatalf("plan show failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
-	}
+	t.Run("default shows only ready", func(t *testing.T) {
+		result := runCLI(t, "plan", "show", "plan-ready-filter", "--output", "json")
+		if result.code != 0 {
+			t.Fatalf("plan show failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+		}
 
-	payload := decodeJSONMap(t, []byte(result.stdout))
-	items := payload["items"].([]any)
-	if len(items) != 1 {
-		t.Fatalf("expected one ready item, got %s", result.stdout)
-	}
-	item := items[0].(map[string]any)
-	if item["id"] != "item-ready" || item["plan_status"] != "ready" {
-		t.Fatalf("expected only ready item, got %#v", item)
-	}
-	summary := payload["summary"].(map[string]any)
-	if summary["total_items"].(float64) != 1 || summary["ready_items"].(float64) != 1 {
-		t.Fatalf("expected filtered summary counts, got %#v", summary)
-	}
+		payload := decodeJSONMap(t, []byte(result.stdout))
+		items := payload["items"].([]any)
+		if len(items) != 1 {
+			t.Fatalf("expected one ready item, got %s", result.stdout)
+		}
+		item := items[0].(map[string]any)
+		if item["id"] != "item-ready" || item["plan_status"] != "ready" {
+			t.Fatalf("expected only ready item, got %#v", item)
+		}
+		summary := payload["summary"].(map[string]any)
+		if summary["total_items"].(float64) != 1 || summary["ready_items"].(float64) != 1 {
+			t.Fatalf("expected filtered summary counts, got %#v", summary)
+		}
+	})
+
+	t.Run("--all shows all items", func(t *testing.T) {
+		result := runCLI(t, "plan", "show", "plan-ready-filter", "--all", "--output", "json")
+		if result.code != 0 {
+			t.Fatalf("plan show --all failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+		}
+
+		payload := decodeJSONMap(t, []byte(result.stdout))
+		items := payload["items"].([]any)
+		if len(items) != 2 {
+			t.Fatalf("expected two items with --all, got %s", result.stdout)
+		}
+	})
 }
 
 func TestPlanRetryValidatesOnlyAndNotFound(t *testing.T) {

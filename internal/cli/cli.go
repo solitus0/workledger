@@ -2796,7 +2796,7 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 }
 
 func (a *app) newPlanShowCommand() *cobra.Command {
-	var onlyReady bool
+	var showAll bool
 
 	cmd := &cobra.Command{
 		Use:   "show [plan-id]",
@@ -2822,7 +2822,7 @@ func (a *app) newPlanShowCommand() *cobra.Command {
 				}
 				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
 			}
-			if onlyReady {
+			if !showAll {
 				plan.Items = filterPlanItemsByStatus(plan.Items, "ready")
 			}
 			if mode == "json" {
@@ -2848,7 +2848,7 @@ func (a *app) newPlanShowCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&onlyReady, "only-ready", false, "Show only ready plan items")
+	cmd.Flags().BoolVar(&showAll, "all", false, "Show all plan items including non-ready")
 	return cmd
 }
 

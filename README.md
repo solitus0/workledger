@@ -293,7 +293,7 @@ workledger plan reconcile --push --adapter=clockify --today
 workledger plan reconcile --pull --instance main --current-week
 workledger plan reconcile --push --instance dc --route-profile reporting --from 2026-05-01 --to 2026-05-14
 workledger plan show
-workledger plan show <plan-id> --only-ready
+workledger plan show <plan-id> --all
 workledger plan list --current-month
 workledger plan apply <plan-id>
 workledger plan retry <plan-id> --only failed
