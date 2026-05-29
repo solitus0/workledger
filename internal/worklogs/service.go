@@ -68,6 +68,12 @@ type DeleteResult struct {
 	HardDelete bool
 }
 
+type DeleteTombstoneResult struct {
+	ID        string
+	IssueKey  string
+	DeletedAt time.Time
+}
+
 type ListFilters struct {
 	Issue         string
 	IssuePrefix   string
@@ -164,6 +170,13 @@ type DeleteBatchResult struct {
 	Deleted    []string
 	DryRun     bool
 	HardDelete bool
+}
+
+type DeleteTombstoneBatchResult struct {
+	Filters EffectiveFilters
+	Items   []Tombstone
+	Deleted []string
+	DryRun  bool
 }
 
 type RestorePreviewItem struct {
@@ -971,6 +984,78 @@ func (s *Service) listActive(filters EffectiveFilters) ([]LocalWorklog, error) {
 	}
 
 	return items, rows.Err()
+}
+
+func (s *Service) showTombstone(id string) (Tombstone, error) {
+	row := s.store.DB().QueryRow(
+		`SELECT worklog_id, issue_key, started_at_utc, duration_seconds, description, deleted_at FROM worklog_tombstones WHERE worklog_id = ?`, id)
+	item, err := scanTombstone(row)
+	if err == nil {
+		return item, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return Tombstone{}, ErrNotFound
+	}
+	return Tombstone{}, err
+}
+
+func (s *Service) DeleteTombstone(id string) (DeleteTombstoneResult, error) {
+	current, err := s.showTombstone(id)
+	if err != nil {
+		return DeleteTombstoneResult{}, err
+	}
+	if _, err := s.store.DB().Exec(`DELETE FROM worklog_tombstones WHERE worklog_id = ?`, id); err != nil {
+		return DeleteTombstoneResult{}, err
+	}
+	return DeleteTombstoneResult{
+		ID:        current.ID,
+		IssueKey:  current.IssueKey,
+		DeletedAt: current.DeletedAt,
+	}, nil
+}
+
+func (s *Service) DeleteTombstoneBatch(cfg config.EffectiveConfig, filters ListFilters, dryRun bool) (DeleteTombstoneBatchResult, error) {
+	effective, err := normalizeListFilters(cfg, filters, true)
+	if err != nil {
+		return DeleteTombstoneBatchResult{}, err
+	}
+	if effective.IssueKey == nil && effective.From == nil && effective.To == nil {
+		return DeleteTombstoneBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "delete", Message: "batch delete requires at least one selector"}}}
+	}
+
+	items, err := s.listDeleted(effective)
+	if err != nil {
+		return DeleteTombstoneBatchResult{}, err
+	}
+
+	result := DeleteTombstoneBatchResult{
+		Filters: effective,
+		Items:   items,
+		DryRun:  dryRun,
+	}
+	if dryRun || len(items) == 0 {
+		return result, nil
+	}
+
+	tx, err := s.store.DB().BeginTx(context.Background(), nil)
+	if err != nil {
+		return DeleteTombstoneBatchResult{}, err
+	}
+
+	result.Deleted = make([]string, 0, len(items))
+	for _, item := range items {
+		if _, err := tx.Exec(`DELETE FROM worklog_tombstones WHERE worklog_id = ?`, item.ID); err != nil {
+			_ = tx.Rollback()
+			return DeleteTombstoneBatchResult{}, err
+		}
+		result.Deleted = append(result.Deleted, item.ID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return DeleteTombstoneBatchResult{}, err
+	}
+
+	return result, nil
 }
 
 func (s *Service) listDeleted(filters EffectiveFilters) ([]Tombstone, error) {

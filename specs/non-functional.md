@@ -254,7 +254,7 @@ Placement rule:
 - [ ] NFR-213: A tombstone shall retain original `duration_seconds`.
 - [ ] NFR-214: A tombstone shall retain original `description`.
 - [ ] NFR-215: A tombstone shall retain deletion timestamp.
-- [ ] NFR-216: Tombstones shall retain enough data for `worklogs list --only-deleted`.
+- [ ] NFR-216: Tombstones shall retain enough data for `tombstones list`.
 - [ ] NFR-217: Tombstones shall retain enough data for delete-only reconcile scopes.
 - [ ] NFR-218: Tombstones shall retain enough data for pull protection for the same issue and reconcile-window allocation.
 - [ ] NFR-219: Tombstones shall not require a resolved target adapter family at delete time.
@@ -275,7 +275,7 @@ Placement rule:
 - [ ] NFR-232: Unless a command-specific contract says otherwise, a JSON success payload shall be one object with exactly documented keys.
 - [ ] NFR-233: All timestamps in JSON shall use RFC3339.
 - [ ] NFR-234: The default active-worklog JSON record shape shall include `id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description`.
-- [ ] NFR-235: The deleted tombstone JSON record shape shall include `id`, `issue_key`, and `deleted_at`.
+- [ ] NFR-235: The tombstone JSON record shape (used by `tombstones list`, `tombstones search`, and `tombstones delete`) shall include `id`, `issue_key`, and `deleted_at`.
 - [ ] NFR-236: `workledger version --output json` shall return an object with `version`.
 - [ ] NFR-237: `workledger init --output json` shall return either success output with `config`, `sqlite`, `config_path`, and `sqlite_path`, or unrecoverable SQLite failure output with exactly `reason`, `message`, and `sqlite_path`.
 - [ ] NFR-238: `workledger init --output json` `config` shall be `created` or `reused`.
@@ -298,12 +298,12 @@ Placement rule:
 - [ ] NFR-250c: `worklogs add --snap --output json --dry` shall return `dry_run`, `records`, and optional `warnings`.
 - [ ] NFR-250d: `worklogs add --snap --output json` executed success shall return `records` and optional `warnings`.
 - [ ] NFR-251: `worklogs list` active table columns shall be `ID`, `ISSUE`, `WINDOW`, `DURATION`, and `DESCRIPTION`.
-- [ ] NFR-252: `worklogs list --only-deleted` table columns shall be `ID`, `ISSUE`, and `DELETED`.
+- [ ] NFR-252: `tombstones list` table columns shall be `ID`, `ISSUE`, and `DELETED`.
 - [ ] NFR-253: Empty table results shall render selected table headers with zero data rows.
 - [ ] NFR-254: Human-facing table output shall render aligned columns rather than raw tab-delimited cells.
 - [ ] NFR-255: Human-facing list and search output shall append a blank line and a totals footer.
 - [ ] NFR-256: Active list and search footers shall use `Totals: <N> worklogs, <duration>`.
-- [ ] NFR-257: Deleted list and search footers shall use `Totals: <N> tombstones, <duration>`.
+- [ ] NFR-257: `tombstones list` and `tombstones search` footers shall use `Totals: <N> tombstones, <duration>`.
 - [ ] NFR-258: The totals footer shall be derived from the full matched result set.
 - [ ] NFR-259: The totals footer shall be unaffected by `--fields`.
 - [ ] NFR-260: `DESCRIPTION` in `worklogs list` shall truncate to 80 characters with `...` when longer.

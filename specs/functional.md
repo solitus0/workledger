@@ -142,30 +142,24 @@ Placement rule:
 - [ ] FUNC-106: Active-worklog selectors shall support `--issue`, `--issue-prefix`, `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
 - [ ] FUNC-107: Active-worklog selectors shall support at most one `--issue` filter value per invocation.
 - [ ] FUNC-107a: Active-worklog selectors shall support at most one `--issue-prefix` filter value per invocation.
-- [ ] FUNC-108: `--only-deleted` shall switch `worklogs list` from active worklogs to deleted tombstones.
 - [ ] FUNC-109: `--fields` shall accept a comma-separated ordered subset of the selected record shape.
 - [ ] FUNC-110: Planning issue selectors shall allow repeated `--issue <KEY>` values.
 - [ ] FUNC-111: Planning issue selectors shall preserve operator-supplied issue order.
 
 ## Worklog Listing
 - [ ] FUNC-112: `workledger worklogs list` shall require at least one explicit time selector from the shared date-window selector family.
-- [ ] FUNC-113: `workledger worklogs list` shall render active local worklogs within the selected time scope by default.
-- [ ] FUNC-114: `workledger worklogs list --only-deleted` shall render deleted tombstones within the selected time scope instead of active worklogs.
+- [ ] FUNC-113: `workledger worklogs list` shall render active local worklogs within the selected time scope.
 - [ ] FUNC-115: `workledger worklogs list` shall support active-worklog selectors.
-- [ ] FUNC-116: `workledger worklogs list` shall support the deleted-worklog selector.
 - [ ] FUNC-117: `workledger worklogs list` shall support the field selector.
 - [ ] FUNC-118: `workledger worklogs list` shall return the full filtered result set without pagination.
 - [ ] FUNC-119: `workledger worklogs list` shall expose active worklog JSON items using the default active-worklog record shape when `--fields` is not set.
-- [ ] FUNC-120: `workledger worklogs list` shall expose deleted tombstone rows using only `id`, `issue_key`, and `deleted_at`.
 
 ## Worklog Search
 - [ ] FUNC-121: `workledger worklogs search <query>` shall require one positional `<query>` argument.
 - [ ] FUNC-122: `workledger worklogs search <query>` shall search canonical stored normalized `description` values by partial, case-insensitive substring match.
 - [ ] FUNC-123: `workledger worklogs search <query>` shall treat `<query>` as a literal substring rather than wildcard syntax.
-- [ ] FUNC-124: `workledger worklogs search <query>` shall search active local worklogs by default across all stored dates.
-- [ ] FUNC-125: `workledger worklogs search <query> --only-deleted` shall search deleted tombstones instead of active worklogs.
+- [ ] FUNC-124: `workledger worklogs search <query>` shall search active local worklogs across all stored dates.
 - [ ] FUNC-126: `workledger worklogs search <query>` shall reuse active-worklog selectors.
-- [ ] FUNC-127: `workledger worklogs search <query>` shall reuse the deleted-worklog selector.
 - [ ] FUNC-128: `workledger worklogs search <query>` shall reuse the field selector.
 - [ ] FUNC-129: `workledger worklogs search <query>` shall return the full filtered result set without pagination.
 - [ ] FUNC-130: `workledger worklogs search <query>` shall return exit code `0` when zero matches are found.
@@ -248,21 +242,20 @@ Placement rule:
 - [ ] FUNC-188: Batch-delete dry-run shall return the full matched active records together with the matched count.
 - [ ] FUNC-189: Executed filtered batch delete shall return deleted IDs and deleted count rather than full deleted records.
 
-## Worklog Restore
-- [ ] FUNC-190: `workledger worklogs restore` shall operate in selector-based batch mode only.
-- [ ] FUNC-191: `workledger worklogs restore` shall reuse the active-worklog selector family.
-- [ ] FUNC-192: `workledger worklogs restore` shall require at least one explicit time selector.
-- [ ] FUNC-193: `workledger worklogs restore` shall optionally accept `--issue <KEY>`.
-- [ ] FUNC-194: `workledger worklogs restore` shall select tombstones by their original `started_at_utc`.
-- [ ] FUNC-195: `workledger worklogs restore` shall require `--yes` for execution.
-- [ ] FUNC-196: `workledger worklogs restore --dry` shall preview matched tombstones without restoring them.
-- [ ] FUNC-197: `workledger worklogs restore --dry` shall be mutually exclusive with `--yes`.
-- [ ] FUNC-198: `workledger worklogs restore --force` shall bypass duplicate or overlap rejection explicitly.
-- [ ] FUNC-199: `workledger worklogs restore` shall insert active local worklogs using the original `id`, `issue_key`, `started_at_utc`, `duration_seconds`, and `description`.
-- [ ] FUNC-200: `workledger worklogs restore` shall delete matching tombstones when execution succeeds.
-- [ ] FUNC-201: `workledger worklogs restore` shall be a valid no-op when zero tombstones match.
-- [ ] FUNC-202: `workledger worklogs restore` shall return executed success payloads with restored IDs and restored count rather than full active records.
-- [ ] FUNC-203: `workledger worklogs restore` shall reject `--only-deleted`.
+## Tombstone Restore
+- [ ] FUNC-190: `workledger tombstones restore` shall operate in selector-based batch mode only.
+- [ ] FUNC-191: `workledger tombstones restore` shall reuse the active-worklog selector family.
+- [ ] FUNC-192: `workledger tombstones restore` shall require at least one explicit time selector.
+- [ ] FUNC-193: `workledger tombstones restore` shall optionally accept `--issue <KEY>`.
+- [ ] FUNC-194: `workledger tombstones restore` shall select tombstones by their original `started_at_utc`.
+- [ ] FUNC-195: `workledger tombstones restore` shall require `--yes` for execution.
+- [ ] FUNC-196: `workledger tombstones restore --dry` shall preview matched tombstones without restoring them.
+- [ ] FUNC-197: `workledger tombstones restore --dry` shall be mutually exclusive with `--yes`.
+- [ ] FUNC-198: `workledger tombstones restore --force` shall bypass duplicate or overlap rejection explicitly.
+- [ ] FUNC-199: `workledger tombstones restore` shall insert active local worklogs using the original `id`, `issue_key`, `started_at_utc`, `duration_seconds`, and `description`.
+- [ ] FUNC-200: `workledger tombstones restore` shall delete matching tombstones when execution succeeds.
+- [ ] FUNC-201: `workledger tombstones restore` shall be a valid no-op when zero tombstones match.
+- [ ] FUNC-202: `workledger tombstones restore` shall return executed success payloads with restored IDs and restored count rather than full active records.
 
 ## Worklog Context
 - [ ] FUNC-204: `workledger worklogs context` shall return read-only planning snapshots over canonical local worklogs.
@@ -389,7 +382,20 @@ Placement rule:
 - [ ] FUNC-301: `--progress=plain` shall emit line-oriented progress summaries to stderr without cursor control.
 - [ ] FUNC-302: `--progress=off` shall disable live progress output.
 
+## Tombstone Commands
+- [ ] FUNC-306: `workledger tombstones list` shall require at least one explicit time selector from the shared date-window selector family.
+- [ ] FUNC-307: `workledger tombstones list` shall render deleted tombstones within the selected time scope.
+- [ ] FUNC-308: `workledger tombstones list` shall support `--issue` and `--issue-prefix` filters and date-window selectors.
+- [ ] FUNC-309: `workledger tombstones list` shall expose tombstone records using only `id`, `issue_key`, and `deleted_at`.
+- [ ] FUNC-310: `workledger tombstones search <query>` shall search tombstone `description` values by partial, case-insensitive substring match.
+- [ ] FUNC-311: `workledger tombstones search <query>` shall support `--issue`, `--issue-prefix`, and date-window selectors.
+- [ ] FUNC-312: `workledger tombstones delete <id>` shall permanently remove one tombstone record.
+- [ ] FUNC-313: `workledger tombstones delete <id>` shall return deterministic success output with `id`, `issue_key`, and `deleted_at`.
+- [ ] FUNC-314: Filtered batch tombstone delete shall select tombstones using the active-worklog selector family applied to `started_at_utc`.
+- [ ] FUNC-315: Filtered batch tombstone delete shall require `--yes` for execution.
+- [ ] FUNC-316: Filtered batch tombstone delete shall support `--dry` to preview matched tombstones without deleting them.
+- [ ] FUNC-317: Filtered batch tombstone delete shall be a valid no-op when zero tombstones match.
+
 ## Out of Scope
 - [ ] FUNC-303: `workledger tui` shall be the only deferred command surface in this organized spec.
 - [ ] FUNC-304: The TUI implementation shall remain outside the current implementation scope.
-- [ ] FUNC-305: Tombstone-specific top-level commands shall not be part of the current command surface.

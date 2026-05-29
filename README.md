@@ -205,8 +205,8 @@ workledger worklogs shift --today --issue PROJ-123 --by 15m --dry
 workledger worklogs delete <id>
 workledger worklogs delete --today --issue PROJ-123 --dry
 workledger worklogs delete --today --issue PROJ-123 --yes
-workledger worklogs restore --today --issue PROJ-123 --dry
-workledger worklogs restore --today --issue PROJ-123 --yes
+workledger tombstones restore --today --issue PROJ-123 --dry
+workledger tombstones restore --today --issue PROJ-123 --yes
 ```
 
 `worklogs add --snap` reuses the same date-window and workday inputs as `worklogs context`, defaults to the current local day when no selector is provided, and may split one requested duration into two worklogs when lunch bisects the placement. A snapped add may warn when the final fragment extends past the effective `day_end`; table mode prints that warning to `stderr` and JSON mode returns it in top-level `warnings`.
@@ -351,8 +351,12 @@ workledger worklogs update <id>
 workledger worklogs shift
 workledger worklogs apply
 workledger worklogs delete [<id>]
-workledger worklogs restore
 workledger worklogs context
+
+workledger tombstones list
+workledger tombstones search <query>
+workledger tombstones delete [<id>]
+workledger tombstones restore
 
 workledger issue-metadata list
 workledger issue-metadata refresh

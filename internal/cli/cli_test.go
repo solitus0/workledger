@@ -4813,7 +4813,7 @@ func TestAddUpdateDeleteAndTombstoneFlow(t *testing.T) {
 		t.Fatalf("expected no active worklogs after delete, got %#v", afterDeletePayload["items"])
 	}
 
-	deleted := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--only-deleted", "--output", "json")
+	deleted := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
 	if deleted.code != 0 {
 		t.Fatalf("deleted list failed: code=%d stdout=%s stderr=%s", deleted.code, deleted.stdout, deleted.stderr)
 	}
@@ -4861,7 +4861,7 @@ func TestHardDeleteSkipsTombstone(t *testing.T) {
 		t.Fatalf("expected no active worklogs after hard delete, got %#v", afterDeletePayload["items"])
 	}
 
-	deleted := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--only-deleted", "--output", "json")
+	deleted := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
 	if deleted.code != 0 {
 		t.Fatalf("deleted list failed: code=%d stdout=%s stderr=%s", deleted.code, deleted.stdout, deleted.stderr)
 	}
@@ -4946,7 +4946,7 @@ func TestBatchHardDeleteSkipsTombstones(t *testing.T) {
 		t.Fatalf("expected exec hard_delete=true, got %#v", execPayload["hard_delete"])
 	}
 
-	deleted := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--only-deleted", "--output", "json")
+	deleted := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
 	if deleted.code != 0 {
 		t.Fatalf("deleted list failed: code=%d stdout=%s stderr=%s", deleted.code, deleted.stdout, deleted.stderr)
 	}
@@ -4977,7 +4977,7 @@ func TestWorklogsRestoreDryRunAndExecute(t *testing.T) {
 		t.Fatalf("delete failed: code=%d stdout=%s stderr=%s", del.code, del.stdout, del.stderr)
 	}
 
-	dry := runCLI(t, "worklogs", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--output", "json")
+	dry := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--output", "json")
 	if dry.code != 0 {
 		t.Fatalf("restore dry-run failed: code=%d stdout=%s stderr=%s", dry.code, dry.stdout, dry.stderr)
 	}
@@ -5002,7 +5002,7 @@ func TestWorklogsRestoreDryRunAndExecute(t *testing.T) {
 		t.Fatalf("restore dry-run should not recreate active rows")
 	}
 
-	exec := runCLI(t, "worklogs", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
+	exec := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
 	if exec.code != 0 {
 		t.Fatalf("restore execute failed: code=%d stdout=%s stderr=%s", exec.code, exec.stdout, exec.stderr)
 	}
@@ -5027,7 +5027,7 @@ func TestWorklogsRestoreDryRunAndExecute(t *testing.T) {
 		t.Fatalf("expected original record values restored, got %#v", record)
 	}
 
-	deleted := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--only-deleted", "--output", "json")
+	deleted := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
 	if decodeJSONMap(t, []byte(deleted.stdout))["total"].(float64) != 0 {
 		t.Fatalf("expected restore to consume tombstone, got %s", deleted.stdout)
 	}
@@ -5049,7 +5049,7 @@ func TestWorklogsRestoreDryRunWithIssueAndZeroMatch(t *testing.T) {
 		t.Fatalf("delete failed: code=%d stdout=%s stderr=%s", del.code, del.stdout, del.stderr)
 	}
 
-	dry := runCLI(t, "worklogs", "restore", "--issue", "ABC-123", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--output", "json")
+	dry := runCLI(t, "tombstones", "restore", "--issue", "ABC-123", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--output", "json")
 	if dry.code != 0 {
 		t.Fatalf("restore dry-run with issue failed: code=%d stdout=%s stderr=%s", dry.code, dry.stdout, dry.stderr)
 	}
@@ -5057,7 +5057,7 @@ func TestWorklogsRestoreDryRunWithIssueAndZeroMatch(t *testing.T) {
 		t.Fatalf("expected one issue-filtered match, got %s", dry.stdout)
 	}
 
-	zero := runCLI(t, "worklogs", "restore", "--issue", "ABC-999", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
+	zero := runCLI(t, "tombstones", "restore", "--issue", "ABC-999", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
 	if zero.code != 0 {
 		t.Fatalf("zero-match restore failed: code=%d stdout=%s stderr=%s", zero.code, zero.stdout, zero.stderr)
 	}
@@ -5092,7 +5092,7 @@ func TestWorklogsRestoreRejectsConflictsUnlessForced(t *testing.T) {
 		t.Fatalf("second add failed: code=%d stdout=%s stderr=%s", second.code, second.stdout, second.stderr)
 	}
 
-	conflict := runCLI(t, "worklogs", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
+	conflict := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
 	if conflict.code != 2 {
 		t.Fatalf("expected restore conflict exit 2, got %d stdout=%s stderr=%s", conflict.code, conflict.stdout, conflict.stderr)
 	}
@@ -5105,12 +5105,12 @@ func TestWorklogsRestoreRejectsConflictsUnlessForced(t *testing.T) {
 	if activePayload["items"].([]any)[0].(map[string]any)["id"].(string) == firstID {
 		t.Fatalf("conflicting restore should not recreate deleted row, got %s", active.stdout)
 	}
-	deleted := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--only-deleted", "--output", "json")
+	deleted := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
 	if decodeJSONMap(t, []byte(deleted.stdout))["total"].(float64) != 1 {
 		t.Fatalf("conflicting restore should keep tombstone, got %s", deleted.stdout)
 	}
 
-	forced := runCLI(t, "worklogs", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--force", "--output", "json")
+	forced := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--force", "--output", "json")
 	if forced.code != 0 {
 		t.Fatalf("forced restore failed: code=%d stdout=%s stderr=%s", forced.code, forced.stdout, forced.stderr)
 	}
@@ -5148,7 +5148,7 @@ func TestWorklogsRestoreRejectsConflictsWithinRestoreSetUnlessForced(t *testing.
 		}
 	}
 
-	conflict := runCLI(t, "worklogs", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
+	conflict := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
 	if conflict.code != 2 {
 		t.Fatalf("expected restore-set conflict exit 2, got %d stdout=%s stderr=%s", conflict.code, conflict.stdout, conflict.stderr)
 	}
@@ -5158,7 +5158,7 @@ func TestWorklogsRestoreRejectsConflictsWithinRestoreSetUnlessForced(t *testing.
 		t.Fatalf("restore-set conflict should be atomic, got %s", active.stdout)
 	}
 
-	forced := runCLI(t, "worklogs", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--force", "--output", "json")
+	forced := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--force", "--output", "json")
 	if forced.code != 0 {
 		t.Fatalf("forced restore-set execution failed: code=%d stdout=%s stderr=%s", forced.code, forced.stdout, forced.stderr)
 	}
@@ -5176,22 +5176,22 @@ func TestWorklogsRestoreValidationErrors(t *testing.T) {
 		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
-	noSelector := runCLI(t, "worklogs", "restore", "--yes", "--output", "json")
+	noSelector := runCLI(t, "tombstones", "restore", "--yes", "--output", "json")
 	if noSelector.code != 2 {
 		t.Fatalf("expected no-selector validation error, got %d stdout=%s stderr=%s", noSelector.code, noSelector.stdout, noSelector.stderr)
 	}
 
-	both := runCLI(t, "worklogs", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--yes", "--output", "json")
+	both := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--yes", "--output", "json")
 	if both.code != 2 {
 		t.Fatalf("expected dry/yes validation error, got %d stdout=%s stderr=%s", both.code, both.stdout, both.stderr)
 	}
 
-	issue := runCLI(t, "worklogs", "restore", "--issue", "bad", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--output", "json")
+	issue := runCLI(t, "tombstones", "restore", "--issue", "bad", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--output", "json")
 	if issue.code != 2 {
 		t.Fatalf("expected issue validation error, got %d stdout=%s stderr=%s", issue.code, issue.stdout, issue.stderr)
 	}
 
-	onlyDeleted := runCLI(t, "worklogs", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--only-deleted", "--output", "json")
+	onlyDeleted := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--only-deleted", "--output", "json")
 	if onlyDeleted.code != 1 {
 		t.Fatalf("expected unknown-flag failure for --only-deleted, got %d stdout=%s stderr=%s", onlyDeleted.code, onlyDeleted.stdout, onlyDeleted.stderr)
 	}
@@ -5650,7 +5650,7 @@ func TestWorklogsSearchValidationZeroMatchLiteralAndDeletedMode(t *testing.T) {
 		t.Fatalf("expected no active matches after delete, got %s", activeAfterDelete.stdout)
 	}
 
-	deleted := runCLI(t, "worklogs", "search", "%_done", "--from", "2026-05-03", "--to", "2026-05-03", "--only-deleted", "--fields", "issue_key,deleted_at", "--output", "json")
+	deleted := runCLI(t, "tombstones", "search", "%_done", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
 	if deleted.code != 0 {
 		t.Fatalf("deleted search failed: code=%d stdout=%s stderr=%s", deleted.code, deleted.stdout, deleted.stderr)
 	}
@@ -5663,8 +5663,10 @@ func TestWorklogsSearchValidationZeroMatchLiteralAndDeletedMode(t *testing.T) {
 		t.Fatalf("expected raw literal query, got %#v", deletedFilters)
 	}
 	record := deletedPayload["items"].([]any)[0].(map[string]any)
-	if len(record) != 3 {
-		t.Fatalf("expected deleted item shape to remain tombstone-style, got %#v", record)
+	for _, key := range []string{"id", "issue_key", "started_at", "started_at_utc", "duration_seconds", "description", "deleted_at"} {
+		if _, ok := record[key]; !ok {
+			t.Fatalf("expected tombstone item to have %q, got %#v", key, record)
+		}
 	}
 }
 
@@ -5717,7 +5719,7 @@ func TestWorklogsListDeletedTableFooterIncludesCountAndHumanDuration(t *testing.
 		t.Fatalf("delete failed: code=%d stdout=%s stderr=%s", del.code, del.stdout, del.stderr)
 	}
 
-	list := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--only-deleted")
+	list := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03")
 	if list.code != 0 {
 		t.Fatalf("deleted list failed: code=%d stdout=%s stderr=%s", list.code, list.stdout, list.stderr)
 	}
