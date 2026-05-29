@@ -962,3 +962,102 @@ func countActiveWorklogs(t *testing.T, store *sqlitestore.Store) int {
 	}
 	return count
 }
+
+func countTombstones(t *testing.T, store *sqlitestore.Store) int {
+	t.Helper()
+
+	var count int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM worklog_tombstones`).Scan(&count); err != nil {
+		if err == sql.ErrNoRows {
+			return 0
+		}
+		t.Fatalf("count tombstones: %v", err)
+	}
+	return count
+}
+
+func TestUpdateIssueKeyCreatesTombstoneForOldIssue(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{Location: time.UTC, MinimumDurationSeconds: 900}
+	wl := mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "OLD-1",
+		StartedUTC:  "2026-05-29T09:00:00Z",
+		Duration:    "1h",
+		Description: "original work",
+	})
+
+	t.Run("changing issue key creates tombstone for old issue", func(t *testing.T) {
+		newKey := "NEW-2"
+		updated, err := service.Update(cfg, wl.ID, PatchInput{IssueKey: &newKey})
+		if err != nil {
+			t.Fatalf("update failed: %v", err)
+		}
+		if updated.IssueKey != "NEW-2" {
+			t.Fatalf("expected issue key NEW-2, got %q", updated.IssueKey)
+		}
+		if got := countActiveWorklogs(t, store); got != 1 {
+			t.Fatalf("expected 1 active worklog, got %d", got)
+		}
+		if got := countTombstones(t, store); got != 1 {
+			t.Fatalf("expected 1 tombstone, got %d", got)
+		}
+
+		var tombIssueKey, tombStarted string
+		var tombDuration int
+		err = store.DB().QueryRow(
+			`SELECT issue_key, started_at_utc, duration_seconds FROM worklog_tombstones LIMIT 1`,
+		).Scan(&tombIssueKey, &tombStarted, &tombDuration)
+		if err != nil {
+			t.Fatalf("read tombstone: %v", err)
+		}
+		if tombIssueKey != "OLD-1" {
+			t.Errorf("tombstone issue key: want OLD-1, got %q", tombIssueKey)
+		}
+		if tombStarted != "2026-05-29T09:00:00Z" {
+			t.Errorf("tombstone started_at_utc: want 2026-05-29T09:00:00Z, got %q", tombStarted)
+		}
+		if tombDuration != 3600 {
+			t.Errorf("tombstone duration_seconds: want 3600, got %d", tombDuration)
+		}
+	})
+
+	t.Run("changing non-issue fields creates no tombstone", func(t *testing.T) {
+		store2, service2 := newTestService(t)
+		defer store2.Close()
+
+		wl2 := mustAddWorklog(t, service2, cfg, AddInput{
+			IssueKey:    "ABC-1",
+			StartedUTC:  "2026-05-29T10:00:00Z",
+			Duration:    "1h",
+			Description: "work",
+		})
+		newDesc := "updated work"
+		if _, err := service2.Update(cfg, wl2.ID, PatchInput{Description: &newDesc}); err != nil {
+			t.Fatalf("update description failed: %v", err)
+		}
+		if got := countTombstones(t, store2); got != 0 {
+			t.Fatalf("expected no tombstones after description update, got %d", got)
+		}
+	})
+
+	t.Run("same issue key creates no tombstone", func(t *testing.T) {
+		store3, service3 := newTestService(t)
+		defer store3.Close()
+
+		wl3 := mustAddWorklog(t, service3, cfg, AddInput{
+			IssueKey:    "ABC-1",
+			StartedUTC:  "2026-05-29T10:00:00Z",
+			Duration:    "1h",
+			Description: "work",
+		})
+		sameKey := "ABC-1"
+		if _, err := service3.Update(cfg, wl3.ID, PatchInput{IssueKey: &sameKey}); err != nil {
+			t.Fatalf("update same issue key failed: %v", err)
+		}
+		if got := countTombstones(t, store3); got != 0 {
+			t.Fatalf("expected no tombstones for same-key update, got %d", got)
+		}
+	})
+}

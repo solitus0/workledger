@@ -490,17 +490,52 @@ func (s *Service) Update(cfg config.EffectiveConfig, id string, patch PatchInput
 		return LocalWorklog{}, err
 	}
 
-	_, err = s.store.DB().Exec(
-		`UPDATE worklogs SET issue_key = ?, started_at_utc = ?, duration_seconds = ?, description = ?, updated_at = ? WHERE id = ?`,
-		candidate.IssueKey,
-		sqlitestore.RFC3339UTC(candidate.StartedAtUTC),
-		candidate.DurationSeconds,
-		candidate.Description,
-		sqlitestore.RFC3339UTC(s.now().UTC()),
-		id,
-	)
-	if err != nil {
-		return LocalWorklog{}, err
+	if candidate.IssueKey != current.IssueKey {
+		now := s.now().UTC()
+		tx, err := s.store.DB().BeginTx(context.Background(), nil)
+		if err != nil {
+			return LocalWorklog{}, err
+		}
+		if _, err := tx.Exec(
+			`UPDATE worklogs SET issue_key = ?, started_at_utc = ?, duration_seconds = ?, description = ?, updated_at = ? WHERE id = ?`,
+			candidate.IssueKey,
+			sqlitestore.RFC3339UTC(candidate.StartedAtUTC),
+			candidate.DurationSeconds,
+			candidate.Description,
+			sqlitestore.RFC3339UTC(now),
+			id,
+		); err != nil {
+			_ = tx.Rollback()
+			return LocalWorklog{}, err
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO worklog_tombstones(worklog_id, issue_key, started_at_utc, duration_seconds, description, deleted_at) VALUES(?, ?, ?, ?, ?, ?)`,
+			uuid.NewString(),
+			current.IssueKey,
+			sqlitestore.RFC3339UTC(current.StartedAtUTC),
+			current.DurationSeconds,
+			current.Description,
+			sqlitestore.RFC3339UTC(now),
+		); err != nil {
+			_ = tx.Rollback()
+			return LocalWorklog{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return LocalWorklog{}, err
+		}
+	} else {
+		_, err = s.store.DB().Exec(
+			`UPDATE worklogs SET issue_key = ?, started_at_utc = ?, duration_seconds = ?, description = ?, updated_at = ? WHERE id = ?`,
+			candidate.IssueKey,
+			sqlitestore.RFC3339UTC(candidate.StartedAtUTC),
+			candidate.DurationSeconds,
+			candidate.Description,
+			sqlitestore.RFC3339UTC(s.now().UTC()),
+			id,
+		)
+		if err != nil {
+			return LocalWorklog{}, err
+		}
 	}
 
 	current.IssueKey = candidate.IssueKey

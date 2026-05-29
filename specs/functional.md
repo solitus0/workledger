@@ -395,6 +395,7 @@ Placement rule:
 - [ ] FUNC-315: Filtered batch tombstone delete shall require `--yes` for execution.
 - [ ] FUNC-316: Filtered batch tombstone delete shall support `--dry` to preview matched tombstones without deleting them.
 - [ ] FUNC-317: Filtered batch tombstone delete shall be a valid no-op when zero tombstones match.
+- [ ] FUNC-318: `workledger worklogs update <id> --issue <new-key>` shall write a tombstone for the old issue allocation, using a new ID, when the resolved issue key changes to a different value.
 
 ## Out of Scope
 - [ ] FUNC-303: `workledger tui` shall be the only deferred command surface in this organized spec.
