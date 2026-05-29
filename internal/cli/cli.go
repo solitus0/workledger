@@ -3840,12 +3840,13 @@ func renderReconcileNoPlanTable(w io.Writer, result reconcile.ReconcileNoPlanRes
 }
 
 func renderReconcilePlanNextSteps(w io.Writer, plan reconcile.Plan) error {
+	if countPlanItemsByStatus(plan.Items, "ready") == 0 {
+		_, err := fmt.Fprintf(w, "\nNext:\n  workledger plan show %s --all\n", plan.ID)
+		return err
+	}
 	_, err := fmt.Fprintf(w, "\nNext:\n  workledger plan show %s\n", plan.ID)
 	if err != nil {
 		return err
-	}
-	if countPlanItemsByStatus(plan.Items, "ready") == 0 {
-		return nil
 	}
 	_, err = fmt.Fprintf(w, "  workledger plan apply %s\n", plan.ID)
 	return err
