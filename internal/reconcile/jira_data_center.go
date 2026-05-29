@@ -101,7 +101,7 @@ func (s *Service) buildJiraDataPullPlan(ctx context.Context, cfg config.Effectiv
 			}
 			worklogItems, err := client.ListIssueWorklogs(ctx, issue.Key)
 			if err != nil {
-				results <- pullResult{err: err}
+				results <- pullResult{err: fmt.Errorf("issue %s: %w", issue.Key, err)}
 				return
 			}
 			valid, invalid := jiradatacenter.NormalizeIssueWorklogs(issue.Key, worklogItems, user, windowFrom, windowTo)
@@ -343,6 +343,8 @@ func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.Effectiv
 		}
 		applyActiveLocalMetrics(&item, scope.activePayload)
 		switch {
+		case fetched.failure != nil:
+			applyJiraDataCheckFailed(&item, *fetched.failure)
 		case scope.isDeleteOnly && len(fetched.remoteScope) == 0:
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
@@ -486,6 +488,8 @@ func (s *Service) buildJiraDataReportingPushPlan(ctx context.Context, cfg config
 		}
 
 		switch {
+		case fetched.failure != nil:
+			applyJiraDataCheckFailed(&item, *fetched.failure)
 		case isDeleteOnly && len(fetched.remoteScope) == 0:
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
@@ -558,6 +562,37 @@ type jiraDataFetchedScope struct {
 	targetRows     []model.Row
 	remoteScope    []jiradatacenter.Worklog
 	foreignPresent bool
+	failure        *jiraDataFetchFailure
+}
+
+type jiraDataFetchFailure struct {
+	reasonCode   string
+	reasonDetail string
+}
+
+func classifyJiraDataFetchFailure(err error) jiraDataFetchFailure {
+	var requestErr *jiradatacenter.RequestError
+	if errors.As(err, &requestErr) {
+		switch requestErr.StatusCode {
+		case 401, 403:
+			return jiraDataFetchFailure{reasonCode: "auth_error", reasonDetail: "jira data center authentication failed"}
+		case 404:
+			return jiraDataFetchFailure{reasonCode: "not_found", reasonDetail: "jira data center resource not found"}
+		default:
+			return jiraDataFetchFailure{reasonCode: "remote_error", reasonDetail: requestErr.Error()}
+		}
+	}
+	return jiraDataFetchFailure{reasonCode: "unexpected_error", reasonDetail: err.Error()}
+}
+
+func ptrJiraDataFetchFailure(f jiraDataFetchFailure) *jiraDataFetchFailure { return &f }
+
+func applyJiraDataCheckFailed(item *PlanItem, failure jiraDataFetchFailure) {
+	item.PlanStatus = "check_failed"
+	item.PlannedAction = "none"
+	item.ComparisonStatus = "check_failed"
+	item.ReasonCode = failure.reasonCode
+	item.ReasonDetail = failure.reasonDetail
 }
 
 func (s *Service) fetchJiraDataPushScopes(ctx context.Context, cfg config.EffectiveConfig, planned []jiraDataPlannedScope, windowFrom, windowTo time.Time) (map[string]jiraDataFetchedScope, error) {
@@ -568,31 +603,27 @@ func (s *Service) fetchJiraDataPushScopes(ctx context.Context, cfg config.Effect
 	results := make(chan struct {
 		key   string
 		scope jiraDataFetchedScope
-		err   error
 	}, len(planned))
 	var wg sync.WaitGroup
 	for instanceName, scopes := range grouped {
 		instanceName, scopes := instanceName, scopes
+		instance, err := requireJiraDataInstance(cfg, instanceName)
+		if err != nil {
+			return nil, err
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			instance, err := requireJiraDataInstance(cfg, instanceName)
-			if err != nil {
-				results <- struct {
-					key   string
-					scope jiraDataFetchedScope
-					err   error
-				}{err: err}
-				return
-			}
 			client := s.newJiraDataClient(instance)
 			user, err := client.CurrentUser(ctx)
 			if err != nil {
-				results <- struct {
-					key   string
-					scope jiraDataFetchedScope
-					err   error
-				}{err: err}
+				failure := classifyJiraDataFetchFailure(err)
+				for _, scope := range scopes {
+					results <- struct {
+						key   string
+						scope jiraDataFetchedScope
+					}{key: scope.issueKey, scope: jiraDataFetchedScope{failure: &failure}}
+				}
 				return
 			}
 			for _, scope := range scopes {
@@ -601,15 +632,16 @@ func (s *Service) fetchJiraDataPushScopes(ctx context.Context, cfg config.Effect
 					results <- struct {
 						key   string
 						scope jiraDataFetchedScope
-						err   error
-					}{err: err}
-					return
+					}{
+						key:   scope.issueKey,
+						scope: jiraDataFetchedScope{failure: ptrJiraDataFetchFailure(classifyJiraDataFetchFailure(err))},
+					}
+					continue
 				}
 				userRows, _ := jiradatacenter.NormalizeIssueWorklogs(scope.route.targetIssue, worklogItems, user, windowFrom, windowTo)
 				results <- struct {
 					key   string
 					scope jiraDataFetchedScope
-					err   error
 				}{
 					key: scope.issueKey,
 					scope: jiraDataFetchedScope{
@@ -625,9 +657,6 @@ func (s *Service) fetchJiraDataPushScopes(ctx context.Context, cfg config.Effect
 	close(results)
 	fetched := make(map[string]jiraDataFetchedScope, len(planned))
 	for result := range results {
-		if result.err != nil {
-			return nil, result.err
-		}
 		fetched[result.key] = result.scope
 	}
 	return fetched, nil
@@ -641,31 +670,27 @@ func (s *Service) fetchJiraDataReportingGroups(ctx context.Context, cfg config.E
 	results := make(chan struct {
 		key   string
 		scope jiraDataFetchedScope
-		err   error
 	}, len(groups))
 	var wg sync.WaitGroup
 	for instanceName, keys := range groupedByInstance {
 		instanceName, keys := instanceName, keys
+		instance, err := requireJiraDataInstance(cfg, instanceName)
+		if err != nil {
+			return nil, err
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			instance, err := requireJiraDataInstance(cfg, instanceName)
-			if err != nil {
-				results <- struct {
-					key   string
-					scope jiraDataFetchedScope
-					err   error
-				}{err: err}
-				return
-			}
 			client := s.newJiraDataClient(instance)
 			user, err := client.CurrentUser(ctx)
 			if err != nil {
-				results <- struct {
-					key   string
-					scope jiraDataFetchedScope
-					err   error
-				}{err: err}
+				failure := classifyJiraDataFetchFailure(err)
+				for _, key := range keys {
+					results <- struct {
+						key   string
+						scope jiraDataFetchedScope
+					}{key: key, scope: jiraDataFetchedScope{failure: &failure}}
+				}
 				return
 			}
 			for _, key := range keys {
@@ -675,15 +700,16 @@ func (s *Service) fetchJiraDataReportingGroups(ctx context.Context, cfg config.E
 					results <- struct {
 						key   string
 						scope jiraDataFetchedScope
-						err   error
-					}{err: err}
-					return
+					}{
+						key:   key,
+						scope: jiraDataFetchedScope{failure: ptrJiraDataFetchFailure(classifyJiraDataFetchFailure(err))},
+					}
+					continue
 				}
 				userRows, _ := jiradatacenter.NormalizeIssueWorklogs(group.TargetIssue, worklogItems, user, windowFrom, windowTo)
 				results <- struct {
 					key   string
 					scope jiraDataFetchedScope
-					err   error
 				}{
 					key: key,
 					scope: jiraDataFetchedScope{
@@ -699,9 +725,6 @@ func (s *Service) fetchJiraDataReportingGroups(ctx context.Context, cfg config.E
 	close(results)
 	fetched := make(map[string]jiraDataFetchedScope, len(groups))
 	for result := range results {
-		if result.err != nil {
-			return nil, result.err
-		}
 		fetched[result.key] = result.scope
 	}
 	return fetched, nil

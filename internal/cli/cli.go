@@ -3979,7 +3979,7 @@ func (a *app) handleJiraDataError(mode string, err error) error {
 		case http.StatusUnauthorized, http.StatusForbidden:
 			return a.fail(mode, 4, "auth_error", "jira data center authentication failed", nil)
 		case http.StatusNotFound:
-			return a.fail(mode, 3, "not_found", "jira data center resource not found", nil)
+			return a.fail(mode, 3, "not_found", err.Error(), nil)
 		default:
 			return a.fail(mode, 5, "remote_error", requestErr.Error(), nil)
 		}

@@ -1231,6 +1231,76 @@ func TestReconcileJiraCloudReportingExactMatchPlusFailedReadStillPersistsPlan(t 
 	}
 }
 
+func TestReconcileJiraDataPushPlanPartialWorklogFailureMarksSingleScope(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+	seedWorklogRow(t, store, "row-2", "AAPP-2", "2026-05-01T10:00:00Z", 1800, "Review PR")
+
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
+		return &fakeJiraDataClient{
+			user:            jiradatacenter.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiradatacenter.Worklog{"AAPP-1": {}},
+			worklogErrByKey: map[string]error{"AAPP-2": &jiradatacenter.RequestError{StatusCode: http.StatusNotFound, Status: "404 Not Found"}},
+		}
+	}
+
+	result, err := service.ReconcileJiraDataPushPlan(context.Background(), testJiraDataConfig(), "", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("ReconcileJiraDataPushPlan failed: %v", err)
+	}
+	if result.NoPlan != nil || result.Plan == nil {
+		t.Fatalf("expected saved plan, got %#v", result)
+	}
+	if result.Plan.AggregateStatus != "check_failed" || len(result.Plan.Items) != 2 {
+		t.Fatalf("unexpected partial plan %#v", result.Plan)
+	}
+
+	for _, item := range result.Plan.Items {
+		switch item.IssueKey {
+		case "AAPP-1":
+			assertPlanItem(t, item, "ready", "create")
+		case "AAPP-2":
+			if item.PlanStatus != "check_failed" || item.ReasonCode != "not_found" || item.ReasonDetail != "jira data center resource not found" {
+				t.Fatalf("unexpected failed item %#v", item)
+			}
+		default:
+			t.Fatalf("unexpected item %#v", item)
+		}
+	}
+}
+
+func TestReconcileJiraDataPushPlanCurrentUserFailureMarksAllScopes(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+	seedWorklogRow(t, store, "row-2", "AAPP-2", "2026-05-01T10:00:00Z", 1800, "Review PR")
+
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
+		return &fakeJiraDataClient{
+			currentUserErr: &jiradatacenter.RequestError{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized"},
+		}
+	}
+
+	result, err := service.ReconcileJiraDataPushPlan(context.Background(), testJiraDataConfig(), "", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("ReconcileJiraDataPushPlan failed: %v", err)
+	}
+	if result.NoPlan != nil || result.Plan == nil {
+		t.Fatalf("expected saved plan, got %#v", result)
+	}
+	if result.Plan.AggregateStatus != "check_failed" || len(result.Plan.Items) != 2 {
+		t.Fatalf("unexpected plan %#v", result.Plan)
+	}
+	for _, item := range result.Plan.Items {
+		if item.PlanStatus != "check_failed" || item.ReasonCode != "auth_error" {
+			t.Fatalf("expected check_failed item, got %#v", item)
+		}
+	}
+}
+
 func TestReconcileJiraDataPushPlanSupportsCrossFamilyCanonicalReportingPrefix(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
@@ -1542,6 +1612,8 @@ type fakeJiraDataClient struct {
 	user            jiradatacenter.User
 	searchIssues    []jiradatacenter.IssueBrief
 	worklogsByIssue map[string][]jiradatacenter.Worklog
+	currentUserErr  error
+	worklogErrByKey map[string]error
 }
 
 type fakeJiraCloudClient struct {
@@ -1554,6 +1626,9 @@ type fakeJiraCloudClient struct {
 }
 
 func (f *fakeJiraDataClient) CurrentUser(ctx context.Context) (jiradatacenter.User, error) {
+	if f.currentUserErr != nil {
+		return jiradatacenter.User{}, f.currentUserErr
+	}
 	return f.user, nil
 }
 
@@ -1562,6 +1637,9 @@ func (f *fakeJiraDataClient) SearchIssues(ctx context.Context, jql string, field
 }
 
 func (f *fakeJiraDataClient) ListIssueWorklogs(ctx context.Context, issueKey string) ([]jiradatacenter.Worklog, error) {
+	if err := f.worklogErrByKey[issueKey]; err != nil {
+		return nil, err
+	}
 	return append([]jiradatacenter.Worklog(nil), f.worklogsByIssue[issueKey]...), nil
 }
 
