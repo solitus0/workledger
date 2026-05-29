@@ -391,12 +391,6 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 			item.ComparisonStatus = "match"
 			item.ReasonCode = "exact_match"
 			item.ReasonDetail = "Jira Cloud rows already match the local ledger"
-		case fetched.foreignPresent:
-			item.PlanStatus = "blocked"
-			item.PlannedAction = "none"
-			item.ComparisonStatus = "remote_present"
-			item.ReasonCode = "foreign_authored_rows_present"
-			item.ReasonDetail = "Cleanup scope contains foreign-authored Jira worklogs"
 		case len(fetched.remoteScope) == 0:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "create"
@@ -536,12 +530,6 @@ func (s *Service) buildJiraCloudReportingPushPlan(ctx context.Context, cfg confi
 			item.ComparisonStatus = "match"
 			item.ReasonCode = "exact_match"
 			item.ReasonDetail = "Jira Cloud rows already match the local ledger"
-		case fetched.foreignPresent:
-			item.PlanStatus = "blocked"
-			item.PlannedAction = "none"
-			item.ComparisonStatus = "remote_present"
-			item.ReasonCode = "foreign_authored_rows_present"
-			item.ReasonDetail = "Cleanup scope contains foreign-authored Jira worklogs"
 		case len(fetched.remoteScope) == 0:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "create"

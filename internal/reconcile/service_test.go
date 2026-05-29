@@ -530,7 +530,7 @@ func TestCreateJiraDataPullPlanAndPushPlan(t *testing.T) {
 	if len(pushPlan.Items) != 1 {
 		t.Fatalf("expected one push item, got %d", len(pushPlan.Items))
 	}
-	if pushPlan.Items[0].PlanStatus != "blocked" || pushPlan.Items[0].PlannedAction != "none" {
+	if pushPlan.Items[0].PlanStatus != "ready" || pushPlan.Items[0].PlannedAction != "create" {
 		t.Fatalf("unexpected push item %#v", pushPlan.Items[0])
 	}
 	if !pushPlan.Items[0].InspectionSummary.ForeignAuthorPresent {
@@ -1050,7 +1050,7 @@ func TestReconcileJiraCloudPushPlanAggregatesSharedReportingTargets(t *testing.T
 	}
 }
 
-func TestReconcileJiraCloudPushPlanPersistsBlockedReportingPlan(t *testing.T) {
+func TestReconcileJiraCloudPushPlanPersistsReportingPlanWithForeignRows(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
 	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
@@ -1072,8 +1072,11 @@ func TestReconcileJiraCloudPushPlanPersistsBlockedReportingPlan(t *testing.T) {
 	if result.NoPlan != nil || result.Plan == nil {
 		t.Fatalf("expected saved plan, got %#v", result)
 	}
-	if len(result.Plan.Items) != 1 || result.Plan.Items[0].PlanStatus != "blocked" {
+	if len(result.Plan.Items) != 1 || result.Plan.Items[0].PlanStatus != "ready" || result.Plan.Items[0].PlannedAction != "create" {
 		t.Fatalf("unexpected plan items %#v", result.Plan.Items)
+	}
+	if !result.Plan.Items[0].InspectionSummary.ForeignAuthorPresent {
+		t.Fatalf("expected foreign author marker in inspection summary")
 	}
 	plans, err := service.ListPlans()
 	if err != nil {
