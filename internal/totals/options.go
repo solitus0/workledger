@@ -4,6 +4,7 @@ import "github.com/solitus0/workledger/internal/progress"
 
 type Options struct {
 	Reporter progress.Reporter
+	Instance string
 }
 
 func resolveOptions(options []Options) Options {

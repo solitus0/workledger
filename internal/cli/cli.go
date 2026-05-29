@@ -2800,10 +2800,13 @@ func (a *app) newTotalsCommand() *cobra.Command {
 			if err != nil {
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
-			opts := totals.Options{Reporter: reporter}
+			opts := totals.Options{Reporter: reporter, Instance: instance}
 			switch adapter {
 			case "":
 				items, exitCode := service.CollectAll(cmd.Context(), effective, windowFrom, windowTo, opts)
+				if instance != "" && len(items) == 0 {
+					return a.fail(mode, 2, "validation_error", fmt.Sprintf("instance %q not found", instance), nil)
+				}
 				if mode == "json" {
 					if err := a.renderAllTotalsJSON(effective, windowFrom, windowTo, items); err != nil {
 						return err

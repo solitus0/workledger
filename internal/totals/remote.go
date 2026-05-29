@@ -50,7 +50,7 @@ type CollectionItem struct {
 
 func (s *Service) CollectAll(ctx context.Context, cfg config.EffectiveConfig, windowFrom, windowTo time.Time, options ...Options) ([]CollectionItem, int) {
 	opts := resolveOptions(options)
-	targets := s.buildCollectionTargets(cfg)
+	targets := s.buildCollectionTargets(cfg, opts)
 	if len(targets) == 0 {
 		return nil, 0
 	}
@@ -283,21 +283,26 @@ func IsValidationError(err error) bool {
 	return errors.Is(err, errValidation)
 }
 
-func (s *Service) buildCollectionTargets(cfg config.EffectiveConfig) []collectionTarget {
+func (s *Service) buildCollectionTargets(cfg config.EffectiveConfig, opts Options) []collectionTarget {
+	filter := opts.Instance
 	targets := make([]collectionTarget, 0)
 	if cfg.File.Clockify != nil {
-		targets = append(targets, clockifyTarget{})
+		if filter == "" || filter == config.ClockifyInstanceName {
+			targets = append(targets, clockifyTarget{})
+		}
 	}
 	if cfg.File.JiraCloud != nil {
-		names := sortedJiraCloudInstanceNames(cfg.File.JiraCloud.Instances)
-		for _, name := range names {
-			targets = append(targets, jiraCloudTarget{instance: name})
+		for _, name := range sortedJiraCloudInstanceNames(cfg.File.JiraCloud.Instances) {
+			if filter == "" || filter == name {
+				targets = append(targets, jiraCloudTarget{instance: name})
+			}
 		}
 	}
 	if cfg.File.JiraData != nil {
-		names := sortedJiraDataInstanceNames(cfg.File.JiraData.Instances)
-		for _, name := range names {
-			targets = append(targets, jiraDataTarget{instance: name})
+		for _, name := range sortedJiraDataInstanceNames(cfg.File.JiraData.Instances) {
+			if filter == "" || filter == name {
+				targets = append(targets, jiraDataTarget{instance: name})
+			}
 		}
 	}
 	return targets
