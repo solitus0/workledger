@@ -877,7 +877,17 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 
 		switch {
 		case isDeleteOnly:
-			if len(targetEntries) == 0 {
+			matchedEntries := targetEntries
+			if len(matchedEntries) == 0 {
+				matchedEntries = findEntriesByTimeIntervals(entries, deletePayload)
+				if len(matchedEntries) > 0 {
+					item.RemoteRowCount = len(matchedEntries)
+					item.RemoteTotal = sumEntryDurations(matchedEntries)
+					item.InspectionSummary.RemoteRowCount = item.RemoteRowCount
+					item.InspectionSummary.RemoteTotalSeconds = item.RemoteTotal
+				}
+			}
+			if len(matchedEntries) == 0 {
 				item.PlanStatus = "skipped"
 				item.PlannedAction = "none"
 				item.ComparisonStatus = "match"
@@ -1450,6 +1460,9 @@ func (s *Service) applyClockifyPushItem(ctx context.Context, cfg config.Effectiv
 			return err
 		}
 		scopeEntries := filterEntriesByProject(filterEntriesByIssue(entries, tagsByID, item.TargetIssue), project.ID)
+		if len(scopeEntries) == 0 && item.PlannedAction == "delete" {
+			scopeEntries = findEntriesByTimeIntervals(entries, item.Payload)
+		}
 		for _, entry := range scopeEntries {
 			if err := client.DeleteTimeEntry(ctx, clockifyCfg.WorkspaceID, entry.ID); err != nil {
 				return err
@@ -2264,6 +2277,55 @@ func buildDeliveryKey(item PlanItem) string {
 			hashPayload(payload),
 	))
 	return hex.EncodeToString(sum[:])
+}
+
+// findEntriesByTimeIntervals returns entries whose start time and duration match any row.
+// Used as a fallback when tag-based filtering finds nothing — for example when the
+// Clockify issue tag was deleted after the entry was created.
+func findEntriesByTimeIntervals(entries []clockify.TimeEntry, rows []model.Row) []clockify.TimeEntry {
+	if len(rows) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var matches []clockify.TimeEntry
+	for _, entry := range entries {
+		if _, already := seen[entry.ID]; already {
+			continue
+		}
+		start, err := time.Parse(time.RFC3339, entry.TimeInterval.Start)
+		if err != nil || entry.TimeInterval.End == "" {
+			continue
+		}
+		end, err := time.Parse(time.RFC3339, entry.TimeInterval.End)
+		if err != nil {
+			continue
+		}
+		duration := int(end.Sub(start).Seconds())
+		for _, row := range rows {
+			if start.UTC().Equal(row.StartedAtUTC.UTC()) && duration == row.DurationSeconds {
+				matches = append(matches, entry)
+				seen[entry.ID] = struct{}{}
+				break
+			}
+		}
+	}
+	return matches
+}
+
+func sumEntryDurations(entries []clockify.TimeEntry) int {
+	total := 0
+	for _, entry := range entries {
+		start, err := time.Parse(time.RFC3339, entry.TimeInterval.Start)
+		if err != nil || entry.TimeInterval.End == "" {
+			continue
+		}
+		end, err := time.Parse(time.RFC3339, entry.TimeInterval.End)
+		if err != nil {
+			continue
+		}
+		total += int(end.Sub(start).Seconds())
+	}
+	return total
 }
 
 func matchingProjects(projects []clockify.Project, name string) []clockify.Project {

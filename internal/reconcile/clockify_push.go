@@ -106,6 +106,9 @@ func (s *Service) applyClockifyPushItemWithDeps(ctx context.Context, item PlanIt
 			return err
 		}
 		scopeEntries := filterEntriesByProject(filterEntriesByIssue(entries, deps.tagsByID, item.TargetIssue), project.ID)
+		if len(scopeEntries) == 0 && item.PlannedAction == "delete" {
+			scopeEntries = findEntriesByTimeIntervals(entries, item.Payload)
+		}
 		for _, entry := range scopeEntries {
 			if err := deps.client.DeleteTimeEntry(ctx, deps.cfg.WorkspaceID, entry.ID); err != nil {
 				return err

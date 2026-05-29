@@ -180,6 +180,38 @@ func TestCreateClockifyPushPlanDeleteOnlyEmptyRemoteIsMatch(t *testing.T) {
 	}
 }
 
+func TestCreateClockifyPushPlanDeleteOnlyFallsBackToTimeIntervalWhenTagDeleted(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
+
+	client := &fakeClockifyClient{
+		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
+		// AAPP-1 tag absent from tagsByID — simulates the tag having been deleted in Clockify
+		tagsByID: map[string]clockify.Tag{},
+		entries: []clockify.TimeEntry{
+			{ID: "entry-orphan", ProjectID: "proj-app", Description: "Remote row", TagIDs: []string{"deleted-tag-id"}, TimeInterval: clockify.TimeInterval{Start: "2026-05-01T08:00:00Z", End: "2026-05-01T09:00:00Z"}},
+		},
+	}
+	service := NewService(store)
+	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient { return client }
+
+	plan, err := service.CreateClockifyPushPlan(context.Background(), testClockifyConfig(true), mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("expected one item, got %d", len(plan.Items))
+	}
+	assertPlanItem(t, plan.Items[0], "ready", "delete")
+	if plan.Items[0].RemoteRowCount != 1 {
+		t.Fatalf("expected remote row count 1 from time-interval fallback, got %d", plan.Items[0].RemoteRowCount)
+	}
+	if plan.Items[0].RemoteTotal != 3600 {
+		t.Fatalf("expected remote total 3600 from time-interval fallback, got %d", plan.Items[0].RemoteTotal)
+	}
+}
+
 func TestApplyPlanPushMixedResult(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
