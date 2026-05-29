@@ -7,11 +7,31 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-05-29
+
+### Added
+- Updating an existing worklog's issue key now creates a tombstone so the old remote entry is removed on next sync.
+
+### Fixed
+- Clockify adapter deletes tombstoned entries even when the entry's tags are missing.
+- Jira adapter allows create and replace plans when foreign worklogs already exist for the window.
+- Jira 404 responses during reconcile are now handled gracefully instead of hard-failing.
+- Reconcile output example shows the full `plan inspect` command example when no actionable items are found.
+
+## [0.1.4] - 2026-05-27
+
 ### Added
 - `workledger worklogs` issue-prefix filtering for narrower list and apply operations.
+- Top-level `workledger tombstones` commands for viewing and managing tombstoned entries.
 
 ### Changed
+- `workledger plan show` now displays only ready items by default; pass `--all` to include non-ready entries.
 - Shared weekday window resolution across worklog date-window selectors to keep shortcut behavior consistent.
+
+### Fixed
+- `--instance` flag now applies correctly in `workledger worklogs totals`.
+- Full config fingerprint is now used when a single-adapter plan is inserted to prevent stale matches.
+- Config error message for fingerprint mismatch is now user-friendly and actionable.
 
 ## [0.1.3] - 2026-05-25
 
