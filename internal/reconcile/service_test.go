@@ -970,6 +970,40 @@ func TestCreateJiraDataPushPlanAggregatesMixedReportingActiveAndTombstoneState(t
 	}
 }
 
+func TestCreateJiraDataPushPlanTreatsZeroNormalizedRemoteRowsAsMissing(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
+		return &fakeJiraDataClient{
+			user: jiradatacenter.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiradatacenter.Worklog{
+				"REPORT-1": {
+					{ID: "w1", Started: "2026-05-01T09:00:00.000+0000", TimeSpentSeconds: 1800, Comment: "", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
+				},
+			},
+		}
+	}
+
+	plan, err := service.CreateJiraDataPushPlan(context.Background(), testJiraDataConfig(), "reporting", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraDataPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("expected one item, got %#v", plan.Items)
+	}
+	item := plan.Items[0]
+	assertPlanItem(t, item, "ready", "create")
+	if item.ComparisonStatus != "remote_missing" || item.ReasonCode != "remote_missing" {
+		t.Fatalf("expected remote_missing classification, got %#v", item)
+	}
+	if item.RemoteRowCount != 0 || item.RemoteTotal != 0 {
+		t.Fatalf("expected zero normalized remote rows, got %#v", item)
+	}
+}
+
 func TestReconcileJiraCloudPushPlanReturnsNoMatchingRoutesNoPlan(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
@@ -1047,6 +1081,40 @@ func TestReconcileJiraCloudPushPlanAggregatesSharedReportingTargets(t *testing.T
 	}
 	if second.NoPlan.MatchedScopeCount != 1 || second.NoPlan.ActionableScopeCount != 0 {
 		t.Fatalf("unexpected second no-plan summary %#v", second.NoPlan)
+	}
+}
+
+func TestCreateJiraCloudPushPlanTreatsZeroNormalizedRemoteRowsAsMissing(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			user: jiracloud.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiracloud.Worklog{
+				"REPORT-1": {
+					{ID: "w1", Started: "2026-05-01T09:00:00.000+0000", TimeSpentSeconds: 1800, Comment: "", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+				},
+			},
+		}
+	}
+
+	plan, err := service.CreateJiraCloudPushPlan(context.Background(), testJiraCloudConfig(), "reporting", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraCloudPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("expected one item, got %#v", plan.Items)
+	}
+	item := plan.Items[0]
+	assertPlanItem(t, item, "ready", "create")
+	if item.ComparisonStatus != "remote_missing" || item.ReasonCode != "remote_missing" {
+		t.Fatalf("expected remote_missing classification, got %#v", item)
+	}
+	if item.RemoteRowCount != 0 || item.RemoteTotal != 0 {
+		t.Fatalf("expected zero normalized remote rows, got %#v", item)
 	}
 }
 

@@ -391,12 +391,12 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 			item.ComparisonStatus = "match"
 			item.ReasonCode = "exact_match"
 			item.ReasonDetail = "Jira Cloud rows already match the local ledger"
-		case len(fetched.remoteScope) == 0:
+		case len(fetched.targetRows) == 0:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "create"
 			item.ComparisonStatus = "remote_missing"
 			item.ReasonCode = "remote_missing"
-			item.ReasonDetail = "Jira Cloud scope is empty and will be created"
+			item.ReasonDetail = "Jira Cloud scope has no normalized remote rows and will be created"
 		default:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "replace"
@@ -530,12 +530,12 @@ func (s *Service) buildJiraCloudReportingPushPlan(ctx context.Context, cfg confi
 			item.ComparisonStatus = "match"
 			item.ReasonCode = "exact_match"
 			item.ReasonDetail = "Jira Cloud rows already match the local ledger"
-		case len(fetched.remoteScope) == 0:
+		case len(fetched.targetRows) == 0:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "create"
 			item.ComparisonStatus = "remote_missing"
 			item.ReasonCode = "remote_missing"
-			item.ReasonDetail = "Jira Cloud scope is empty and will be created"
+			item.ReasonDetail = "Jira Cloud scope has no normalized remote rows and will be created"
 		default:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "replace"

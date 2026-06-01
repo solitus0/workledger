@@ -506,6 +506,7 @@ Placement rule:
 - [ ] NFR-434: `planned_action` shall use `create`, `replace`, `delete`, or `none` for `plan_direction=push`.
 - [ ] NFR-435: Scope classifications shall use `ready`, `invalid`, `blocked`, `skipped`, and `check_failed`.
 - [ ] NFR-436: Final reconcile correctness shall be exact local-versus-remote row-set equality within the saved scope.
+- [ ] NFR-436a: For push plans, `comparison_status=remote_missing` shall be used when the normalized remote row count for the saved scope is zero, matching displayed `remote_row_count=0`.
 - [ ] NFR-437: Per-entry remote worklog identity shall not be part of reconcile identity.
 - [ ] NFR-438: Remote cleanup and replacement shall be scoped only by target adapter instance, target issue, and saved reconcile time window.
 - [ ] NFR-439: No local rows and no tombstone-backed delete intent shall not trigger cleanup.
