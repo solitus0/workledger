@@ -2771,6 +2771,7 @@ func (a *app) newTotalsCommand() *cobra.Command {
 	var to string
 	var weekOffset int
 	var instance string
+	var routeProfile string
 	var details bool
 	var progressMode string
 
@@ -2800,8 +2801,16 @@ func (a *app) newTotalsCommand() *cobra.Command {
 			if err != nil {
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
-			opts := totals.Options{Reporter: reporter, Instance: instance}
-			switch adapter {
+			selectedAdapter := adapter
+			if routeProfile != "" {
+				selectedAdapter, err = resolveTotalsRouteProfileAdapter(effective, adapter, instance)
+				if err != nil {
+					return a.fail(mode, 2, "validation_error", err.Error(), nil)
+				}
+			}
+
+			opts := totals.Options{Reporter: reporter, Instance: instance, RouteProfile: routeProfile}
+			switch selectedAdapter {
 			case "":
 				items, exitCode := service.CollectAll(cmd.Context(), effective, windowFrom, windowTo, opts)
 				if instance != "" && len(items) == 0 {
@@ -2853,14 +2862,15 @@ func (a *app) newTotalsCommand() *cobra.Command {
 			}
 
 			if mode == "json" {
-				return a.renderTotalsJSON(adapter, resolvedInstance, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet, effective, windowFrom, windowTo, result)
+				return a.renderTotalsJSON(selectedAdapter, resolvedInstance, routeProfile, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet, effective, windowFrom, windowTo, result)
 			}
-			return a.renderTotalsTable(adapter, resolvedInstance, details, effective, windowFrom, windowTo, result)
+			return a.renderTotalsTable(selectedAdapter, resolvedInstance, routeProfile, details, effective, windowFrom, windowTo, result)
 		},
 	}
 
 	cmd.Flags().StringVar(&adapter, "adapter", "", "Adapter family")
 	cmd.Flags().StringVar(&instance, "instance", "", "Adapter instance")
+	cmd.Flags().StringVar(&routeProfile, "route-profile", "", "Jira route profile")
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
@@ -3482,6 +3492,44 @@ func resolveJiraCloudInstanceName(effective config.EffectiveConfig, name string)
 	return resolved, err
 }
 
+func resolveTotalsRouteProfileAdapter(effective config.EffectiveConfig, adapter, instance string) (string, error) {
+	switch adapter {
+	case "jira-cloud", "jira-data-center":
+		return adapter, nil
+	case "":
+	case "clockify":
+		return "", errors.New("--route-profile is supported only for jira-cloud and jira-data-center totals")
+	default:
+		return "", errors.New("--route-profile is supported only for jira-cloud and jira-data-center totals")
+	}
+
+	if strings.TrimSpace(instance) == "" {
+		return "", errors.New("--route-profile requires --adapter jira-cloud or jira-data-center, or --instance <name> for a configured Jira target")
+	}
+
+	hasJiraCloud := effective.File.JiraCloud != nil
+	if hasJiraCloud {
+		_, hasJiraCloud = effective.File.JiraCloud.Instances[instance]
+	}
+	hasJiraData := effective.File.JiraData != nil
+	if hasJiraData {
+		_, hasJiraData = effective.File.JiraData.Instances[instance]
+	}
+
+	switch {
+	case hasJiraCloud && hasJiraData:
+		return "", fmt.Errorf("instance %q exists in both jira_cloud and jira_data_center; use --adapter jira-cloud or --adapter jira-data-center", instance)
+	case hasJiraCloud:
+		return "jira-cloud", nil
+	case hasJiraData:
+		return "jira-data-center", nil
+	case instance == config.ClockifyInstanceName:
+		return "", errors.New("--route-profile is supported only for jira-cloud and jira-data-center totals")
+	default:
+		return "", fmt.Errorf("adapter instance %q is not configured", instance)
+	}
+}
+
 func sortedSetKeys(values map[string]struct{}) []string {
 	items := make([]string, 0, len(values))
 	for value := range values {
@@ -4023,7 +4071,7 @@ func (a *app) handleReconcileAdapterError(mode, adapter string, err error) error
 	return a.fail(mode, 2, "validation_error", err.Error(), nil)
 }
 
-func (a *app) renderTotalsJSON(adapter, instance string, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, weekOffset int, weekOffsetSet bool, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, result totals.Result) error {
+func (a *app) renderTotalsJSON(adapter, instance, routeProfile string, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, weekOffset int, weekOffsetSet bool, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, result totals.Result) error {
 	rawFilters := map[string]any{
 		"adapter":       emptyToNil(adapter),
 		"today":         today,
@@ -4056,6 +4104,10 @@ func (a *app) renderTotalsJSON(adapter, instance string, today, yesterday, monda
 	if adapter == "jira-data-center" || adapter == "jira-cloud" || adapter == "clockify" {
 		rawFilters["instance"] = emptyToNil(instance)
 		effectiveFilters["instance"] = instance
+	}
+	if routeProfile != "" {
+		rawFilters["route_profile"] = routeProfile
+		effectiveFilters["route_profile"] = routeProfile
 	}
 
 	days := make([]map[string]any, 0, len(result.Days))
@@ -4101,7 +4153,7 @@ func (a *app) renderAllTotalsJSON(cfg config.EffectiveConfig, windowFromUTC, win
 	return a.writeJSON(map[string]any{"items": rows})
 }
 
-func (a *app) renderTotalsTable(adapter, instance string, details bool, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, result totals.Result) error {
+func (a *app) renderTotalsTable(adapter, instance, routeProfile string, details bool, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, result totals.Result) error {
 	rows := make([][]string, 0, len(result.Days)+1)
 	if details {
 		for _, day := range result.Days {
@@ -4140,6 +4192,9 @@ func (a *app) renderTotalsTable(adapter, instance string, details bool, cfg conf
 		)
 		if adapter == "jira-data-center" || adapter == "jira-cloud" || adapter == "clockify" {
 			footer += fmt.Sprintf(" instance=%s", instance)
+		}
+		if routeProfile != "" {
+			footer += fmt.Sprintf(" route_profile=%s", routeProfile)
 		}
 	}
 	footer += fmt.Sprintf(" state=%s\n", result.State)

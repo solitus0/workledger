@@ -133,6 +133,10 @@ Placement rule:
 - [ ] FUNC-100: `workledger totals --adapter=jira-data-center` shall require `--instance <name>` when more than one `jira_data_center` instance is configured.
 - [ ] FUNC-101: `workledger totals --adapter=jira-cloud` shall discover candidate issues with `worklogAuthor = currentUser() AND worklogDate >= "<from>" AND worklogDate <= "<to>"`.
 - [ ] FUNC-102: `workledger totals --adapter=jira-data-center` shall discover candidate issues with `worklogAuthor = currentUser() AND worklogDate >= "<from>" AND worklogDate <= "<to>"`.
+- [ ] FUNC-102a: `workledger totals --route-profile <name>` shall be accepted with `--adapter=jira-cloud`, `--adapter=jira-data-center`, or `--instance <name>` when that instance resolves to exactly one configured Jira family.
+- [ ] FUNC-102aa: `workledger totals --instance <name> --route-profile <name>` shall fail validation and require explicit `--adapter` when that instance name exists in both configured Jira families.
+- [ ] FUNC-102b: `workledger totals --adapter=<jira-family> --route-profile <name>` shall limit totals scope to the selected route profile on the selected instance.
+- [ ] FUNC-102c: `workledger totals --adapter=<jira-family> --route-profile <reporting-profile>` shall compare local source-prefix work matched by that profile against remote worklogs on that profile's configured `reporting_targets` issues.
 - [ ] FUNC-103: `workledger totals --details` shall expand explicit single-result table output to include per-day rows.
 - [ ] FUNC-104: `workledger totals --details` shall not change JSON output.
 

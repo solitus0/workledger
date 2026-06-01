@@ -101,6 +101,12 @@ type JiraRouteProfile struct {
 	ReportingTargets map[string]string `yaml:"reporting_targets"`
 }
 
+type JiraTotalsRouteScope struct {
+	IssuePrefixes         []string
+	ReportingTargetIssues []string
+	Reporting             bool
+}
+
 type ClockifyConfig struct {
 	WorkspaceID    string                 `yaml:"workspace_id"`
 	UserID         string                 `yaml:"user_id"`
@@ -296,6 +302,25 @@ func JiraExcludedIssuesForInstance(cfg EffectiveConfig, family, instanceName str
 	return items, nil
 }
 
+func JiraCloudTotalsRouteScope(cfg EffectiveConfig, instanceName, routeProfile string) (JiraTotalsRouteScope, error) {
+	if routeProfile == "" {
+		prefixes, err := JiraCloudIssuePrefixesForTotals(cfg, instanceName)
+		if err != nil {
+			return JiraTotalsRouteScope{}, err
+		}
+		return JiraTotalsRouteScope{IssuePrefixes: prefixes}, nil
+	}
+
+	if cfg.File.JiraCloud == nil || len(cfg.File.JiraCloud.Instances) == 0 {
+		return JiraTotalsRouteScope{}, errors.New("jira_cloud config is required")
+	}
+	instance, ok := cfg.File.JiraCloud.Instances[instanceName]
+	if !ok {
+		return JiraTotalsRouteScope{}, fmt.Errorf("jira_cloud instance %q is not configured", instanceName)
+	}
+	return jiraTotalsRouteScope(instance.Routing, routeProfile, "jira_cloud")
+}
+
 func JiraCloudIssuePrefixes(cfg EffectiveConfig, instanceName string) ([]string, error) {
 	if cfg.File.JiraCloud == nil || len(cfg.File.JiraCloud.Instances) == 0 {
 		return nil, errors.New("jira_cloud config is required")
@@ -336,6 +361,166 @@ func JiraCloudIssuePrefixesForTotals(cfg EffectiveConfig, instanceName string) (
 	}
 
 	return prefixes, nil
+}
+
+func JiraDataTotalsRouteScope(cfg EffectiveConfig, instanceName, routeProfile string) (JiraTotalsRouteScope, error) {
+	if routeProfile == "" {
+		prefixes, err := JiraDataIssuePrefixesForTotals(cfg, instanceName)
+		if err != nil {
+			return JiraTotalsRouteScope{}, err
+		}
+		return JiraTotalsRouteScope{IssuePrefixes: prefixes}, nil
+	}
+
+	if cfg.File.JiraData == nil || len(cfg.File.JiraData.Instances) == 0 {
+		return JiraTotalsRouteScope{}, errors.New("jira_data_center config is required")
+	}
+	instance, ok := cfg.File.JiraData.Instances[instanceName]
+	if !ok {
+		return JiraTotalsRouteScope{}, fmt.Errorf("jira_data_center instance %q is not configured", instanceName)
+	}
+	return jiraTotalsRouteScope(instance.Routing, routeProfile, "jira_data_center")
+}
+
+func ValidateReportingTargetOwnership(cfg EffectiveConfig, selectedFamily, routeProfile, targetIssue string) error {
+	prefix, _, ok := strings.Cut(strings.TrimSpace(targetIssue), "-")
+	if !ok || prefix == "" {
+		return nil
+	}
+
+	owner, ok := findCrossFamilyIssueOwner(cfg, prefix)
+	if !ok || owner.family == selectedFamily {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"reporting target issue %q in %s route profile %q is owned by configured %s instance %q; move this reporting_targets rule there or run with --adapter=%s",
+		targetIssue,
+		selectedFamily,
+		routeProfile,
+		owner.family,
+		owner.instance,
+		owner.family,
+	)
+}
+
+type jiraIssueOwner struct {
+	family   string
+	instance string
+}
+
+func jiraTotalsRouteScope(routes *JiraInstanceRoutes, routeProfile, family string) (JiraTotalsRouteScope, error) {
+	if routes == nil || len(routes.Profiles) == 0 {
+		return JiraTotalsRouteScope{}, fmt.Errorf("%s routing is required for totals", family)
+	}
+
+	profile, ok := routes.Profiles[routeProfile]
+	if !ok {
+		return JiraTotalsRouteScope{}, fmt.Errorf("%s route profile %q is not configured", family, routeProfile)
+	}
+
+	issuePrefixes := normalizeRoutePrefixes(profile.IssuePrefixes)
+	if len(issuePrefixes) > 0 {
+		return JiraTotalsRouteScope{IssuePrefixes: issuePrefixes}, nil
+	}
+
+	reportingTargets := normalizeReportingTargets(profile.ReportingTargets)
+	if len(reportingTargets.prefixes) == 0 || len(reportingTargets.targetIssues) == 0 {
+		return JiraTotalsRouteScope{}, fmt.Errorf("%s route profile %q has no totals scope", family, routeProfile)
+	}
+
+	return JiraTotalsRouteScope{
+		IssuePrefixes:         reportingTargets.prefixes,
+		ReportingTargetIssues: reportingTargets.targetIssues,
+		Reporting:             true,
+	}, nil
+}
+
+type normalizedReportingTargets struct {
+	prefixes     []string
+	targetIssues []string
+}
+
+func normalizeRoutePrefixes(prefixes []string) []string {
+	items := make([]string, 0, len(prefixes))
+	for _, prefix := range prefixes {
+		prefix = strings.TrimSpace(prefix)
+		if prefix != "" {
+			items = append(items, prefix)
+		}
+	}
+	slices.Sort(items)
+	return slices.Compact(items)
+}
+
+func normalizeReportingTargets(targets map[string]string) normalizedReportingTargets {
+	prefixes := make([]string, 0, len(targets))
+	targetIssues := make([]string, 0, len(targets))
+	seenTargets := map[string]struct{}{}
+	for prefix, targetIssue := range targets {
+		prefix = strings.TrimSpace(prefix)
+		targetIssue = strings.TrimSpace(targetIssue)
+		if prefix == "" || targetIssue == "" {
+			continue
+		}
+		prefixes = append(prefixes, prefix)
+		if _, seen := seenTargets[targetIssue]; !seen {
+			seenTargets[targetIssue] = struct{}{}
+			targetIssues = append(targetIssues, targetIssue)
+		}
+	}
+	slices.Sort(prefixes)
+	prefixes = slices.Compact(prefixes)
+	slices.Sort(targetIssues)
+	return normalizedReportingTargets{prefixes: prefixes, targetIssues: targetIssues}
+}
+
+func findCrossFamilyIssueOwner(cfg EffectiveConfig, prefix string) (jiraIssueOwner, bool) {
+	if owner, ok := findIssueOwnerInJiraCloud(cfg, prefix); ok {
+		return owner, true
+	}
+	if owner, ok := findIssueOwnerInJiraData(cfg, prefix); ok {
+		return owner, true
+	}
+	return jiraIssueOwner{}, false
+}
+
+func findIssueOwnerInJiraCloud(cfg EffectiveConfig, prefix string) (jiraIssueOwner, bool) {
+	if cfg.File.JiraCloud == nil {
+		return jiraIssueOwner{}, false
+	}
+	for instanceName, instance := range cfg.File.JiraCloud.Instances {
+		if routeFamilyOwnsPrefix(instance.Routing, prefix) {
+			return jiraIssueOwner{family: "jira-cloud", instance: instanceName}, true
+		}
+	}
+	return jiraIssueOwner{}, false
+}
+
+func findIssueOwnerInJiraData(cfg EffectiveConfig, prefix string) (jiraIssueOwner, bool) {
+	if cfg.File.JiraData == nil {
+		return jiraIssueOwner{}, false
+	}
+	for instanceName, instance := range cfg.File.JiraData.Instances {
+		if routeFamilyOwnsPrefix(instance.Routing, prefix) {
+			return jiraIssueOwner{family: "jira-data-center", instance: instanceName}, true
+		}
+	}
+	return jiraIssueOwner{}, false
+}
+
+func routeFamilyOwnsPrefix(routes *JiraInstanceRoutes, prefix string) bool {
+	if routes == nil {
+		return false
+	}
+	for _, profile := range routes.Profiles {
+		for _, owned := range profile.IssuePrefixes {
+			if owned == prefix {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func DefaultConfigBytes(clockifyConfig *ClockifyConfig) []byte {

@@ -119,22 +119,30 @@ func (s *Service) CompareJiraDataWithExclusions(ctx context.Context, cfg config.
 		return Result{}, err
 	}
 
+	return compareRowsWithLocalEntries(localEntries, rows, windowFromUTC, windowToUTC, cfg.Location), nil
+}
+
+func (s *Service) CompareRowsWithLocalScope(ctx context.Context, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, rows []model.Row, issuePrefixes []string, excludedIssueKeys map[string]struct{}) (Result, error) {
+	localEntries, err := s.loadLocalEntries(ctx, issuePrefixes, excludedIssueKeys)
+	if err != nil {
+		return Result{}, err
+	}
+
+	return compareRowsWithLocalEntries(localEntries, rows, windowFromUTC, windowToUTC, cfg.Location), nil
+}
+
+func compareRowsWithLocalEntries(localEntries []localEntry, rows []model.Row, windowFromUTC, windowToUTC time.Time, location *time.Location) Result {
 	windowEndExclusive := windowToUTC.Add(time.Second)
+
 	remoteEntries := make([]localEntry, 0, len(rows))
 	for _, row := range rows {
-		if _, excluded := excludedIssueKeys[row.IssueKey]; excluded {
-			continue
-		}
-		if !matchesIssuePrefixes(row.IssueKey, issuePrefixes) {
-			continue
-		}
 		remoteEntries = append(remoteEntries, localEntry{
 			start: row.StartedAtUTC.UTC(),
 			end:   row.StartedAtUTC.UTC().Add(time.Duration(row.DurationSeconds) * time.Second),
 		})
 	}
 
-	return compareFixedDurationEntries(localEntries, remoteEntries, windowFromUTC, windowEndExclusive, cfg.Location, nil), nil
+	return compareFixedDurationEntries(localEntries, remoteEntries, windowFromUTC, windowEndExclusive, location, nil)
 }
 
 func summarizeLocalEntries(localEntries []localEntry, windowFromUTC, windowEndExclusiveUTC time.Time, location *time.Location) Result {

@@ -129,12 +129,17 @@ func (s *Service) CompareJiraCloudRemote(ctx context.Context, cfg config.Effecti
 	opts.Reporter.Start(progress.Event{Phase: "validating", Message: "totals jira-cloud"})
 	defer opts.Reporter.Finish(progress.Event{Phase: "finalizing", Message: "totals jira-cloud complete"})
 
-	resolvedInstance, _, rows, issuePrefixes, excludedSet, err := s.fetchJiraCloudRows(ctx, cfg, instanceName, windowFrom, windowTo, opts)
+	resolvedInstance, _, rows, issuePrefixes, excludedSet, reporting, err := s.fetchJiraCloudRows(ctx, cfg, instanceName, windowFrom, windowTo, opts)
 	if err != nil {
 		return "", Result{}, err
 	}
 	opts.Reporter.Event(progress.Event{Phase: "comparing", Message: "comparing local and jira-cloud totals"})
-	result, err := s.CompareJiraDataWithExclusions(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	var result Result
+	if reporting {
+		result, err = s.CompareRowsWithLocalScope(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	} else {
+		result, err = s.CompareJiraDataWithExclusions(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	}
 	return resolvedInstance, result, err
 }
 
@@ -143,12 +148,17 @@ func (s *Service) CompareJiraDataRemote(ctx context.Context, cfg config.Effectiv
 	opts.Reporter.Start(progress.Event{Phase: "validating", Message: "totals jira-data-center"})
 	defer opts.Reporter.Finish(progress.Event{Phase: "finalizing", Message: "totals jira-data-center complete"})
 
-	resolvedInstance, _, rows, issuePrefixes, excludedSet, err := s.fetchJiraDataRows(ctx, cfg, instanceName, windowFrom, windowTo, opts)
+	resolvedInstance, _, rows, issuePrefixes, excludedSet, reporting, err := s.fetchJiraDataRows(ctx, cfg, instanceName, windowFrom, windowTo, opts)
 	if err != nil {
 		return "", Result{}, err
 	}
 	opts.Reporter.Event(progress.Event{Phase: "comparing", Message: "comparing local and jira-data-center totals"})
-	result, err := s.CompareJiraDataWithExclusions(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	var result Result
+	if reporting {
+		result, err = s.CompareRowsWithLocalScope(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	} else {
+		result, err = s.CompareJiraDataWithExclusions(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	}
 	return resolvedInstance, result, err
 }
 
@@ -204,7 +214,7 @@ func (t jiraCloudTarget) label() string { return "jira-cloud/" + t.instance }
 
 func (t jiraCloudTarget) fetch(ctx context.Context, service *Service, cfg config.EffectiveConfig, windowFrom, windowTo time.Time, opts Options) CollectionItem {
 	item := CollectionItem{Adapter: "jira-cloud", Instance: t.instance}
-	resolvedInstance, localResult, rows, issuePrefixes, excludedSet, err := service.fetchJiraCloudRows(ctx, cfg, t.instance, windowFrom, windowTo, opts)
+	resolvedInstance, localResult, rows, issuePrefixes, excludedSet, reporting, err := service.fetchJiraCloudRows(ctx, cfg, t.instance, windowFrom, windowTo, opts)
 	if resolvedInstance != "" {
 		item.Instance = resolvedInstance
 	}
@@ -223,7 +233,12 @@ func (t jiraCloudTarget) fetch(ctx context.Context, service *Service, cfg config
 		item.Message = err.Error()
 		return item
 	}
-	result, err := service.CompareJiraDataWithExclusions(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	var result Result
+	if reporting {
+		result, err = service.CompareRowsWithLocalScope(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	} else {
+		result, err = service.CompareJiraDataWithExclusions(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	}
 	if err != nil {
 		item.Code = 1
 		item.Status = "unexpected_error"
@@ -240,7 +255,7 @@ func (t jiraDataTarget) label() string { return "jira-data-center/" + t.instance
 
 func (t jiraDataTarget) fetch(ctx context.Context, service *Service, cfg config.EffectiveConfig, windowFrom, windowTo time.Time, opts Options) CollectionItem {
 	item := CollectionItem{Adapter: "jira-data-center", Instance: t.instance}
-	resolvedInstance, localResult, rows, issuePrefixes, excludedSet, err := service.fetchJiraDataRows(ctx, cfg, t.instance, windowFrom, windowTo, opts)
+	resolvedInstance, localResult, rows, issuePrefixes, excludedSet, reporting, err := service.fetchJiraDataRows(ctx, cfg, t.instance, windowFrom, windowTo, opts)
 	if resolvedInstance != "" {
 		item.Instance = resolvedInstance
 	}
@@ -259,7 +274,12 @@ func (t jiraDataTarget) fetch(ctx context.Context, service *Service, cfg config.
 		item.Message = err.Error()
 		return item
 	}
-	result, err := service.CompareJiraDataWithExclusions(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	var result Result
+	if reporting {
+		result, err = service.CompareRowsWithLocalScope(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	} else {
+		result, err = service.CompareJiraDataWithExclusions(ctx, cfg, windowFrom, windowTo, rows, issuePrefixes, excludedSet)
+	}
 	if err != nil {
 		item.Code = 1
 		item.Status = "unexpected_error"
@@ -335,80 +355,178 @@ func (s *Service) fetchClockifyEntries(ctx context.Context, cfg config.Effective
 	return entries, nil
 }
 
-func (s *Service) fetchJiraDataRows(ctx context.Context, cfg config.EffectiveConfig, instanceName string, windowFrom, windowTo time.Time, opts Options) (string, *Result, []model.Row, []string, map[string]struct{}, error) {
+func (s *Service) fetchJiraDataRows(ctx context.Context, cfg config.EffectiveConfig, instanceName string, windowFrom, windowTo time.Time, opts Options) (string, *Result, []model.Row, []string, map[string]struct{}, bool, error) {
 	resolvedInstance, instance, err := config.ResolveJiraDataInstance(cfg, instanceName)
 	if err != nil {
-		return "", nil, nil, nil, nil, withValidation(err)
+		return "", nil, nil, nil, nil, false, withValidation(err)
 	}
-	issuePrefixes, err := config.JiraDataIssuePrefixesForTotals(cfg, resolvedInstance)
+	scope, err := config.JiraDataTotalsRouteScope(cfg, resolvedInstance, opts.RouteProfile)
 	if err != nil {
-		return "", nil, nil, nil, nil, withValidation(err)
+		return "", nil, nil, nil, nil, false, withValidation(err)
 	}
 	excludedIssues, err := config.JiraExcludedIssuesForInstance(cfg, "jira-data-center", resolvedInstance)
 	if err != nil {
-		return "", nil, nil, nil, nil, withValidation(err)
+		return "", nil, nil, nil, nil, false, withValidation(err)
 	}
 	excludedSet := toExactSet(excludedIssues)
-	localResult, err := s.SummarizeLocalFiltered(ctx, cfg, windowFrom, windowTo, issuePrefixes, excludedSet)
+	localResult, err := s.SummarizeLocalFiltered(ctx, cfg, windowFrom, windowTo, scope.IssuePrefixes, excludedSet)
 	if err != nil {
-		return resolvedInstance, nil, nil, nil, nil, err
+		return resolvedInstance, nil, nil, nil, nil, false, err
 	}
 
 	client := s.newJiraDataClient(instance)
 	user, err := client.CurrentUser(ctx)
 	if err != nil {
-		return resolvedInstance, &localResult, nil, issuePrefixes, excludedSet, err
+		return resolvedInstance, &localResult, nil, scope.IssuePrefixes, excludedSet, scope.Reporting, err
 	}
 
-	jql := totalsJQL(windowFrom, windowTo)
-	opts.Reporter.Event(progress.Event{Phase: "discovering", Message: "discovering jira-data-center issues"})
-	issues, err := client.SearchIssues(ctx, jql, nil)
-	if err != nil {
-		return resolvedInstance, &localResult, nil, issuePrefixes, excludedSet, err
+	var rows []model.Row
+	if scope.Reporting {
+		for _, targetIssue := range scope.ReportingTargetIssues {
+			if err := config.ValidateReportingTargetOwnership(cfg, "jira-data-center", opts.RouteProfile, targetIssue); err != nil {
+				return resolvedInstance, &localResult, nil, scope.IssuePrefixes, excludedSet, true, withValidation(err)
+			}
+		}
+		rows, err = fetchJiraDataTargetIssueRowsConcurrently(ctx, client, user, scope.ReportingTargetIssues, windowFrom, windowTo, opts)
+	} else {
+		jql := totalsJQL(windowFrom, windowTo)
+		opts.Reporter.Event(progress.Event{Phase: "discovering", Message: "discovering jira-data-center issues"})
+		issues, searchErr := client.SearchIssues(ctx, jql, nil)
+		if searchErr != nil {
+			return resolvedInstance, &localResult, nil, scope.IssuePrefixes, excludedSet, false, searchErr
+		}
+		rows, err = fetchJiraDataIssueRowsConcurrently(ctx, client, user, issues, windowFrom, windowTo, scope.IssuePrefixes, excludedSet, opts)
 	}
-	rows, err := fetchJiraDataIssueRowsConcurrently(ctx, client, user, issues, windowFrom, windowTo, issuePrefixes, excludedSet, opts)
 	if err != nil {
-		return resolvedInstance, &localResult, nil, issuePrefixes, excludedSet, err
+		return resolvedInstance, &localResult, nil, scope.IssuePrefixes, excludedSet, scope.Reporting, err
 	}
-	return resolvedInstance, &localResult, rows, issuePrefixes, excludedSet, nil
+	return resolvedInstance, &localResult, rows, scope.IssuePrefixes, excludedSet, scope.Reporting, nil
 }
 
-func (s *Service) fetchJiraCloudRows(ctx context.Context, cfg config.EffectiveConfig, instanceName string, windowFrom, windowTo time.Time, opts Options) (string, *Result, []model.Row, []string, map[string]struct{}, error) {
+func (s *Service) fetchJiraCloudRows(ctx context.Context, cfg config.EffectiveConfig, instanceName string, windowFrom, windowTo time.Time, opts Options) (string, *Result, []model.Row, []string, map[string]struct{}, bool, error) {
 	resolvedInstance, instance, err := config.ResolveJiraCloudInstance(cfg, instanceName)
 	if err != nil {
-		return "", nil, nil, nil, nil, withValidation(err)
+		return "", nil, nil, nil, nil, false, withValidation(err)
 	}
-	issuePrefixes, err := config.JiraCloudIssuePrefixesForTotals(cfg, resolvedInstance)
+	scope, err := config.JiraCloudTotalsRouteScope(cfg, resolvedInstance, opts.RouteProfile)
 	if err != nil {
-		return "", nil, nil, nil, nil, withValidation(err)
+		return "", nil, nil, nil, nil, false, withValidation(err)
 	}
 	excludedIssues, err := config.JiraExcludedIssuesForInstance(cfg, "jira-cloud", resolvedInstance)
 	if err != nil {
-		return "", nil, nil, nil, nil, withValidation(err)
+		return "", nil, nil, nil, nil, false, withValidation(err)
 	}
 	excludedSet := toExactSet(excludedIssues)
-	localResult, err := s.SummarizeLocalFiltered(ctx, cfg, windowFrom, windowTo, issuePrefixes, excludedSet)
+	localResult, err := s.SummarizeLocalFiltered(ctx, cfg, windowFrom, windowTo, scope.IssuePrefixes, excludedSet)
 	if err != nil {
-		return resolvedInstance, nil, nil, nil, nil, err
+		return resolvedInstance, nil, nil, nil, nil, false, err
 	}
 
 	client := s.newJiraCloudClient(instance)
 	user, err := client.CurrentUser(ctx)
 	if err != nil {
-		return resolvedInstance, &localResult, nil, issuePrefixes, excludedSet, err
+		return resolvedInstance, &localResult, nil, scope.IssuePrefixes, excludedSet, scope.Reporting, err
 	}
 
-	jql := totalsJQL(windowFrom, windowTo)
-	opts.Reporter.Event(progress.Event{Phase: "discovering", Message: "discovering jira-cloud issues"})
-	issues, err := client.SearchIssues(ctx, jql, nil)
-	if err != nil {
-		return resolvedInstance, &localResult, nil, issuePrefixes, excludedSet, err
+	var rows []model.Row
+	if scope.Reporting {
+		for _, targetIssue := range scope.ReportingTargetIssues {
+			if err := config.ValidateReportingTargetOwnership(cfg, "jira-cloud", opts.RouteProfile, targetIssue); err != nil {
+				return resolvedInstance, &localResult, nil, scope.IssuePrefixes, excludedSet, true, withValidation(err)
+			}
+		}
+		rows, err = fetchJiraCloudTargetIssueRowsConcurrently(ctx, client, user, scope.ReportingTargetIssues, windowFrom, windowTo, opts)
+	} else {
+		jql := totalsJQL(windowFrom, windowTo)
+		opts.Reporter.Event(progress.Event{Phase: "discovering", Message: "discovering jira-cloud issues"})
+		issues, searchErr := client.SearchIssues(ctx, jql, nil)
+		if searchErr != nil {
+			return resolvedInstance, &localResult, nil, scope.IssuePrefixes, excludedSet, false, searchErr
+		}
+		rows, err = fetchJiraCloudIssueRowsConcurrently(ctx, client, user, issues, windowFrom, windowTo, scope.IssuePrefixes, excludedSet, opts)
 	}
-	rows, err := fetchJiraCloudIssueRowsConcurrently(ctx, client, user, issues, windowFrom, windowTo, issuePrefixes, excludedSet, opts)
 	if err != nil {
-		return resolvedInstance, &localResult, nil, issuePrefixes, excludedSet, err
+		return resolvedInstance, &localResult, nil, scope.IssuePrefixes, excludedSet, scope.Reporting, err
 	}
-	return resolvedInstance, &localResult, rows, issuePrefixes, excludedSet, nil
+	return resolvedInstance, &localResult, rows, scope.IssuePrefixes, excludedSet, scope.Reporting, nil
+}
+
+func fetchJiraDataTargetIssueRowsConcurrently(ctx context.Context, client jiraDataClient, user jiradataadapter.User, targetIssues []string, windowFrom, windowTo time.Time, opts Options) ([]model.Row, error) {
+	type issueResult struct {
+		rows []model.Row
+		err  error
+	}
+	results := make(chan issueResult, len(targetIssues))
+	var wg sync.WaitGroup
+	for _, issueKey := range targetIssues {
+		issueKey := issueKey
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			worklogItems, err := client.ListIssueWorklogs(ctx, issueKey)
+			if err != nil {
+				results <- issueResult{err: err}
+				return
+			}
+			valid, _ := jiradataadapter.NormalizeIssueWorklogs(issueKey, worklogItems, user, windowFrom, windowTo)
+			results <- issueResult{rows: valid}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	rows := make([]model.Row, 0)
+	fetched := 0
+	for result := range results {
+		if result.err != nil {
+			return nil, result.err
+		}
+		fetched++
+		opts.Reporter.Event(progress.Event{Phase: "fetching", ScopeDone: fetched, ScopeTotal: len(targetIssues), Message: "fetched jira-data-center issue worklogs"})
+		rows = append(rows, result.rows...)
+	}
+	return rows, nil
+}
+
+func fetchJiraCloudTargetIssueRowsConcurrently(ctx context.Context, client jiraCloudClient, user jiracloudadapter.User, targetIssues []string, windowFrom, windowTo time.Time, opts Options) ([]model.Row, error) {
+	type issueResult struct {
+		rows []model.Row
+		err  error
+	}
+	results := make(chan issueResult, len(targetIssues))
+	var wg sync.WaitGroup
+	for _, issueKey := range targetIssues {
+		issueKey := issueKey
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			worklogItems, err := client.ListIssueWorklogs(ctx, issueKey)
+			if err != nil {
+				results <- issueResult{err: err}
+				return
+			}
+			valid, _ := jiracloudadapter.NormalizeIssueWorklogs(issueKey, worklogItems, user, windowFrom, windowTo)
+			results <- issueResult{rows: valid}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	rows := make([]model.Row, 0)
+	fetched := 0
+	for result := range results {
+		if result.err != nil {
+			return nil, result.err
+		}
+		fetched++
+		opts.Reporter.Event(progress.Event{Phase: "fetching", ScopeDone: fetched, ScopeTotal: len(targetIssues), Message: "fetched jira-cloud issue worklogs"})
+		rows = append(rows, result.rows...)
+	}
+	return rows, nil
 }
 
 func fetchJiraDataIssueRowsConcurrently(ctx context.Context, client jiraDataClient, user jiradataadapter.User, issues []jiradataadapter.IssueBrief, windowFrom, windowTo time.Time, issuePrefixes []string, excluded map[string]struct{}, opts Options) ([]model.Row, error) {

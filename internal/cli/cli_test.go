@@ -2832,6 +2832,266 @@ func TestTotalsJiraCloudExcludesReportingTargetsAndManualExcludedIssues(t *testi
 	}
 }
 
+func TestTotalsRouteProfileRequiresJiraAdapter(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTCAndClockify(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	bare := runCLI(t, "totals", "--route-profile", "reporting", "--today", "--output", "json")
+	if bare.code != 2 {
+		t.Fatalf("expected bare route-profile validation, got code=%d stdout=%s stderr=%s", bare.code, bare.stdout, bare.stderr)
+	}
+	barePayload := decodeJSONMap(t, []byte(bare.stdout))
+	bareError := barePayload["error"].(map[string]any)
+	if bareError["message"] != "--route-profile requires --adapter jira-cloud or jira-data-center, or --instance <name> for a configured Jira target" {
+		t.Fatalf("unexpected bare validation message stdout=%s stderr=%s", bare.stdout, bare.stderr)
+	}
+
+	clockify := runCLI(t, "totals", "--adapter", "clockify", "--route-profile", "reporting", "--today", "--output", "json")
+	if clockify.code != 2 {
+		t.Fatalf("expected clockify route-profile validation, got code=%d stdout=%s stderr=%s", clockify.code, clockify.stdout, clockify.stderr)
+	}
+	if !strings.Contains(clockify.stdout, "--route-profile is supported only for jira-cloud and jira-data-center totals") && !strings.Contains(clockify.stderr, "--route-profile is supported only for jira-cloud and jira-data-center totals") {
+		t.Fatalf("unexpected clockify validation message stdout=%s stderr=%s", clockify.stdout, clockify.stderr)
+	}
+}
+
+func TestTotalsJiraCloudRouteProfileResolvesFamilyFromInstance(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := newJiraCloudTestServer(t, map[string][]string{
+		"AAPP-123": {
+			`{"id":"wl-1","started":"2026-04-02T08:00:00.000+0000","timeSpentSeconds":3600,"comment":"Default route","author":{"accountId":"user-1"}}`,
+		},
+	})
+	defer server.Close()
+	writeConfigWithUTCAndJiraCloud(t, map[string]string{"product": server.URL}, map[string]string{
+		"product": "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Default route", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	totals := runCLI(t, "totals", "--instance", "product", "--route-profile", "default", "--from", "2026-04-02", "--to", "2026-04-02", "--output", "json")
+	if totals.code != 0 {
+		t.Fatalf("totals failed: code=%d stdout=%s stderr=%s", totals.code, totals.stdout, totals.stderr)
+	}
+
+	payload := decodeJSONMap(t, []byte(totals.stdout))
+	filters := payload["filters"].(map[string]any)
+	effective := filters["effective"].(map[string]any)
+	if effective["adapter"] != "jira-cloud" || effective["instance"] != "product" || effective["route_profile"] != "default" {
+		t.Fatalf("expected route_profile filter, got %s", totals.stdout)
+	}
+}
+
+func TestTotalsJiraDataRouteProfileResolvesFamilyFromInstance(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := newJiraDataTotalsTestServer(t, map[string][]string{
+		"AAPP-123": {
+			`{"id":"wl-1","started":"2026-04-02T08:00:00.000+0000","timeSpentSeconds":3600,"comment":"Default route","author":{"accountId":"user-1"}}`,
+		},
+	})
+	defer server.Close()
+	writeConfigWithUTCAndJiraData(t, map[string]string{"main": server.URL}, map[string]string{
+		"main": "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Default route", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	totals := runCLI(t, "totals", "--instance", "main", "--route-profile", "default", "--from", "2026-04-02", "--to", "2026-04-02", "--output", "json")
+	if totals.code != 0 {
+		t.Fatalf("totals failed: code=%d stdout=%s stderr=%s", totals.code, totals.stdout, totals.stderr)
+	}
+
+	payload := decodeJSONMap(t, []byte(totals.stdout))
+	filters := payload["filters"].(map[string]any)
+	effective := filters["effective"].(map[string]any)
+	if effective["adapter"] != "jira-data-center" || effective["instance"] != "main" || effective["route_profile"] != "default" {
+		t.Fatalf("expected route_profile filter, got %s", totals.stdout)
+	}
+}
+
+func TestTotalsRouteProfileRequiresExplicitAdapterForCrossFamilyInstanceNameCollision(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cloudServer := newJiraCloudTestServer(t, map[string][]string{})
+	defer cloudServer.Close()
+	dataServer := newJiraDataTotalsTestServer(t, map[string][]string{})
+	defer dataServer.Close()
+	writeConfigWithUTCAndJiraCloudAndJiraData(t, map[string]string{"shared": cloudServer.URL}, map[string]string{"shared": dataServer.URL}, map[string]string{
+		"shared": "      routing:\n        profiles:\n          reporting:\n            issue_prefixes:\n              - AAPP\n",
+	}, map[string]string{
+		"shared": "      routing:\n        profiles:\n          reporting:\n            issue_prefixes:\n              - AAPP\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	totals := runCLI(t, "totals", "--instance", "shared", "--route-profile", "reporting", "--today", "--output", "json")
+	if totals.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", totals.code, totals.stdout, totals.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(totals.stdout))
+	errPayload := payload["error"].(map[string]any)
+	if errPayload["message"] != `instance "shared" exists in both jira_cloud and jira_data_center; use --adapter jira-cloud or --adapter jira-data-center` {
+		t.Fatalf("unexpected collision message stdout=%s stderr=%s", totals.stdout, totals.stderr)
+	}
+}
+
+func TestTotalsJiraCloudRouteProfileDefaultRestrictsToSelectedProfile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := newJiraCloudTestServer(t, map[string][]string{
+		"AAPP-123": {
+			`{"id":"wl-1","started":"2026-04-02T08:00:00.000+0000","timeSpentSeconds":3600,"comment":"Default route","author":{"accountId":"user-1"}}`,
+		},
+		"BAPP-222": {
+			`{"id":"wl-2","started":"2026-04-02T10:00:00.000+0000","timeSpentSeconds":7200,"comment":"Secondary route","author":{"accountId":"user-1"}}`,
+		},
+	})
+	defer server.Close()
+	writeConfigWithUTCAndJiraCloud(t, map[string]string{"product": server.URL}, map[string]string{
+		"product": "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n          secondary:\n            issue_prefixes:\n              - BAPP\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Default route", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+	add = runCLI(t, "worklogs", "add", "--issue", "BAPP-222", "--started-utc", "2026-04-02T10:00:00Z", "--duration", "3h", "--description", "Secondary route local mismatch", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	totals := runCLI(t, "totals", "--adapter", "jira-cloud", "--instance", "product", "--route-profile", "default", "--from", "2026-04-02", "--to", "2026-04-02", "--output", "json")
+	if totals.code != 0 {
+		t.Fatalf("totals failed: code=%d stdout=%s stderr=%s", totals.code, totals.stdout, totals.stderr)
+	}
+
+	payload := decodeJSONMap(t, []byte(totals.stdout))
+	filters := payload["filters"].(map[string]any)
+	effective := filters["effective"].(map[string]any)
+	if effective["route_profile"] != "default" {
+		t.Fatalf("expected route_profile filter, got %s", totals.stdout)
+	}
+	summary := payload["summary"].(map[string]any)
+	if summary["state"] != "match" || summary["local_total_seconds"].(float64) != 3600 || summary["remote_total_seconds"].(float64) != 3600 {
+		t.Fatalf("unexpected summary %s", totals.stdout)
+	}
+}
+
+func TestTotalsJiraCloudRouteProfileReportingComparesReportingTargets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/rest/api/3/myself":
+			_, _ = w.Write([]byte(`{"accountId":"user-1","displayName":"User One"}`))
+		case r.URL.Path == "/rest/api/3/search/jql":
+			t.Fatalf("reporting totals should not search routed issues")
+		case r.URL.Path == "/rest/api/3/issue/REPORT-1/worklog":
+			_, _ = w.Write([]byte(`{"startAt":0,"maxResults":100,"total":1,"worklogs":[{"id":"wl-1","started":"2026-04-02T08:00:00.000+0000","timeSpentSeconds":3600,"comment":"Reporting total","author":{"accountId":"user-1"}}]}`))
+		default:
+			t.Fatalf("unexpected request path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	writeConfigWithUTCAndJiraCloud(t, map[string]string{"product": server.URL}, map[string]string{
+		"product": "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - BAPP\n          reporting:\n            reporting_targets:\n              AAPP: REPORT-1\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Reporting source", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+	add = runCLI(t, "worklogs", "add", "--issue", "BAPP-222", "--started-utc", "2026-04-02T10:00:00Z", "--duration", "2h", "--description", "Default route local noise", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	totals := runCLI(t, "totals", "--adapter", "jira-cloud", "--instance", "product", "--route-profile", "reporting", "--from", "2026-04-02", "--to", "2026-04-02")
+	if totals.code != 0 {
+		t.Fatalf("totals failed: code=%d stdout=%s stderr=%s", totals.code, totals.stdout, totals.stderr)
+	}
+	if !strings.Contains(totals.stdout, "route_profile=reporting") {
+		t.Fatalf("expected route profile footer, stdout=%q", totals.stdout)
+	}
+	if strings.Contains(totals.stdout, "-2h") {
+		t.Fatalf("unexpected default-route mismatch leaked into reporting totals, stdout=%q", totals.stdout)
+	}
+}
+
+func TestTotalsJiraDataRouteProfileReportingComparesReportingTargets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := newJiraDataTotalsTestServer(t, map[string][]string{
+		"REPORT-1": {
+			`{"id":"wl-1","started":"2026-04-02T08:00:00.000+0000","timeSpentSeconds":3600,"comment":"Reporting total","author":{"name":"user-1","key":"user-1"}}`,
+		},
+	})
+	defer server.Close()
+	writeConfigWithUTCAndJiraData(t, map[string]string{"main": server.URL}, map[string]string{
+		"main": "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - DAPP\n          reporting:\n            reporting_targets:\n              AAPP: REPORT-1\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Reporting source", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+	add = runCLI(t, "worklogs", "add", "--issue", "DAPP-222", "--started-utc", "2026-04-02T10:00:00Z", "--duration", "2h", "--description", "Default route local noise", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	totals := runCLI(t, "totals", "--adapter", "jira-data-center", "--instance", "main", "--route-profile", "reporting", "--from", "2026-04-02", "--to", "2026-04-02", "--output", "json")
+	if totals.code != 0 {
+		t.Fatalf("totals failed: code=%d stdout=%s stderr=%s", totals.code, totals.stdout, totals.stderr)
+	}
+
+	payload := decodeJSONMap(t, []byte(totals.stdout))
+	filters := payload["filters"].(map[string]any)
+	effective := filters["effective"].(map[string]any)
+	if effective["route_profile"] != "reporting" {
+		t.Fatalf("expected route_profile filter, got %s", totals.stdout)
+	}
+	summary := payload["summary"].(map[string]any)
+	if summary["state"] != "match" || summary["local_total_seconds"].(float64) != 3600 || summary["remote_total_seconds"].(float64) != 3600 {
+		t.Fatalf("unexpected summary %s", totals.stdout)
+	}
+}
+
 func TestTotalsJiraCloudCurrentMonthWorks(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -6585,6 +6845,48 @@ func writeConfigWithUTCAndJiraCloud(t *testing.T, instances map[string]string, r
 		b.WriteString(baseURL)
 		b.WriteString("\n      auth:\n        email: user@example.com\n        token_env: WORKLEDGER_TEST_JIRA_CLOUD_TOKEN\n")
 		if block, ok := routing[name]; ok {
+			b.WriteString(block)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(b.String()), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+}
+
+func writeConfigWithUTCAndJiraCloudAndJiraData(t *testing.T, jiraCloudInstances, jiraDataInstances map[string]string, jiraCloudRouting, jiraDataRouting map[string]string) {
+	t.Helper()
+	setJiraCloudTestEnv(t)
+	setJiraDataTestEnv(t)
+
+	home := os.Getenv("HOME")
+	configDir := filepath.Join(home, ".config", "workledger")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+
+	sqlitePath := filepath.Join(home, ".local", "share", "workledger", "worklogs.db")
+	var b strings.Builder
+	b.WriteString("default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: ")
+	b.WriteString(sqlitePath)
+	b.WriteString("\nworklogs:\n  minimum_duration_seconds: 900\njira_cloud:\n  instances:\n")
+	for name, baseURL := range jiraCloudInstances {
+		b.WriteString("    ")
+		b.WriteString(name)
+		b.WriteString(":\n      base_url: ")
+		b.WriteString(baseURL)
+		b.WriteString("\n      auth:\n        email: user@example.com\n        token_env: WORKLEDGER_TEST_JIRA_CLOUD_TOKEN\n")
+		if block, ok := jiraCloudRouting[name]; ok {
+			b.WriteString(block)
+		}
+	}
+	b.WriteString("jira_data_center:\n  instances:\n")
+	for name, baseURL := range jiraDataInstances {
+		b.WriteString("    ")
+		b.WriteString(name)
+		b.WriteString(":\n      base_url: ")
+		b.WriteString(baseURL)
+		b.WriteString("\n      auth:\n        bearer:\n          token_env: WORKLEDGER_TEST_JIRA_DATA_TOKEN\n")
+		if block, ok := jiraDataRouting[name]; ok {
 			b.WriteString(block)
 		}
 	}

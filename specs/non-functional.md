@@ -593,22 +593,28 @@ Placement rule:
 - [ ] NFR-511: Bare totals shall render every successful and failed target row before exiting.
 - [ ] NFR-512: Bare totals shall return an empty `items` array and exit code `0` when no adapters are configured.
 - [ ] NFR-513: Clockify totals shall read remote totals from entries visible to configured `clockify.workspace_id` and `clockify.user_id` only.
-- [ ] NFR-514: Jira Cloud totals shall derive managed scope from the union of all `issue_prefixes` across every routing profile configured on the selected instance.
-- [ ] NFR-515: Jira Cloud totals shall ignore `reporting_targets` when deriving totals scope.
+- [ ] NFR-514: Jira Cloud totals without `--route-profile` shall derive managed scope from the union of all `issue_prefixes` across every routing profile configured on the selected instance.
+- [ ] NFR-515: Jira Cloud totals without `--route-profile` shall ignore `reporting_targets` when deriving totals scope.
 - [ ] NFR-516: Jira Cloud totals shall exclude exact issue keys from local and remote totals when those keys appear in `pull.exclude_issues`.
-- [ ] NFR-517: Jira Cloud totals shall exclude exact issue keys from local and remote totals when those keys appear as configured `reporting_targets` target issues on the selected instance.
+- [ ] NFR-517: Jira Cloud totals without `--route-profile` shall exclude exact issue keys from local and remote totals when those keys appear as configured `reporting_targets` target issues on the selected instance.
 - [ ] NFR-518: Jira Cloud totals shall fail validation when the selected instance has no routing config.
 - [ ] NFR-519: Jira Cloud totals shall fail validation when the selected instance routing profiles contribute zero `issue_prefixes`.
 - [ ] NFR-520: Jira Cloud totals shall filter local totals to worklogs whose issue keys match the managed routed issue-prefix scope.
 - [ ] NFR-521: Jira Cloud totals shall read remote totals only from worklogs authored by the authenticated Jira Cloud user.
-- [ ] NFR-522: Jira Data Center totals shall derive managed scope from the union of all `issue_prefixes` across every routing profile configured on the selected instance.
-- [ ] NFR-523: Jira Data Center totals shall ignore `reporting_targets` when deriving totals scope.
+- [ ] NFR-521a: Jira Cloud totals with `--route-profile <issue-prefix-profile>` shall derive local and remote totals scope from that profile's configured `issue_prefixes` only.
+- [ ] NFR-521b: Jira Cloud totals with `--route-profile <reporting-profile>` shall derive local totals scope from that profile's configured source prefixes and remote totals scope from that profile's configured `reporting_targets` issue keys.
+- [ ] NFR-521c: Jira Cloud totals with `--route-profile <reporting-profile>` shall validate cross-family reporting-target ownership with the same configured-prefix ownership rules as reporting reconcile.
+- [ ] NFR-522: Jira Data Center totals without `--route-profile` shall derive managed scope from the union of all `issue_prefixes` across every routing profile configured on the selected instance.
+- [ ] NFR-523: Jira Data Center totals without `--route-profile` shall ignore `reporting_targets` when deriving totals scope.
 - [ ] NFR-524: Jira Data Center totals shall exclude exact issue keys from local and remote totals when those keys appear in `pull.exclude_issues`.
-- [ ] NFR-525: Jira Data Center totals shall exclude exact issue keys from local and remote totals when those keys appear as configured `reporting_targets` target issues on the selected instance.
+- [ ] NFR-525: Jira Data Center totals without `--route-profile` shall exclude exact issue keys from local and remote totals when those keys appear as configured `reporting_targets` target issues on the selected instance.
 - [ ] NFR-526: Jira Data Center totals shall fail validation when the selected instance has no routing config.
 - [ ] NFR-527: Jira Data Center totals shall fail validation when the selected instance routing profiles contribute zero `issue_prefixes`.
 - [ ] NFR-528: Jira Data Center totals shall filter local totals to worklogs whose issue keys match the managed routed issue-prefix scope.
 - [ ] NFR-529: Jira Data Center totals shall read remote totals only from worklogs authored by the authenticated Jira Data Center user.
+- [ ] NFR-529a: Jira Data Center totals with `--route-profile <issue-prefix-profile>` shall derive local and remote totals scope from that profile's configured `issue_prefixes` only.
+- [ ] NFR-529b: Jira Data Center totals with `--route-profile <reporting-profile>` shall derive local totals scope from that profile's configured source prefixes and remote totals scope from that profile's configured `reporting_targets` issue keys.
+- [ ] NFR-529c: Jira Data Center totals with `--route-profile <reporting-profile>` shall validate cross-family reporting-target ownership with the same configured-prefix ownership rules as reporting reconcile.
 - [ ] NFR-530: Totals shall compare by overlap with the effective selected window rather than by start timestamp alone.
 - [ ] NFR-531: Totals shall split local overlapping intervals at local day boundaries in the effective local timezone before per-day aggregation.
 - [ ] NFR-532: Totals shall split remote overlapping intervals at local day boundaries in the effective local timezone before per-day aggregation.

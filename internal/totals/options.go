@@ -3,8 +3,9 @@ package totals
 import "github.com/solitus0/workledger/internal/progress"
 
 type Options struct {
-	Reporter progress.Reporter
-	Instance string
+	Reporter     progress.Reporter
+	Instance     string
+	RouteProfile string
 }
 
 func resolveOptions(options []Options) Options {
