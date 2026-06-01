@@ -232,6 +232,13 @@ func (s *Service) performPushItem(ctx context.Context, cfg config.EffectiveConfi
 		outcome.applyMessage = err.Error()
 		return outcome
 	}
+	if err := s.clearDeleteTombstones(item); err != nil {
+		outcome.failed = true
+		outcome.finalState = "failed"
+		outcome.attemptMessage = err.Error()
+		outcome.applyMessage = err.Error()
+		return outcome
+	}
 	outcome.executed = true
 	return outcome
 }

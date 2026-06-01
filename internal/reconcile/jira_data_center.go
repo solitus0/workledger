@@ -463,6 +463,9 @@ func (s *Service) buildJiraDataReportingPushPlan(ctx context.Context, cfg config
 		isDeleteOnly := len(desiredRows) == 0 && group.HasTombstones
 
 		item := newPlanItem(plan, group.TargetIssue, desiredRows)
+		if isDeleteOnly {
+			item.Payload = sortRows(group.TombstoneRows)
+		}
 		item.RouteProfile = routeProfile
 		item.TargetAdapterFamily = group.TargetAdapterFamily
 		item.TargetAdapterInstance = group.TargetAdapterInstance

@@ -134,6 +134,7 @@ type reportingScopeGroup struct {
 	SourceIssueKeys       []string
 	PerSourceTotals       map[string]int
 	DesiredRows           []model.Row
+	TombstoneRows         []model.Row
 	HasTombstones         bool
 }
 
@@ -1252,6 +1253,9 @@ func (s *Service) executePushItem(ctx context.Context, cfg config.EffectiveConfi
 		}
 		return false, true, nil
 	}
+	if err := s.clearDeleteTombstones(item); err != nil {
+		return false, false, err
+	}
 
 	message := pushApplySuccessMessage(item.TargetAdapterFamily)
 	if err := s.recordDeliveryAttempt(item.PlanID, item.ID, "succeeded", "push delivery succeeded"); err != nil {
@@ -1919,9 +1923,47 @@ func tombstonesToRows(items []worklogs.Tombstone) map[string][]model.Row {
 			IssueKey:        item.IssueKey,
 			StartedAtUTC:    item.StartedAtUTC.UTC(),
 			DurationSeconds: item.DurationSeconds,
+			SourceRowID:     item.ID,
 		})
 	}
 	return grouped
+}
+
+func (s *Service) clearDeleteTombstones(item PlanItem) error {
+	if item.PlanDirection != "push" || item.PlannedAction != "delete" {
+		return nil
+	}
+
+	ids := make([]string, 0, len(item.Payload))
+	seen := make(map[string]struct{}, len(item.Payload))
+	for _, row := range item.Payload {
+		if row.SourceRowID == "" {
+			continue
+		}
+		if _, ok := seen[row.SourceRowID]; ok {
+			continue
+		}
+		seen[row.SourceRowID] = struct{}{}
+		ids = append(ids, row.SourceRowID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	tx, err := s.store.DB().BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := tx.Exec(`DELETE FROM worklog_tombstones WHERE worklog_id = ?`, id); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func sortRows(items []model.Row) []model.Row {
@@ -2127,6 +2169,7 @@ func (g *reportingScopeGroup) addSource(issueKey string, activeRows, tombstoneRo
 	g.PerSourceTotals[issueKey] = sumRows(activeRows)
 	if len(tombstoneRows) > 0 {
 		g.HasTombstones = true
+		g.TombstoneRows = append(g.TombstoneRows, tombstoneRows...)
 	}
 	for _, row := range activeRows {
 		row.IssueKey = g.TargetIssue

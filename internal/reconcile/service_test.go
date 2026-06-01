@@ -212,6 +212,81 @@ func TestCreateClockifyPushPlanDeleteOnlyFallsBackToTimeIntervalWhenTagDeleted(t
 	}
 }
 
+func TestApplyPlanClockifyDeleteClearsTombstone(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
+
+	client := &fakeClockifyClient{
+		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
+		tagsByID: map[string]clockify.Tag{
+			"tag-a": {ID: "tag-a", Name: "AAPP-1"},
+		},
+		entries: []clockify.TimeEntry{
+			{ID: "entry-a", ProjectID: "proj-app", Description: "Remote row", TagIDs: []string{"tag-a"}, TimeInterval: clockify.TimeInterval{Start: "2026-05-01T08:00:00Z", End: "2026-05-01T09:00:00Z"}},
+		},
+	}
+	service := NewService(store)
+	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient { return client }
+
+	plan, err := service.CreateClockifyPushPlan(context.Background(), testClockifyConfig(true), mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("expected one delete item, got %d", len(plan.Items))
+	}
+	if plan.Items[0].Payload[0].SourceRowID != "row-1" {
+		t.Fatalf("expected tombstone source row id, got %#v", plan.Items[0].Payload)
+	}
+
+	result, err := service.ApplyPlan(testClockifyConfig(true), plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if result.AppliedCount != 1 || result.FailedCount != 0 {
+		t.Fatalf("unexpected apply result %#v", result)
+	}
+	if got := countTombstones(t, store); got != 0 {
+		t.Fatalf("expected tombstone cleanup after successful delete, got %d", got)
+	}
+}
+
+func TestApplyPlanClockifyFailedDeleteKeepsTombstone(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
+
+	client := &fakeClockifyClient{
+		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
+		tagsByID: map[string]clockify.Tag{
+			"tag-a": {ID: "tag-a", Name: "AAPP-1"},
+		},
+		entries: []clockify.TimeEntry{
+			{ID: "entry-a", ProjectID: "proj-app", Description: "Remote row", TagIDs: []string{"tag-a"}, TimeInterval: clockify.TimeInterval{Start: "2026-05-01T08:00:00Z", End: "2026-05-01T09:00:00Z"}},
+		},
+		deleteTimeEntryErr: errors.New("delete failed"),
+	}
+	service := NewService(store)
+	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient { return client }
+
+	plan, err := service.CreateClockifyPushPlan(context.Background(), testClockifyConfig(true), mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
+	}
+
+	result, err := service.ApplyPlan(testClockifyConfig(true), plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if result.AppliedCount != 0 || result.FailedCount != 1 {
+		t.Fatalf("unexpected apply result %#v", result)
+	}
+	if got := countTombstones(t, store); got != 1 {
+		t.Fatalf("expected tombstone to remain after failed delete, got %d", got)
+	}
+}
+
 func TestApplyPlanPushMixedResult(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
@@ -635,6 +710,41 @@ func TestCreateJiraDataPushPlanDeleteOnlyRemotePresentStaysDelete(t *testing.T) 
 	}
 }
 
+func TestApplyPlanJiraDataDeleteClearsTombstone(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
+
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
+		return &fakeJiraDataClient{
+			user:         jiradatacenter.User{AccountID: "u1"},
+			searchIssues: []jiradatacenter.IssueBrief{{Key: "AAPP-1"}},
+			worklogsByIssue: map[string][]jiradatacenter.Worklog{
+				"REPORT-1": {
+					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "remote", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
+				},
+			},
+		}
+	}
+
+	plan, err := service.CreateJiraDataPushPlan(context.Background(), testJiraDataConfig(), "reporting", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraDataPushPlan failed: %v", err)
+	}
+
+	result, err := service.ApplyPlan(testJiraDataConfig(), plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if result.AppliedCount != 1 || result.FailedCount != 0 {
+		t.Fatalf("unexpected apply result %#v", result)
+	}
+	if got := countTombstones(t, store); got != 0 {
+		t.Fatalf("expected tombstone cleanup after Jira Data delete, got %d", got)
+	}
+}
+
 func TestCreateJiraDataPushPlanRequiresRouting(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
@@ -807,6 +917,40 @@ func TestCreateJiraCloudPushPlanDeleteOnlyMetricsAndValidation(t *testing.T) {
 	}, "", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
 	if err == nil || err.Error() != "jira_cloud routing is required for push" {
 		t.Fatalf("expected routing validation error, got %v", err)
+	}
+}
+
+func TestApplyPlanJiraCloudDeleteClearsTombstone(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			user: jiracloud.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiracloud.Worklog{
+				"REPORT-1": {
+					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "remote", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+				},
+			},
+		}
+	}
+
+	plan, err := service.CreateJiraCloudPushPlan(context.Background(), testJiraCloudConfig(), "reporting", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraCloudPushPlan failed: %v", err)
+	}
+
+	result, err := service.ApplyPlan(testJiraCloudConfig(), plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if result.AppliedCount != 1 || result.FailedCount != 0 {
+		t.Fatalf("unexpected apply result %#v", result)
+	}
+	if got := countTombstones(t, store); got != 0 {
+		t.Fatalf("expected tombstone cleanup after Jira Cloud delete, got %d", got)
 	}
 }
 
@@ -1702,6 +1846,7 @@ type fakeClockifyClient struct {
 	tagsByID                  map[string]clockify.Tag
 	projects                  []clockify.Project
 	createTimeEntryErrByIssue map[string]error
+	deleteTimeEntryErr        error
 }
 
 type blockingClockifyClient struct {
@@ -1864,6 +2009,9 @@ func (f *blockingClockifyClient) CreateTimeEntry(ctx context.Context, workspaceI
 }
 
 func (f *fakeClockifyClient) DeleteTimeEntry(ctx context.Context, workspaceID, entryID string) error {
+	if f.deleteTimeEntryErr != nil {
+		return f.deleteTimeEntryErr
+	}
 	filtered := make([]clockify.TimeEntry, 0, len(f.entries))
 	for _, entry := range f.entries {
 		if entry.ID != entryID {
@@ -1911,6 +2059,15 @@ func seedDeliveryAttempt(t *testing.T, store *sqlitestore.Store, planID, planIte
 	); err != nil {
 		t.Fatalf("seed delivery attempt: %v", err)
 	}
+}
+
+func countTombstones(t *testing.T, store *sqlitestore.Store) int {
+	t.Helper()
+	var count int
+	if err := store.DB().QueryRow(`SELECT COUNT(1) FROM worklog_tombstones`).Scan(&count); err != nil {
+		t.Fatalf("count tombstones: %v", err)
+	}
+	return count
 }
 
 func countClockifyEntriesByTag(entries []clockify.TimeEntry, tagID string) int {
