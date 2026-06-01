@@ -1332,7 +1332,11 @@ func TestWorklogsAddSnapSupportsWeekOffset(t *testing.T) {
 	payload := decodeJSONMap(t, []byte(result.stdout))
 	records := payload["records"].([]any)
 	first := records[0].(map[string]any)
-	if !strings.HasPrefix(first["started_at_utc"].(string), "2026-05-18T") {
+	now := time.Now().UTC()
+	daysSinceMonday := (int(now.Weekday()) + 6) % 7
+	mondayThisWeek := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -daysSinceMonday)
+	expectedPrefix := mondayThisWeek.AddDate(0, 0, -7).Format("2006-01-02T")
+	if !strings.HasPrefix(first["started_at_utc"].(string), expectedPrefix) {
 		t.Fatalf("expected previous-week monday placement, got %s", result.stdout)
 	}
 }

@@ -252,7 +252,7 @@ func (s *Service) List(cfg config.EffectiveConfig, filters ListFilters) ([]Local
 		return nil, nil, EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: "worklogs list requires at least one time selector"}}}
 	}
 
-	effective, err := normalizeListFilters(cfg, filters, filters.OnlyDeleted)
+	effective, err := normalizeListFiltersAt(cfg, filters, filters.OnlyDeleted, s.now)
 	if err != nil {
 		return nil, nil, EffectiveFilters{}, err
 	}
@@ -267,7 +267,7 @@ func (s *Service) List(cfg config.EffectiveConfig, filters ListFilters) ([]Local
 }
 
 func (s *Service) Search(cfg config.EffectiveConfig, input SearchInput) ([]LocalWorklog, []Tombstone, EffectiveFilters, string, error) {
-	effective, err := normalizeListFilters(cfg, input.ListFilters, input.OnlyDeleted)
+	effective, err := normalizeListFiltersAt(cfg, input.ListFilters, input.OnlyDeleted, s.now)
 	if err != nil {
 		return nil, nil, EffectiveFilters{}, "", err
 	}
@@ -593,7 +593,7 @@ func (s *Service) DeleteBatch(cfg config.EffectiveConfig, filters ListFilters, d
 		return DeleteBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "only_deleted", Message: "is not valid for batch delete"}}}
 	}
 
-	effective, err := normalizeListFilters(cfg, filters, false)
+	effective, err := normalizeListFiltersAt(cfg, filters, false, s.now)
 	if err != nil {
 		return DeleteBatchResult{}, err
 	}
@@ -660,7 +660,7 @@ func (s *Service) RestoreBatch(cfg config.EffectiveConfig, filters ListFilters, 
 		return RestoreBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: "worklogs restore requires at least one time selector"}}}
 	}
 
-	effective, err := normalizeListFilters(cfg, filters, false)
+	effective, err := normalizeListFiltersAt(cfg, filters, false, s.now)
 	if err != nil {
 		return RestoreBatchResult{}, err
 	}
@@ -1050,7 +1050,7 @@ func (s *Service) DeleteTombstone(id string) (DeleteTombstoneResult, error) {
 }
 
 func (s *Service) DeleteTombstoneBatch(cfg config.EffectiveConfig, filters ListFilters, dryRun bool) (DeleteTombstoneBatchResult, error) {
-	effective, err := normalizeListFilters(cfg, filters, true)
+	effective, err := normalizeListFiltersAt(cfg, filters, true, s.now)
 	if err != nil {
 		return DeleteTombstoneBatchResult{}, err
 	}
