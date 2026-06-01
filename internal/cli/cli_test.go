@@ -3773,6 +3773,9 @@ func TestJiraCloudReportingReconcileNoMatchingRoutesReturnsNoPlanTable(t *testin
 	if !strings.Contains(reconcileResult.stdout, "PLAN_CREATED") || !strings.Contains(reconcileResult.stdout, "no_matching_routes") || !strings.Contains(reconcileResult.stdout, "false") {
 		t.Fatalf("unexpected no-plan table %q", reconcileResult.stdout)
 	}
+	if !strings.Contains(reconcileResult.stdout, "2026-04-02 - 2026-04-02") {
+		t.Fatalf("expected localized no-plan window, got %q", reconcileResult.stdout)
+	}
 	if count := countSavedPlans(t); count != 0 {
 		t.Fatalf("expected no saved plans, got %d", count)
 	}
@@ -3880,7 +3883,7 @@ func TestPlanTableOutputIsAligned(t *testing.T) {
 	if !strings.Contains(show.stdout, "  -  ") && !strings.Contains(show.stdout, "\nclockify") {
 		t.Fatalf("expected plan show target instance placeholder, got %q", show.stdout)
 	}
-	if !strings.Contains(show.stdout, "2026-04-01T00:00:00Z...2026-04-30T23:59:59Z") {
+	if !strings.Contains(show.stdout, "2026-04-01 - 2026-04-30") {
 		t.Fatalf("expected plan show window value, got %q", show.stdout)
 	}
 }
@@ -3971,8 +3974,68 @@ func TestPlanListTableIncludesWindow(t *testing.T) {
 	if strings.Contains(result.stdout, "\t") {
 		t.Fatalf("expected aligned plan list output without raw tabs, got %q", result.stdout)
 	}
-	if !strings.Contains(result.stdout, "WINDOW") || !strings.Contains(result.stdout, "2026-05-01T00:00:00Z...2026-05-01T23:59:59Z") {
+	if !strings.Contains(result.stdout, "WINDOW") || !strings.Contains(result.stdout, "2026-05-01 - 2026-05-01") {
 		t.Fatalf("expected plan list window column, got %q", result.stdout)
+	}
+}
+
+func TestSavedPlanTableWindowsUseEffectiveLocalTimezone(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	sqlitePath := filepath.Join(os.Getenv("HOME"), ".local", "share", "workledger", "worklogs.db")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: Europe/Vilnius\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\n")
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	seedSavedPlan(t, savedPlanSeed{
+		planID:      "plan-vilnius-window",
+		fingerprint: "fp",
+		itemID:      "item-vilnius-window",
+		direction:   "push",
+		adapter:     "jira-data-center",
+		target:      "ACIU-4393",
+		action:      "replace",
+		payloadJSON: "[]",
+	})
+
+	db := openTestDB(t)
+	defer db.Close()
+
+	if _, err := db.Exec(`UPDATE saved_plans SET window_from_utc = ?, window_to_utc = ? WHERE id = ?`, "2026-04-30T21:00:00Z", "2026-05-31T20:59:59Z", "plan-vilnius-window"); err != nil {
+		t.Fatalf("update saved plan window: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE saved_plan_items SET window_from_utc = ?, window_to_utc = ? WHERE plan_id = ?`, "2026-04-30T21:00:00Z", "2026-05-31T20:59:59Z", "plan-vilnius-window"); err != nil {
+		t.Fatalf("update saved plan item window: %v", err)
+	}
+
+	show := runCLI(t, "plan", "show", "plan-vilnius-window")
+	if show.code != 0 {
+		t.Fatalf("plan show failed: code=%d stdout=%s stderr=%s", show.code, show.stdout, show.stderr)
+	}
+	if !strings.Contains(show.stdout, "2026-05-01 - 2026-05-31") {
+		t.Fatalf("expected localized plan show window, got %q", show.stdout)
+	}
+	if strings.Contains(show.stdout, "2026-04-30T21:00:00Z") {
+		t.Fatalf("expected no raw UTC window in plan show table, got %q", show.stdout)
+	}
+
+	list := runCLI(t, "plan", "list")
+	if list.code != 0 {
+		t.Fatalf("plan list failed: code=%d stdout=%s stderr=%s", list.code, list.stdout, list.stderr)
+	}
+	if !strings.Contains(list.stdout, "2026-05-01 - 2026-05-31") {
+		t.Fatalf("expected localized plan list window, got %q", list.stdout)
+	}
+
+	showJSON := runCLI(t, "plan", "show", "plan-vilnius-window", "--output", "json")
+	if showJSON.code != 0 {
+		t.Fatalf("plan show json failed: code=%d stdout=%s stderr=%s", showJSON.code, showJSON.stdout, showJSON.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(showJSON.stdout))
+	if payload["window_from_utc"] != "2026-04-30T21:00:00Z" || payload["window_to_utc"] != "2026-05-31T20:59:59Z" {
+		t.Fatalf("expected canonical UTC plan window in json, got %#v", payload)
 	}
 }
 

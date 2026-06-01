@@ -3158,7 +3158,7 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 				if mode == "json" {
 					return a.writeJSON(reconcileNoPlanJSON(*result.NoPlan))
 				}
-				return renderReconcileNoPlanTable(a.stdout, *result.NoPlan)
+				return renderReconcileNoPlanTable(a.stdout, *result.NoPlan, effective.Location)
 			}
 
 			if mode == "json" {
@@ -3217,7 +3217,7 @@ func (a *app) newPlanShowCommand() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := outputMode(cmd)
-			_, store, cleanup, err := a.loadStore(mode, false, "")
+			effective, store, cleanup, err := a.loadStore(mode, false, "")
 			if err != nil {
 				return err
 			}
@@ -3248,7 +3248,7 @@ func (a *app) newPlanShowCommand() *cobra.Command {
 					item.TargetAdapterFamily,
 					displayOrDash(item.TargetAdapterInstance),
 					item.TargetIssue,
-					formatSavedPlanWindow(item.WindowFromUTC, item.WindowToUTC),
+					formatSavedPlanWindow(item.WindowFromUTC, item.WindowToUTC, effective.Location),
 					item.PlanStatus,
 					item.PlannedAction,
 					item.ComparisonStatus,
@@ -3318,7 +3318,7 @@ func (a *app) newPlanListCommand() *cobra.Command {
 					item.Direction,
 					joinOrDash(item.AdapterFamilies),
 					joinOrDash(item.TargetInstances),
-					formatSavedPlanWindow(item.WindowFromUTC, item.WindowToUTC),
+					formatSavedPlanWindow(item.WindowFromUTC, item.WindowToUTC, effective.Location),
 					item.CreatedAt.Format(time.RFC3339),
 					fmt.Sprint(item.TotalItems),
 					fmt.Sprint(item.ReadyItems),
@@ -3823,7 +3823,7 @@ func reconcileNoPlanJSON(result reconcile.ReconcileNoPlanResult) map[string]any 
 	}
 }
 
-func renderReconcileNoPlanTable(w io.Writer, result reconcile.ReconcileNoPlanResult) error {
+func renderReconcileNoPlanTable(w io.Writer, result reconcile.ReconcileNoPlanResult, location *time.Location) error {
 	return renderTable(w,
 		[]string{"PLAN_CREATED", "REASON", "ADAPTERS", "ROUTE_PROFILE", "WINDOW", "RESOLVED_TARGET_INSTANCES", "MATCHED_SCOPES", "ACTIONABLE_SCOPES"},
 		[][]string{{
@@ -3831,7 +3831,7 @@ func renderReconcileNoPlanTable(w io.Writer, result reconcile.ReconcileNoPlanRes
 			result.Reason,
 			joinOrDash(result.AdapterFamilies),
 			displayOrDash(result.RouteProfile),
-			formatSavedPlanWindow(result.WindowFromUTC, result.WindowToUTC),
+			formatSavedPlanWindow(result.WindowFromUTC, result.WindowToUTC, location),
 			joinOrDash(result.ResolvedTargetInstances),
 			fmt.Sprint(result.MatchedScopeCount),
 			fmt.Sprint(result.ActionableScopeCount),
@@ -3852,8 +3852,8 @@ func renderReconcilePlanNextSteps(w io.Writer, plan reconcile.Plan) error {
 	return err
 }
 
-func formatSavedPlanWindow(fromUTC, toUTC time.Time) string {
-	return fromUTC.Format(time.RFC3339) + "..." + toUTC.Format(time.RFC3339)
+func formatSavedPlanWindow(fromUTC, toUTC time.Time, location *time.Location) string {
+	return fmt.Sprintf("%s - %s", fromUTC.In(location).Format("2006-01-02"), toUTC.In(location).Format("2006-01-02"))
 }
 
 func countPlanItemsByStatus(items []reconcile.PlanItem, status string) int {
