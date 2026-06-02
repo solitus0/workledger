@@ -7,6 +7,17 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-06-02
+
+### Added
+- `workledger totals` now supports `--route-profile` for Jira Cloud and Jira Data Center totals, including reporting-profile totals scoped to configured reporting target issues.
+
+### Fixed
+- Plan windows in `workledger plan` output now render in the effective local timezone instead of UTC timestamps.
+- Jira push-plan `remote_missing` reason detail is now clearer for remote-missing classifications.
+- Date normalization for worklog filter functions now uses the current time consistently.
+- Applied remote deletes now clear matching local tombstones so they are not retried on the next sync.
+
 ## [0.1.5] - 2026-05-29
 
 ### Added
