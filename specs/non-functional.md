@@ -25,6 +25,10 @@ Placement rule:
 - [ ] NFR-012: The SQLite schema shall define a unique index on `worklog_tombstones(worklog_id)`.
 - [ ] NFR-013: The SQLite schema shall define an index on `worklog_tombstones(issue_key, started_at_utc)`.
 - [ ] NFR-014: The SQLite schema shall define an index on `worklog_tombstones(deleted_at)`.
+- [ ] NFR-014a: SQLite shall persist trashed worklogs in a `trashed_worklogs` table.
+- [ ] NFR-014b: The `trashed_worklogs` table shall use a dedicated archive `id` as its CLI identity.
+- [ ] NFR-014c: The `trashed_worklogs` table shall retain `storage_scope`, nullable `source_worklog_id`, canonical worklog fields, `trashed_at`, reason fields, `plan_direction`, nullable plan lineage, and nullable adapter lineage.
+- [ ] NFR-014d: The SQLite schema shall define indexes on `trashed_worklogs(issue_key, started_at_utc)`, `trashed_worklogs(trashed_at)`, `trashed_worklogs(reason_code)`, and `trashed_worklogs(storage_scope, trashed_at)`.
 - [ ] NFR-015: Additive storage shall use `issue_metadata`, `saved_plans`, `saved_plan_items`, `delivery_attempts`, and `audit_events` tables.
 - [ ] NFR-016: The `issue_metadata` table shall include `issue_key`, `max_estimate_seconds`, `source_adapter_family`, `source_adapter_instance`, and `refreshed_at`.
 - [ ] NFR-017: The `saved_plans` table shall include `id`, `created_at`, `plan_direction`, `adapter_family`, `config_fingerprint`, `window_from_utc`, `window_to_utc`, `aggregate_status`, and `applied_at`.
@@ -276,6 +280,8 @@ Placement rule:
 - [ ] NFR-233: All timestamps in JSON shall use RFC3339.
 - [ ] NFR-234: The default active-worklog JSON record shape shall include `id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description`.
 - [ ] NFR-235: The tombstone JSON record shape (used by `tombstones list`, `tombstones search`, and `tombstones delete`) shall include `id`, `issue_key`, and `deleted_at`.
+- [ ] NFR-235a: The trash JSON record shape shall include `id`, `storage_scope`, `source_worklog_id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, `description`, `trashed_at`, `reason_code`, `reason_detail`, and `origin`.
+- [ ] NFR-235b: Trash JSON `origin` shall include `plan_direction`, `plan_id`, `plan_item_id`, `adapter_family`, and `adapter_instance`.
 - [ ] NFR-236: `workledger version --output json` shall return an object with `version`.
 - [ ] NFR-237: `workledger init --output json` shall return either success output with `config`, `sqlite`, `config_path`, and `sqlite_path`, or unrecoverable SQLite failure output with exactly `reason`, `message`, and `sqlite_path`.
 - [ ] NFR-238: `workledger init --output json` `config` shall be `created` or `reused`.
@@ -299,11 +305,13 @@ Placement rule:
 - [ ] NFR-250d: `worklogs add --snap --output json` executed success shall return `records` and optional `warnings`.
 - [ ] NFR-251: `worklogs list` active table columns shall be `ID`, `ISSUE`, `WINDOW`, `DURATION`, and `DESCRIPTION`.
 - [ ] NFR-252: `tombstones list` table columns shall be `ID`, `ISSUE`, and `DELETED`.
+- [ ] NFR-252a: `trash list` and `trash search` table columns shall be `ID`, `SCOPE`, `ISSUE`, `WINDOW`, `DURATION`, `DESCRIPTION`, `REASON`, and `TRASHED`.
 - [ ] NFR-253: Empty table results shall render selected table headers with zero data rows.
 - [ ] NFR-254: Human-facing table output shall render aligned columns rather than raw tab-delimited cells.
 - [ ] NFR-255: Human-facing list and search output shall append a blank line and a totals footer.
 - [ ] NFR-256: Active list and search footers shall use `Totals: <N> worklogs, <duration>`.
 - [ ] NFR-257: `tombstones list` and `tombstones search` footers shall use `Totals: <N> tombstones, <duration>`.
+- [ ] NFR-257a: `trash list` and `trash search` footers shall use `Totals: <N> trashed worklogs, <duration>`.
 - [ ] NFR-258: The totals footer shall be derived from the full matched result set.
 - [ ] NFR-259: The totals footer shall be unaffected by `--fields`.
 - [ ] NFR-260: `DESCRIPTION` in `worklogs list` shall truncate to 80 characters with `...` when longer.
@@ -375,6 +383,7 @@ Placement rule:
 - [ ] NFR-318: `worklogs restore` shall delete matching tombstones in the same transaction as active-row insertion.
 - [ ] NFR-319: Validation failures shall not produce partial writes.
 - [ ] NFR-320: Per-item plan apply or retry execution shall use explicit transaction boundaries for SQLite writes.
+- [ ] NFR-320a: Pull-apply trash inserts, removed active-row deletes, and new active-row inserts shall commit in one SQLite transaction per saved pull scope.
 - [ ] NFR-321: SQLite writes shall be serialized through one writer path.
 - [ ] NFR-321a: Commands that persist local SQLite state shall run one shared storage-writability preflight after config resolution and before opening a write transaction.
 - [ ] NFR-321b: `worklogs apply --dry` shall remain read-only and shall not require local storage writability.
@@ -508,7 +517,7 @@ Placement rule:
 - [ ] NFR-436: Final reconcile correctness shall be exact local-versus-remote row-set equality within the saved scope.
 - [ ] NFR-436a: For push plans, `comparison_status=remote_missing` shall be used when the normalized remote row count for the saved scope is zero, matching displayed `remote_row_count=0`.
 - [ ] NFR-437: Per-entry remote worklog identity shall not be part of reconcile identity.
-- [ ] NFR-438: Remote cleanup and replacement shall be scoped only by target adapter instance, target issue, and saved reconcile time window.
+- [ ] NFR-438: Remote cleanup and replacement shall consider only remote rows inside the saved target adapter instance, target issue, and saved reconcile time window, deleting unmatched rows and creating only missing saved rows.
 - [ ] NFR-439: No local rows and no tombstone-backed delete intent shall not trigger cleanup.
 - [ ] NFR-440: Reporting window membership shall be determined by worklog `started_at` only.
 - [ ] NFR-441: Reporting window membership shall not use interval overlap.
@@ -525,6 +534,8 @@ Placement rule:
 - [ ] NFR-450: `plan apply` shall consume the saved scope definition.
 - [ ] NFR-451: `plan apply` shall consume the saved plan payload snapshot.
 - [ ] NFR-452: `plan apply` shall consume the saved inspection snapshot.
+- [ ] NFR-452a: Push apply trash archival shall record apply-time remote rows actually deleted during cleanup, not reconcile-time remote snapshots.
+- [ ] NFR-452b: Trash rows shall be read-only audit history and shall not participate in totals, duplicate checks, overlap checks, restore, pull protection, or push planning.
 - [ ] NFR-453: Local SQL changes after planning shall not alter an existing saved plan.
 - [ ] NFR-454: Remote adapter state changes after planning shall not alter an existing saved plan scope or payload.
 - [ ] NFR-455: A saved plan shall not freeze exact remote row identities.

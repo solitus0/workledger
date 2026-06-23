@@ -9,7 +9,7 @@ It is built for operators and coding agents that need a reliable workflow for re
 Worklogs are easy to scatter across chats, commits, tickets, spreadsheets, and remote trackers. `workledger` keeps the authoritative ledger local, deterministic, and inspectable:
 
 - YAML owns operator-managed configuration.
-- SQLite owns canonical local worklogs, tombstones, saved plans, issue metadata, and audit state.
+- SQLite owns canonical local worklogs, tombstones, trashed worklog archives, saved plans, issue metadata, and audit state.
 - Remote adapters provide evidence, comparison data, and sync targets, but they do not replace the local ledger.
 - Reconcile operations are planned, saved, reviewed, and then applied.
 - `table` output is human-friendly; `json` output is stable enough for automation and coding agents.
@@ -26,7 +26,7 @@ The README is an operator guide, not the authority. When behavior differs, the s
 Deferred or out of scope in the current spec:
 
 - `workledger tui`
-- tombstone-specific top-level commands
+- trash restore and trash delete commands
 
 ## Install
 
@@ -151,6 +151,7 @@ workledger plan apply
 | SQLite ledger | Canonical local store for active worklogs and deleted-worklog tombstones. |
 | Local worklog | One canonical row with issue key, UTC start, duration, description, and generated local ID. |
 | Tombstone | Deleted local worklog record retained for restore, pull protection, and delete-only reconciliation. |
+| Trash row | Read-only archive row for worklogs removed during pull merge or remote cleanup execution. |
 | Issue metadata | Locally cached issue context, such as Jira estimate metadata, used for planning and inspection. |
 | Saved plan | Durable remote sync contract produced by `plan reconcile` and executed by `plan apply` or `plan retry`. |
 | Adapter | A remote integration family such as `clockify`, `jira-cloud`, or `jira-data-center`. |
@@ -357,6 +358,9 @@ workledger tombstones list
 workledger tombstones search <query>
 workledger tombstones delete [<id>]
 workledger tombstones restore
+workledger trash list
+workledger trash search <query>
+workledger trash show <id>
 
 workledger issue-metadata list
 workledger issue-metadata refresh

@@ -171,3 +171,38 @@ func TestBootstrapRejectsIncompatibleExistingSQLiteSchema(t *testing.T) {
 		t.Fatalf("expected incompatible error kind, got %s", bootstrapErr.Kind)
 	}
 }
+
+func TestBootstrapCreatesTrashTableAndIndexes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+
+	store, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	defer store.Close()
+
+	for _, table := range []string{"trashed_worklogs"} {
+		var count int
+		if err := store.DB().QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
+			t.Fatalf("check table %s: %v", table, err)
+		}
+		if count != 1 {
+			t.Fatalf("expected table %s to exist", table)
+		}
+	}
+
+	for _, index := range []string{
+		"idx_trashed_worklogs_issue_started",
+		"idx_trashed_worklogs_trashed_at",
+		"idx_trashed_worklogs_reason_code",
+		"idx_trashed_worklogs_scope_trashed_at",
+	} {
+		var count int
+		if err := store.DB().QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE type = 'index' AND name = ?`, index).Scan(&count); err != nil {
+			t.Fatalf("check index %s: %v", index, err)
+		}
+		if count != 1 {
+			t.Fatalf("expected index %s to exist", index)
+		}
+	}
+}

@@ -345,7 +345,10 @@ Placement rule:
 - [ ] FUNC-268: `workledger plan apply` shall persist per-scope results independently.
 - [ ] FUNC-269: `workledger plan apply` for `plan_direction=pull` shall merge the saved normalized remote payload into canonical local SQLite state.
 - [ ] FUNC-270: `workledger plan apply` for `plan_direction=push` shall re-discover current remote worklogs inside the saved issue/window scope at execution time when cleanup is required.
-- [ ] FUNC-271: `workledger plan apply` for `plan_direction=push` shall apply saved remote cleanup on the target adapter instance saved on that plan item before creating replacement worklogs.
+- [ ] FUNC-271: `workledger plan apply` for `plan_direction=push` shall apply apply-time remote cleanup only for remote rows inside the saved target scope that are unmatched by the saved payload before creating missing replacement worklogs.
+- [ ] FUNC-271a: `workledger plan apply` for `plan_direction=pull` shall archive local active rows removed by the saved merge into `workledger trash`.
+- [ ] FUNC-271b: `workledger plan apply` for `plan_direction=push` shall archive successfully deleted remote cleanup rows into `workledger trash`.
+- [ ] FUNC-271c: `workledger plan apply` success output shall include trash archive counts for scopes that archived rows.
 
 ## Plan Retry
 - [ ] FUNC-272: `workledger plan retry` shall load the requested saved plan by ID.
@@ -400,6 +403,14 @@ Placement rule:
 - [ ] FUNC-316: Filtered batch tombstone delete shall support `--dry` to preview matched tombstones without deleting them.
 - [ ] FUNC-317: Filtered batch tombstone delete shall be a valid no-op when zero tombstones match.
 - [ ] FUNC-318: `workledger worklogs update <id> --issue <new-key>` shall write a tombstone for the old issue allocation, using a new ID, when the resolved issue key changes to a different value.
+
+## Trash Commands
+- [ ] FUNC-318a: `workledger trash list` shall require at least one explicit time selector from the shared date-window selector family.
+- [ ] FUNC-318b: `workledger trash list` shall support `--issue` and `--issue-prefix` filters and date-window selectors.
+- [ ] FUNC-318c: `workledger trash search <query>` shall require at least one explicit time selector from the shared date-window selector family.
+- [ ] FUNC-318d: `workledger trash search <query>` shall search trashed `description` values by partial, case-insensitive literal substring match.
+- [ ] FUNC-318e: `workledger trash show <id>` shall load one archived trash row by trash archive ID.
+- [ ] FUNC-318f: `workledger trash` records shall expose whether the archived row origin is `local` or `remote`.
 
 ## Out of Scope
 - [ ] FUNC-303: `workledger tui` shall be the only deferred command surface in this organized spec.

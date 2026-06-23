@@ -4618,6 +4618,142 @@ func TestPlanProgressModesKeepStdoutStable(t *testing.T) {
 	})
 }
 
+func TestTrashListSearchAndShowJSON(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	seedTrashRecord(t, trashSeed{
+		id:               "trash-local-1",
+		storageScope:     "local",
+		sourceWorklogID:  "row-1",
+		issueKey:         "ABC-123",
+		startedAtUTC:     "2026-05-03T06:00:00Z",
+		durationSeconds:  3600,
+		description:      "API docs review",
+		trashedAt:        "2026-05-04T08:00:00Z",
+		reasonCode:       "pull_merge_removed_local",
+		reasonDetail:     "Removed from local ledger during pull plan apply",
+		planDirection:    "pull",
+		originPlanID:     "plan-1",
+		originPlanItemID: "item-1",
+	})
+	seedTrashRecord(t, trashSeed{
+		id:               "trash-remote-1",
+		storageScope:     "remote",
+		issueKey:         "ABC-123",
+		startedAtUTC:     "2026-05-03T09:00:00Z",
+		durationSeconds:  1800,
+		description:      "Remote cleanup",
+		trashedAt:        "2026-05-04T09:00:00Z",
+		reasonCode:       "push_cleanup_deleted_remote",
+		reasonDetail:     "Deleted from remote target during push plan apply cleanup",
+		planDirection:    "push",
+		originPlanID:     "plan-2",
+		originPlanItemID: "item-2",
+		adapterFamily:    "clockify",
+		adapterInstance:  "clockify",
+	})
+
+	list := runCLI(t, "trash", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
+	if list.code != 0 {
+		t.Fatalf("trash list failed: code=%d stdout=%s stderr=%s", list.code, list.stdout, list.stderr)
+	}
+	listPayload := decodeJSONMap(t, []byte(list.stdout))
+	if listPayload["total"].(float64) != 2 {
+		t.Fatalf("expected two trash rows, got %s", list.stdout)
+	}
+	listItems := listPayload["items"].([]any)
+	first := listItems[0].(map[string]any)
+	if first["storage_scope"] != "local" || first["source_worklog_id"] != "row-1" {
+		t.Fatalf("unexpected first trash row %#v", first)
+	}
+
+	search := runCLI(t, "trash", "search", "remote cleanup", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
+	if search.code != 0 {
+		t.Fatalf("trash search failed: code=%d stdout=%s stderr=%s", search.code, search.stdout, search.stderr)
+	}
+	searchPayload := decodeJSONMap(t, []byte(search.stdout))
+	if searchPayload["total"].(float64) != 1 {
+		t.Fatalf("expected one trash match, got %s", search.stdout)
+	}
+	searchItem := searchPayload["items"].([]any)[0].(map[string]any)
+	if searchItem["storage_scope"] != "remote" {
+		t.Fatalf("expected remote trash match, got %#v", searchItem)
+	}
+
+	show := runCLI(t, "trash", "show", "trash-remote-1", "--output", "json")
+	if show.code != 0 {
+		t.Fatalf("trash show failed: code=%d stdout=%s stderr=%s", show.code, show.stdout, show.stderr)
+	}
+	showPayload := decodeJSONMap(t, []byte(show.stdout))
+	if showPayload["id"] != "trash-remote-1" || showPayload["storage_scope"] != "remote" {
+		t.Fatalf("unexpected trash show payload %#v", showPayload)
+	}
+	origin := showPayload["origin"].(map[string]any)
+	if origin["plan_direction"] != "push" || origin["adapter_family"] != "clockify" || origin["adapter_instance"] != "clockify" {
+		t.Fatalf("unexpected trash origin %#v", origin)
+	}
+}
+
+func TestPlanApplyJSONIncludesTrashSummary(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTCAndClockify(t)
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	first := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-01T08:00:00Z", "--duration", "1h", "--description", "Keep me", "--output", "json")
+	if first.code != 0 {
+		t.Fatalf("seed first worklog failed: %s", first.stdout)
+	}
+	second := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-01T10:00:00Z", "--duration", "30m", "--description", "Remove me", "--output", "json")
+	if second.code != 0 {
+		t.Fatalf("seed second worklog failed: %s", second.stdout)
+	}
+
+	effective, err := config.LoadEffective()
+	if err != nil {
+		t.Fatalf("load effective config: %v", err)
+	}
+	fingerprint, err := config.FingerprintEffective(effective)
+	if err != nil {
+		t.Fatalf("fingerprint config: %v", err)
+	}
+
+	seedSavedPlan(t, savedPlanSeed{
+		planID:      "plan-trash-summary",
+		fingerprint: fingerprint,
+		itemID:      "item-trash-summary",
+		direction:   "pull",
+		adapter:     "clockify",
+		target:      "ABC-123",
+		action:      "merge",
+		payloadJSON: `[{"issue_key":"ABC-123","started_at_utc":"2026-05-01T08:00:00Z","duration_seconds":3600,"description":"Keep me"},{"issue_key":"ABC-123","started_at_utc":"2026-05-01T09:00:00Z","duration_seconds":900,"description":"Add me"}]`,
+	})
+
+	result := runCLI(t, "plan", "apply", "plan-trash-summary", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("plan apply failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(result.stdout))
+	if payload["trash_archived_count"].(float64) != 1 {
+		t.Fatalf("expected one archived trash row in payload, got %#v", payload)
+	}
+	scopeResults := payload["scope_results"].([]any)
+	if len(scopeResults) != 1 {
+		t.Fatalf("expected one scope result, got %#v", payload)
+	}
+	scope := scopeResults[0].(map[string]any)
+	if scope["trash_archived_count"].(float64) != 1 || scope["plan_direction"] != "pull" {
+		t.Fatalf("unexpected scope result %#v", scope)
+	}
+}
+
 func TestPlanReconcilePlainProgressWritesStderrOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTCAndClockify(t)
@@ -7158,6 +7294,24 @@ type savedPlanSeed struct {
 	createdAt   string
 }
 
+type trashSeed struct {
+	id               string
+	storageScope     string
+	sourceWorklogID  string
+	issueKey         string
+	startedAtUTC     string
+	durationSeconds  int
+	description      string
+	trashedAt        string
+	reasonCode       string
+	reasonDetail     string
+	planDirection    string
+	originPlanID     string
+	originPlanItemID string
+	adapterFamily    string
+	adapterInstance  string
+}
+
 func seedSavedPlan(t *testing.T, seed savedPlanSeed) {
 	t.Helper()
 
@@ -7210,6 +7364,34 @@ func seedSavedPlan(t *testing.T, seed savedPlanSeed) {
 				t.Fatalf("seed delivery attempt: %v", err)
 			}
 		}
+	}
+}
+
+func seedTrashRecord(t *testing.T, seed trashSeed) {
+	t.Helper()
+
+	db := openTestDB(t)
+	defer db.Close()
+
+	if _, err := db.Exec(
+		`INSERT INTO trashed_worklogs(id, storage_scope, source_worklog_id, issue_key, started_at_utc, duration_seconds, description, trashed_at, reason_code, reason_detail, plan_direction, origin_plan_id, origin_plan_item_id, adapter_family, adapter_instance) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		seed.id,
+		seed.storageScope,
+		emptyToNil(seed.sourceWorklogID),
+		seed.issueKey,
+		seed.startedAtUTC,
+		seed.durationSeconds,
+		seed.description,
+		seed.trashedAt,
+		seed.reasonCode,
+		seed.reasonDetail,
+		seed.planDirection,
+		emptyToNil(seed.originPlanID),
+		emptyToNil(seed.originPlanItemID),
+		emptyToNil(seed.adapterFamily),
+		emptyToNil(seed.adapterInstance),
+	); err != nil {
+		t.Fatalf("seed trash record: %v", err)
 	}
 }
 

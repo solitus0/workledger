@@ -163,13 +163,24 @@ type ListEntry struct {
 }
 
 type ApplyResult struct {
-	PlanID       string
-	RetryScope   string
-	AppliedCount int
-	SkippedCount int
-	FailedCount  int
-	MixedResult  bool
-	NoOp         bool
+	PlanID             string
+	RetryScope         string
+	AppliedCount       int
+	SkippedCount       int
+	FailedCount        int
+	MixedResult        bool
+	NoOp               bool
+	TrashArchivedCount int
+	ScopeResults       []ApplyScopeResult
+}
+
+type ApplyScopeResult struct {
+	PlanItemID         string
+	ScopeLabel         string
+	PlanDirection      string
+	PlannedAction      string
+	TrashArchivedCount int
+	Warnings           []string
 }
 
 type ReconcileResult struct {
@@ -1134,17 +1145,28 @@ func (s *Service) executeSavedPlan(cfg config.EffectiveConfig, id, retryScope st
 	var scopeDone int
 	var workDone int
 	for _, item := range pullItems {
-		executed, failed, err := s.executePullItem(item)
+		outcome, err := s.executePullItem(item)
 		if err != nil {
 			return ApplyResult{}, err
 		}
 		scopeDone++
 		workDone += applyWorkUnits(item)
-		if executed {
+		if outcome.executed {
 			result.AppliedCount++
 		}
-		if failed {
+		if outcome.failed {
 			result.FailedCount++
+		}
+		result.TrashArchivedCount += outcome.trashArchivedCount
+		if outcome.trashArchivedCount > 0 || len(outcome.warnings) > 0 {
+			result.ScopeResults = append(result.ScopeResults, ApplyScopeResult{
+				PlanItemID:         item.ID,
+				ScopeLabel:         planItemScopeLabel(item),
+				PlanDirection:      item.PlanDirection,
+				PlannedAction:      item.PlannedAction,
+				TrashArchivedCount: outcome.trashArchivedCount,
+				Warnings:           append([]string(nil), outcome.warnings...),
+			})
 		}
 		opts.Reporter.Event(progress.Event{
 			Phase:         "applying",
@@ -1155,7 +1177,7 @@ func (s *Service) executeSavedPlan(cfg config.EffectiveConfig, id, retryScope st
 			WorkDone:      workDone,
 			WorkTotal:     totalApplyWorkUnits(ready),
 			Failed:        result.FailedCount,
-			Message:       "applied local pull scope",
+			Message:       outcome.applyMessage,
 		})
 	}
 	if len(pushItems) > 0 {
@@ -1165,6 +1187,8 @@ func (s *Service) executeSavedPlan(cfg config.EffectiveConfig, id, retryScope st
 		}
 		result.AppliedCount += pushResult.appliedCount
 		result.FailedCount += pushResult.failedCount
+		result.TrashArchivedCount += pushResult.trashArchivedCount
+		result.ScopeResults = append(result.ScopeResults, pushResult.scopeResults...)
 		scopeDone = pushResult.scopeDone
 		workDone = pushResult.workDone
 	}
@@ -1186,88 +1210,107 @@ func (s *Service) executeSavedPlan(cfg config.EffectiveConfig, id, retryScope st
 	return result, nil
 }
 
-func (s *Service) executeSavedPlanItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem, retryScope string) (bool, bool, error) {
+func (s *Service) executeSavedPlanItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem, retryScope string) (applyItemExecution, error) {
 	switch item.PlanDirection {
 	case "", "pull":
 		return s.executePullItem(item)
 	case "push":
 		return s.executePushItem(ctx, cfg, item, retryScope)
 	default:
-		return false, false, fmt.Errorf("unsupported plan direction %q", item.PlanDirection)
+		return applyItemExecution{}, fmt.Errorf("unsupported plan direction %q", item.PlanDirection)
 	}
 }
 
-func (s *Service) executePullItem(item PlanItem) (bool, bool, error) {
+func (s *Service) executePullItem(item PlanItem) (applyItemExecution, error) {
 	appliedAt := s.now().UTC()
-	if err := s.applyPullItem(item); err != nil {
-		return false, false, err
+	archivedCount, err := s.applyPullItem(item)
+	if err != nil {
+		return applyItemExecution{}, err
 	}
-	if err := s.markItemApplied(item.ID, appliedAt, "succeeded", "merged saved pull payload into local ledger"); err != nil {
-		return false, false, err
+	message := "merged saved pull payload into local ledger"
+	if err := s.markItemApplied(item.ID, appliedAt, "succeeded", message); err != nil {
+		return applyItemExecution{}, err
 	}
-	return true, false, nil
+	return applyItemExecution{
+		executed:           true,
+		applyMessage:       message,
+		trashArchivedCount: archivedCount,
+	}, nil
 }
 
-func (s *Service) executePushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem, retryScope string) (bool, bool, error) {
+func (s *Service) executePushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem, retryScope string) (applyItemExecution, error) {
 	appliedAt := s.now().UTC()
 	if err := s.recordDeliveryAttempt(item.PlanID, item.ID, "pending", "push delivery started"); err != nil {
-		return false, false, err
+		return applyItemExecution{}, err
 	}
 
 	if retryScope == "uncertain" {
 		reconciledState, message, err := s.reconcileUncertainPushItem(ctx, cfg, item)
 		if err != nil {
-			return false, false, err
+			return applyItemExecution{}, err
 		}
 		switch reconciledState {
 		case "succeeded":
 			if err := s.recordDeliveryAttempt(item.PlanID, item.ID, "succeeded", message); err != nil {
-				return false, false, err
+				return applyItemExecution{}, err
 			}
 			if err := s.markItemApplied(item.ID, appliedAt, "succeeded", message); err != nil {
-				return false, false, err
+				return applyItemExecution{}, err
 			}
-			return true, false, nil
+			return applyItemExecution{executed: true, applyMessage: message}, nil
 		case "uncertain":
 			if err := s.recordDeliveryAttempt(item.PlanID, item.ID, "uncertain", message); err != nil {
-				return false, false, err
+				return applyItemExecution{}, err
 			}
 			if err := s.markItemApplied(item.ID, appliedAt, "uncertain", message); err != nil {
-				return false, false, err
+				return applyItemExecution{}, err
 			}
-			return false, true, nil
+			return applyItemExecution{failed: true, applyMessage: message}, nil
 		}
 	}
 
-	err := s.applyPushItem(ctx, cfg, item)
+	pushResult, err := s.applyPushItem(ctx, cfg, item)
 	if err != nil {
 		finalState := "failed"
 		if retryScope == "uncertain" {
 			finalState = "uncertain"
 		}
 		if attemptErr := s.recordDeliveryAttempt(item.PlanID, item.ID, finalState, err.Error()); attemptErr != nil {
-			return false, false, attemptErr
+			return applyItemExecution{}, attemptErr
 		}
 		if markErr := s.markItemApplied(item.ID, appliedAt, finalState, err.Error()); markErr != nil {
-			return false, false, markErr
+			return applyItemExecution{}, markErr
 		}
-		return false, true, nil
+		return applyItemExecution{
+			failed:             true,
+			applyMessage:       err.Error(),
+			trashArchivedCount: pushResult.trashArchivedCount,
+			warnings:           append([]string(nil), pushResult.warnings...),
+		}, nil
 	}
 	if err := s.clearDeleteTombstones(item); err != nil {
-		return false, false, err
+		return applyItemExecution{}, err
 	}
 
 	message := pushApplySuccessMessage(item.TargetAdapterFamily)
+	if len(pushResult.warnings) > 0 {
+		message = message + " with warnings"
+	}
 	if err := s.recordDeliveryAttempt(item.PlanID, item.ID, "succeeded", "push delivery succeeded"); err != nil {
-		return false, false, err
+		return applyItemExecution{}, err
 	}
 	if err := s.markItemApplied(item.ID, appliedAt, "succeeded", message); err != nil {
-		return false, false, err
+		return applyItemExecution{}, err
 	}
-	return true, false, nil
+	return applyItemExecution{
+		executed:           true,
+		applyMessage:       message,
+		trashArchivedCount: pushResult.trashArchivedCount,
+		warnings:           append([]string(nil), pushResult.warnings...),
+	}, nil
 }
 
-func (s *Service) applyPushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem) error {
+func (s *Service) applyPushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem) (pushApplyResult, error) {
 	switch item.TargetAdapterFamily {
 	case "clockify":
 		return s.applyClockifyPushItem(ctx, cfg, item)
@@ -1276,28 +1319,37 @@ func (s *Service) applyPushItem(ctx context.Context, cfg config.EffectiveConfig,
 	case "jira-data-center":
 		return s.applyJiraDataPushItem(ctx, cfg, item)
 	default:
-		return fmt.Errorf("unsupported target adapter family %q", item.TargetAdapterFamily)
+		return pushApplyResult{}, fmt.Errorf("unsupported target adapter family %q", item.TargetAdapterFamily)
 	}
 }
 
-func (s *Service) applyPullItem(item PlanItem) error {
+func (s *Service) applyPullItem(item PlanItem) (int, error) {
 	tx, err := s.store.DB().BeginTx(context.Background(), nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	if _, err := tx.Exec(
-		`DELETE FROM worklogs WHERE issue_key = ? AND started_at_utc >= ? AND started_at_utc <= ?`,
-		item.IssueKey,
-		sqlitestore.RFC3339UTC(item.WindowFromUTC),
-		sqlitestore.RFC3339UTC(item.WindowToUTC),
-	); err != nil {
+	_, removed, inserted, err := s.buildPullMergeExecution(item)
+	if err != nil {
 		_ = tx.Rollback()
-		return err
+		return 0, err
 	}
 
 	now := sqlitestore.RFC3339UTC(s.now().UTC())
-	for _, row := range item.Payload {
+	if err := worklogs.ArchiveLocalTrashTx(tx, item.PlanID, item.ID, removed, s.now().UTC(), pullTrashReasonCode, pullTrashReasonDetail); err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	removedIDs := make([]string, 0, len(removed))
+	for _, row := range removed {
+		removedIDs = append(removedIDs, row.ID)
+	}
+	if err := worklogs.DeleteActiveWorklogsTx(context.Background(), tx, removedIDs); err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+
+	for _, row := range inserted {
 		if _, err := tx.Exec(
 			`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
 			uuid.NewString(),
@@ -1309,11 +1361,14 @@ func (s *Service) applyPullItem(item PlanItem) error {
 			now,
 		); err != nil {
 			_ = tx.Rollback()
-			return err
+			return 0, err
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(removed), nil
 }
 
 func (s *Service) reconcileUncertainPushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem) (string, string, error) {
@@ -1414,76 +1469,97 @@ func (s *Service) loadCurrentJiraCloudScope(ctx context.Context, cfg config.Effe
 	return sortRows(normalizeJiraCloudScope(filterJiraCloudWorklogsByUserAndWindow(worklogs, user, item.WindowFromUTC, item.WindowToUTC))), nil
 }
 
-func (s *Service) applyClockifyPushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem) error {
+func (s *Service) applyClockifyPushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem) (pushApplyResult, error) {
 	if deps, ok := clockifyDepsFromCtx(ctx); ok {
 		return s.applyClockifyPushItemWithDeps(ctx, item, deps)
 	}
 
 	clockifyCfg, err := config.ResolveClockifyConfig(cfg)
 	if err != nil {
-		return err
+		return pushApplyResult{}, err
 	}
 
 	client := s.newClockifyClient(*clockifyCfg)
 	projects, err := client.ListProjects(ctx, clockifyCfg.WorkspaceID)
 	if err != nil {
-		return err
+		return pushApplyResult{}, err
 	}
 	projectMatches := matchingProjects(projects, item.InspectionSummary.ProjectName)
 	if len(projectMatches) != 1 {
-		return fmt.Errorf("saved target project %q is no longer resolvable", item.InspectionSummary.ProjectName)
+		return pushApplyResult{}, fmt.Errorf("saved target project %q is no longer resolvable", item.InspectionSummary.ProjectName)
 	}
 	project := projectMatches[0]
 
 	tagsByID, err := client.ListTags(ctx, clockifyCfg.WorkspaceID)
 	if err != nil {
-		return err
+		return pushApplyResult{}, err
 	}
 	tag, tagExists := findTagByName(tagsByID, item.TargetIssue)
 	if !tagExists {
 		allowCreate := clockifyCreateIssueTagIfMissing(clockifyCfg)
 		if !allowCreate {
-			return fmt.Errorf("issue tag %q is missing and config forbids creating it", item.TargetIssue)
+			return pushApplyResult{}, fmt.Errorf("issue tag %q is missing and config forbids creating it", item.TargetIssue)
 		}
 		tag, err = client.CreateTag(ctx, clockifyCfg.WorkspaceID, item.TargetIssue)
 		if err != nil {
-			return err
+			return pushApplyResult{}, err
 		}
 	}
 
+	result := pushApplyResult{}
 	switch item.PlannedAction {
 	case "create":
 		for _, row := range item.Payload {
 			if _, err := client.CreateTimeEntry(ctx, clockifyCfg.WorkspaceID, row, project.ID, []string{tag.ID}); err != nil {
-				return err
+				return result, err
 			}
 		}
-	case "replace", "delete":
+	case "replace":
 		entries, err := client.ListUserTimeEntries(ctx, clockifyCfg.WorkspaceID, clockifyCfg.UserID, item.WindowFromUTC, item.WindowToUTC)
 		if err != nil {
-			return err
+			return result, err
 		}
 		scopeEntries := filterEntriesByProject(filterEntriesByIssue(entries, tagsByID, item.TargetIssue), project.ID)
-		if len(scopeEntries) == 0 && item.PlannedAction == "delete" {
+		deleteRows, createRows := diffScopedRemoteRows(buildClockifyScopedRows(scopeEntries, tagsByID, item.TargetIssue), item.Payload)
+		if len(deleteRows) > 0 {
+			if err := deleteRemoteClockifyEntries(ctx, client, clockifyCfg.WorkspaceID, scopedRemoteRawValues(deleteRows)); err != nil {
+				return result, err
+			}
+		}
+		deletedRows := scopedRemoteRowValues(deleteRows)
+		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
+		} else {
+			result.trashArchivedCount += archivedCount
+		}
+		for _, row := range createRows {
+			if _, err := client.CreateTimeEntry(ctx, clockifyCfg.WorkspaceID, row, project.ID, []string{tag.ID}); err != nil {
+				return result, err
+			}
+		}
+	case "delete":
+		entries, err := client.ListUserTimeEntries(ctx, clockifyCfg.WorkspaceID, clockifyCfg.UserID, item.WindowFromUTC, item.WindowToUTC)
+		if err != nil {
+			return result, err
+		}
+		scopeEntries := filterEntriesByProject(filterEntriesByIssue(entries, tagsByID, item.TargetIssue), project.ID)
+		if len(scopeEntries) == 0 {
 			scopeEntries = findEntriesByTimeIntervals(entries, item.Payload)
 		}
-		for _, entry := range scopeEntries {
-			if err := client.DeleteTimeEntry(ctx, clockifyCfg.WorkspaceID, entry.ID); err != nil {
-				return err
-			}
+		deletedRows := normalizeDeletedClockifyRows(scopeEntries, tagsByID, item.TargetIssue)
+		if err := deleteRemoteClockifyEntries(ctx, client, clockifyCfg.WorkspaceID, scopeEntries); err != nil {
+			return result, err
 		}
-		if item.PlannedAction == "replace" {
-			for _, row := range item.Payload {
-				if _, err := client.CreateTimeEntry(ctx, clockifyCfg.WorkspaceID, row, project.ID, []string{tag.ID}); err != nil {
-					return err
-				}
-			}
+		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
+		} else {
+			result.trashArchivedCount += archivedCount
 		}
 	default:
-		return fmt.Errorf("unsupported push action %q", item.PlannedAction)
+		return pushApplyResult{}, fmt.Errorf("unsupported push action %q", item.PlannedAction)
 	}
 
-	return nil
+	return result, nil
 }
 
 func clockifyCreateIssueTagIfMissing(clockifyCfg *config.ClockifyConfig) bool {
@@ -1496,86 +1572,118 @@ func clockifyCreateIssueTagIfMissing(clockifyCfg *config.ClockifyConfig) bool {
 	return *clockifyCfg.ProjectMapping.CreateIssueTagIfMissing
 }
 
-func (s *Service) applyJiraDataPushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem) error {
+func (s *Service) applyJiraDataPushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem) (pushApplyResult, error) {
 	instance, err := requireJiraDataInstance(cfg, item.TargetAdapterInstance)
 	if err != nil {
-		return err
+		return pushApplyResult{}, err
 	}
 	client := s.newJiraDataClient(instance)
 	user, err := client.CurrentUser(ctx)
 	if err != nil {
-		return err
+		return pushApplyResult{}, err
 	}
 	worklogs, err := client.ListIssueWorklogs(ctx, item.TargetIssue)
 	if err != nil {
-		return err
+		return pushApplyResult{}, err
 	}
 	scope := filterJiraWorklogsByUserAndWindow(worklogs, user, item.WindowFromUTC, item.WindowToUTC)
+	result := pushApplyResult{}
 	switch item.PlannedAction {
 	case "create":
 		for _, row := range item.Payload {
 			if _, err := client.CreateWorklog(ctx, item.TargetIssue, row); err != nil {
-				return err
+				return result, err
 			}
 		}
-	case "replace", "delete":
-		for _, remote := range scope {
-			if err := client.DeleteWorklog(ctx, item.TargetIssue, remote.ID); err != nil {
-				return err
+	case "replace":
+		deleteRows, createRows := diffScopedRemoteRows(buildJiraDataScopedRows(item.TargetIssue, scope), item.Payload)
+		if len(deleteRows) > 0 {
+			if err := deleteRemoteJiraDataWorklogs(ctx, client, item.TargetIssue, scopedRemoteRawValues(deleteRows)); err != nil {
+				return result, err
 			}
 		}
-		if item.PlannedAction == "replace" {
-			for _, row := range item.Payload {
-				if _, err := client.CreateWorklog(ctx, item.TargetIssue, row); err != nil {
-					return err
-				}
+		deletedRows := scopedRemoteRowValues(deleteRows)
+		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
+		} else {
+			result.trashArchivedCount += archivedCount
+		}
+		for _, row := range createRows {
+			if _, err := client.CreateWorklog(ctx, item.TargetIssue, row); err != nil {
+				return result, err
 			}
+		}
+	case "delete":
+		deletedRows := normalizeDeletedJiraDataRows(item.TargetIssue, scope)
+		if err := deleteRemoteJiraDataWorklogs(ctx, client, item.TargetIssue, scope); err != nil {
+			return result, err
+		}
+		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
+		} else {
+			result.trashArchivedCount += archivedCount
 		}
 	default:
-		return fmt.Errorf("unsupported push action %q", item.PlannedAction)
+		return pushApplyResult{}, fmt.Errorf("unsupported push action %q", item.PlannedAction)
 	}
-	return nil
+	return result, nil
 }
 
-func (s *Service) applyJiraCloudPushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem) error {
+func (s *Service) applyJiraCloudPushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem) (pushApplyResult, error) {
 	instance, err := requireJiraCloudInstance(cfg, item.TargetAdapterInstance)
 	if err != nil {
-		return err
+		return pushApplyResult{}, err
 	}
 	client := s.newJiraCloudClient(instance)
 	user, err := client.CurrentUser(ctx)
 	if err != nil {
-		return err
+		return pushApplyResult{}, err
 	}
 	worklogs, err := client.ListIssueWorklogs(ctx, item.TargetIssue)
 	if err != nil {
-		return err
+		return pushApplyResult{}, err
 	}
 	scope := filterJiraCloudWorklogsByUserAndWindow(worklogs, user, item.WindowFromUTC, item.WindowToUTC)
+	result := pushApplyResult{}
 	switch item.PlannedAction {
 	case "create":
 		for _, row := range item.Payload {
 			if _, err := client.CreateWorklog(ctx, item.TargetIssue, row); err != nil {
-				return err
+				return result, err
 			}
 		}
-	case "replace", "delete":
-		for _, remote := range scope {
-			if err := client.DeleteWorklog(ctx, item.TargetIssue, remote.ID); err != nil {
-				return err
+	case "replace":
+		deleteRows, createRows := diffScopedRemoteRows(buildJiraCloudScopedRows(item.TargetIssue, scope), item.Payload)
+		if len(deleteRows) > 0 {
+			if err := deleteRemoteJiraCloudWorklogs(ctx, client, item.TargetIssue, scopedRemoteRawValues(deleteRows)); err != nil {
+				return result, err
 			}
 		}
-		if item.PlannedAction == "replace" {
-			for _, row := range item.Payload {
-				if _, err := client.CreateWorklog(ctx, item.TargetIssue, row); err != nil {
-					return err
-				}
+		deletedRows := scopedRemoteRowValues(deleteRows)
+		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
+		} else {
+			result.trashArchivedCount += archivedCount
+		}
+		for _, row := range createRows {
+			if _, err := client.CreateWorklog(ctx, item.TargetIssue, row); err != nil {
+				return result, err
 			}
+		}
+	case "delete":
+		deletedRows := normalizeDeletedJiraCloudRows(item.TargetIssue, scope)
+		if err := deleteRemoteJiraCloudWorklogs(ctx, client, item.TargetIssue, scope); err != nil {
+			return result, err
+		}
+		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
+		} else {
+			result.trashArchivedCount += archivedCount
 		}
 	default:
-		return fmt.Errorf("unsupported push action %q", item.PlannedAction)
+		return pushApplyResult{}, fmt.Errorf("unsupported push action %q", item.PlannedAction)
 	}
-	return nil
+	return result, nil
 }
 
 func (s *Service) insertPlan(plan Plan) error {

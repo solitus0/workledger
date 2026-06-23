@@ -12,10 +12,12 @@ import (
 )
 
 type pushExecutionSummary struct {
-	appliedCount int
-	failedCount  int
-	scopeDone    int
-	workDone     int
+	appliedCount       int
+	failedCount        int
+	scopeDone          int
+	workDone           int
+	trashArchivedCount int
+	scopeResults       []ApplyScopeResult
 }
 
 type pushExecutionGroup struct {
@@ -24,13 +26,15 @@ type pushExecutionGroup struct {
 }
 
 type pushExecutionOutcome struct {
-	item           PlanItem
-	executed       bool
-	failed         bool
-	finalState     string
-	attemptMessage string
-	applyMessage   string
-	workDone       int
+	item               PlanItem
+	executed           bool
+	failed             bool
+	finalState         string
+	attemptMessage     string
+	applyMessage       string
+	workDone           int
+	trashArchivedCount int
+	warnings           []string
 }
 
 func splitPlanExecutionItems(items []PlanItem) (pullItems []PlanItem, pushItems []PlanItem) {
@@ -144,6 +148,17 @@ func (s *Service) executeSavedPushGroups(ctx context.Context, cfg config.Effecti
 		if outcome.failed {
 			summary.failedCount++
 		}
+		summary.trashArchivedCount += outcome.trashArchivedCount
+		if outcome.trashArchivedCount > 0 || len(outcome.warnings) > 0 {
+			summary.scopeResults = append(summary.scopeResults, ApplyScopeResult{
+				PlanItemID:         outcome.item.ID,
+				ScopeLabel:         planItemScopeLabel(outcome.item),
+				PlanDirection:      outcome.item.PlanDirection,
+				PlannedAction:      outcome.item.PlannedAction,
+				TrashArchivedCount: outcome.trashArchivedCount,
+				Warnings:           append([]string(nil), outcome.warnings...),
+			})
+		}
 		summary.scopeDone++
 		summary.workDone += outcome.workDone
 		reporter.Event(progress.Event{
@@ -222,7 +237,8 @@ func (s *Service) performPushItem(ctx context.Context, cfg config.EffectiveConfi
 		}
 	}
 
-	if err := s.applyPushItem(ctx, cfg, item); err != nil {
+	pushResult, err := s.applyPushItem(ctx, cfg, item)
+	if err != nil {
 		outcome.failed = true
 		outcome.finalState = "failed"
 		if retryScope == "uncertain" {
@@ -230,6 +246,8 @@ func (s *Service) performPushItem(ctx context.Context, cfg config.EffectiveConfi
 		}
 		outcome.attemptMessage = err.Error()
 		outcome.applyMessage = err.Error()
+		outcome.trashArchivedCount = pushResult.trashArchivedCount
+		outcome.warnings = append([]string(nil), pushResult.warnings...)
 		return outcome
 	}
 	if err := s.clearDeleteTombstones(item); err != nil {
@@ -237,8 +255,15 @@ func (s *Service) performPushItem(ctx context.Context, cfg config.EffectiveConfi
 		outcome.finalState = "failed"
 		outcome.attemptMessage = err.Error()
 		outcome.applyMessage = err.Error()
+		outcome.trashArchivedCount = pushResult.trashArchivedCount
+		outcome.warnings = append([]string(nil), pushResult.warnings...)
 		return outcome
 	}
+	if len(pushResult.warnings) > 0 {
+		outcome.applyMessage = outcome.applyMessage + " with warnings"
+	}
 	outcome.executed = true
+	outcome.trashArchivedCount = pushResult.trashArchivedCount
+	outcome.warnings = append([]string(nil), pushResult.warnings...)
 	return outcome
 }

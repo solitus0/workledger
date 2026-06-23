@@ -278,6 +278,7 @@ func (a *app) newRootCommand() *cobra.Command {
 	root.AddCommand(a.newSetupCommand())
 	root.AddCommand(a.newWorklogsCommand())
 	root.AddCommand(a.newTombstonesCommand())
+	root.AddCommand(a.newTrashCommand())
 	root.AddCommand(a.newTotalsCommand())
 	root.AddCommand(a.newStatusCommand())
 	root.AddCommand(a.newDoctorCommand())
@@ -4784,24 +4785,47 @@ func (a *app) renderApplyJSON(result worklogs.ApplyResult, location *time.Locati
 func (a *app) renderPlanExecutionResult(mode string, result reconcile.ApplyResult) error {
 	if mode == "json" {
 		payload := map[string]any{
-			"plan_id":       result.PlanID,
-			"applied_count": result.AppliedCount,
-			"skipped_count": result.SkippedCount,
-			"failed_count":  result.FailedCount,
-			"mixed_result":  result.MixedResult,
-			"noop":          result.NoOp,
+			"plan_id":              result.PlanID,
+			"applied_count":        result.AppliedCount,
+			"skipped_count":        result.SkippedCount,
+			"failed_count":         result.FailedCount,
+			"mixed_result":         result.MixedResult,
+			"noop":                 result.NoOp,
+			"trash_archived_count": result.TrashArchivedCount,
 		}
 		if result.RetryScope != "" {
 			payload["retry_scope"] = result.RetryScope
+		}
+		if len(result.ScopeResults) > 0 {
+			scopeResults := make([]map[string]any, 0, len(result.ScopeResults))
+			for _, item := range result.ScopeResults {
+				scopeResults = append(scopeResults, map[string]any{
+					"plan_item_id":         item.PlanItemID,
+					"scope_label":          item.ScopeLabel,
+					"plan_direction":       item.PlanDirection,
+					"planned_action":       item.PlannedAction,
+					"trash_archived_count": item.TrashArchivedCount,
+					"warnings":             item.Warnings,
+				})
+			}
+			payload["scope_results"] = scopeResults
 		}
 		if err := a.writeJSON(payload); err != nil {
 			return err
 		}
 	} else {
 		if result.RetryScope != "" {
-			_, _ = fmt.Fprintf(a.stdout, "plan_id=%s retry_scope=%s applied=%d failed=%d skipped=%d mixed_result=%t noop=%t\n", result.PlanID, result.RetryScope, result.AppliedCount, result.FailedCount, result.SkippedCount, result.MixedResult, result.NoOp)
+			_, _ = fmt.Fprintf(a.stdout, "plan_id=%s retry_scope=%s applied=%d failed=%d skipped=%d mixed_result=%t noop=%t trashed=%d\n", result.PlanID, result.RetryScope, result.AppliedCount, result.FailedCount, result.SkippedCount, result.MixedResult, result.NoOp, result.TrashArchivedCount)
 		} else {
-			_, _ = fmt.Fprintf(a.stdout, "plan_id=%s applied=%d failed=%d skipped=%d mixed_result=%t noop=%t\n", result.PlanID, result.AppliedCount, result.FailedCount, result.SkippedCount, result.MixedResult, result.NoOp)
+			_, _ = fmt.Fprintf(a.stdout, "plan_id=%s applied=%d failed=%d skipped=%d mixed_result=%t noop=%t trashed=%d\n", result.PlanID, result.AppliedCount, result.FailedCount, result.SkippedCount, result.MixedResult, result.NoOp, result.TrashArchivedCount)
+		}
+		for _, item := range result.ScopeResults {
+			if item.TrashArchivedCount > 0 {
+				_, _ = fmt.Fprintf(a.stdout, "scope=%s plan_item_id=%s trashed=%d\n", item.ScopeLabel, item.PlanItemID, item.TrashArchivedCount)
+			}
+			for _, warning := range item.Warnings {
+				_, _ = fmt.Fprintf(a.stdout, "scope=%s warning=%s\n", item.ScopeLabel, warning)
+			}
 		}
 	}
 

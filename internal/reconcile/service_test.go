@@ -16,6 +16,7 @@ import (
 	"github.com/solitus0/workledger/internal/config"
 	"github.com/solitus0/workledger/internal/reconcile/model"
 	sqlitestore "github.com/solitus0/workledger/internal/store/sqlite"
+	"github.com/solitus0/workledger/internal/worklogs"
 )
 
 func TestCreateClockifyPushPlanClassifiesScopes(t *testing.T) {
@@ -247,8 +248,18 @@ func TestApplyPlanClockifyDeleteClearsTombstone(t *testing.T) {
 	if result.AppliedCount != 1 || result.FailedCount != 0 {
 		t.Fatalf("unexpected apply result %#v", result)
 	}
+	if result.TrashArchivedCount != 1 {
+		t.Fatalf("expected one archived trash row, got %#v", result)
+	}
 	if got := countTombstones(t, store); got != 0 {
 		t.Fatalf("expected tombstone cleanup after successful delete, got %d", got)
+	}
+	if got := countTrashRecords(t, store); got != 1 {
+		t.Fatalf("expected one trashed remote row, got %d", got)
+	}
+	record := listTrashRecords(t, store)[0]
+	if record.StorageScope != worklogs.TrashScopeRemote || record.SourceWorklogID != nil || record.ReasonCode != pushTrashReasonCode {
+		t.Fatalf("unexpected trash record %#v", record)
 	}
 }
 
@@ -284,6 +295,392 @@ func TestApplyPlanClockifyFailedDeleteKeepsTombstone(t *testing.T) {
 	}
 	if got := countTombstones(t, store); got != 1 {
 		t.Fatalf("expected tombstone to remain after failed delete, got %d", got)
+	}
+	if got := countTrashRecords(t, store); got != 0 {
+		t.Fatalf("expected no trash rows after failed delete, got %d", got)
+	}
+}
+
+func TestApplyPlanPullMergeArchivesRemovedLocalRowsAndPreservesIDs(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Keep me")
+	seedWorklogRow(t, store, "row-2", "AAPP-1", "2026-05-01T10:00:00Z", 1800, "Remove me")
+
+	service := NewService(store)
+	cfg := testClockifyConfig(true)
+	fingerprint, err := config.FingerprintEffective(cfg)
+	if err != nil {
+		t.Fatalf("fingerprint config: %v", err)
+	}
+
+	plan := Plan{
+		ID:                "plan-pull-trash",
+		Direction:         "pull",
+		AdapterFamily:     "clockify",
+		ConfigFingerprint: fingerprint,
+		WindowFromUTC:     mustTime("2026-05-01T00:00:00Z"),
+		WindowToUTC:       mustTime("2026-05-01T23:59:59Z"),
+		CreatedAt:         mustTime("2026-05-02T00:00:00Z"),
+		AggregateStatus:   "ready",
+		Items: []PlanItem{
+			{
+				ID:               "item-pull-trash",
+				PlanID:           "plan-pull-trash",
+				IssueKey:         "AAPP-1",
+				PlanDirection:    "pull",
+				WindowFromUTC:    mustTime("2026-05-01T00:00:00Z"),
+				WindowToUTC:      mustTime("2026-05-01T23:59:59Z"),
+				PlanStatus:       "ready",
+				PlannedAction:    "merge",
+				ComparisonStatus: "merge_needed",
+				ReasonCode:       "remote_diff",
+				ReasonDetail:     "seeded",
+				Payload: []model.Row{
+					{IssueKey: "AAPP-1", StartedAtUTC: mustTime("2026-05-01T08:00:00Z"), DurationSeconds: 3600, Description: "Keep me"},
+					{IssueKey: "AAPP-1", StartedAtUTC: mustTime("2026-05-01T09:00:00Z"), DurationSeconds: 900, Description: "Add me"},
+				},
+				LocalRowCount:  2,
+				LocalTotal:     5400,
+				RemoteRowCount: 2,
+				RemoteTotal:    4500,
+				AppliedState:   "not_attempted",
+			},
+		},
+	}
+	if err := service.insertPlan(plan); err != nil {
+		t.Fatalf("insert plan: %v", err)
+	}
+
+	result, err := service.ApplyPlan(cfg, plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if result.AppliedCount != 1 || result.FailedCount != 0 || result.TrashArchivedCount != 1 {
+		t.Fatalf("unexpected apply result %#v", result)
+	}
+	if len(result.ScopeResults) != 1 || result.ScopeResults[0].TrashArchivedCount != 1 {
+		t.Fatalf("expected scope trash summary, got %#v", result.ScopeResults)
+	}
+
+	scopeRows, err := service.listLocalScope("AAPP-1", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"))
+	if err != nil {
+		t.Fatalf("list local scope: %v", err)
+	}
+	if len(scopeRows) != 2 {
+		t.Fatalf("expected two active rows after merge, got %#v", scopeRows)
+	}
+	foundPreserved := false
+	foundInserted := false
+	for _, row := range scopeRows {
+		if row.ID == "row-1" && row.Description == "Keep me" {
+			foundPreserved = true
+		}
+		if row.ID != "row-1" && row.Description == "Add me" {
+			foundInserted = true
+		}
+		if row.ID == "row-2" {
+			t.Fatalf("removed row should not remain active: %#v", scopeRows)
+		}
+	}
+	if !foundPreserved || !foundInserted {
+		t.Fatalf("expected preserved and inserted rows, got %#v", scopeRows)
+	}
+
+	records := listTrashRecords(t, store)
+	if len(records) != 1 {
+		t.Fatalf("expected one trash row, got %#v", records)
+	}
+	record := records[0]
+	if record.StorageScope != worklogs.TrashScopeLocal || record.SourceWorklogID == nil || *record.SourceWorklogID != "row-2" || record.ReasonCode != pullTrashReasonCode {
+		t.Fatalf("unexpected pull trash record %#v", record)
+	}
+}
+
+func TestApplyPlanClockifyReplaceFailureStillArchivesRemoteTrash(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Local desired")
+
+	client := &fakeClockifyClient{
+		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
+		tagsByID: map[string]clockify.Tag{
+			"tag-a": {ID: "tag-a", Name: "AAPP-1"},
+		},
+		entries: []clockify.TimeEntry{
+			{ID: "entry-a", ProjectID: "proj-app", Description: "Remote old", TagIDs: []string{"tag-a"}, TimeInterval: clockify.TimeInterval{Start: "2026-05-01T08:00:00Z", End: "2026-05-01T09:00:00Z"}},
+		},
+		createTimeEntryErrByIssue: map[string]error{
+			"AAPP-1": errors.New("create failed"),
+		},
+	}
+	service := NewService(store)
+	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient { return client }
+
+	cfg := testClockifyConfig(true)
+	plan, err := service.CreateClockifyPushPlan(context.Background(), cfg, mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 || plan.Items[0].PlannedAction != "replace" {
+		t.Fatalf("expected one replace item, got %#v", plan.Items)
+	}
+
+	result, err := service.ApplyPlan(cfg, plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if result.AppliedCount != 0 || result.FailedCount != 1 || result.TrashArchivedCount != 1 {
+		t.Fatalf("unexpected apply result %#v", result)
+	}
+	if got := countTrashRecords(t, store); got != 1 {
+		t.Fatalf("expected archived remote delete despite create failure, got %d", got)
+	}
+}
+
+func TestApplyPlanClockifyReplaceDeletesOnlyConflictingRemoteRows(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Keep me")
+	seedWorklogRow(t, store, "row-2", "AAPP-1", "2026-05-01T10:00:00Z", 3600, "Make me exact")
+
+	client := &fakeClockifyClient{
+		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
+		tagsByID: map[string]clockify.Tag{
+			"tag-a": {ID: "tag-a", Name: "AAPP-1"},
+		},
+		entries: []clockify.TimeEntry{
+			{ID: "entry-keep", ProjectID: "proj-app", Description: "Keep me", TagIDs: []string{"tag-a"}, TimeInterval: clockify.TimeInterval{Start: "2026-05-01T08:00:00Z", End: "2026-05-01T09:00:00Z"}},
+			{ID: "entry-conflict", ProjectID: "proj-app", Description: "Make me exact", TagIDs: []string{"tag-a"}, TimeInterval: clockify.TimeInterval{Start: "2026-05-01T10:00:00Z", End: "2026-05-01T10:30:00Z"}},
+		},
+	}
+	service := NewService(store)
+	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient { return client }
+
+	cfg := testClockifyConfig(true)
+	plan, err := service.CreateClockifyPushPlan(context.Background(), cfg, mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 || plan.Items[0].PlannedAction != "replace" {
+		t.Fatalf("expected one replace item, got %#v", plan.Items)
+	}
+
+	result, err := service.ApplyPlan(cfg, plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if result.AppliedCount != 1 || result.FailedCount != 0 || result.TrashArchivedCount != 1 {
+		t.Fatalf("unexpected apply result %#v", result)
+	}
+
+	if len(client.entries) != 2 {
+		t.Fatalf("expected two remote entries after minimal diff apply, got %#v", client.entries)
+	}
+	byID := map[string]clockify.TimeEntry{}
+	for _, entry := range client.entries {
+		byID[entry.ID] = entry
+	}
+	if _, ok := byID["entry-keep"]; !ok {
+		t.Fatalf("expected exact-match remote entry to remain, got %#v", client.entries)
+	}
+	if _, ok := byID["entry-conflict"]; ok {
+		t.Fatalf("expected conflicting remote entry to be deleted, got %#v", client.entries)
+	}
+	created, ok := byID["created-AAPP-1-2026-05-01T10:00:00Z"]
+	if !ok || created.TimeInterval.End != "2026-05-01T11:00:00Z" {
+		t.Fatalf("expected only missing desired row to be created, got %#v", client.entries)
+	}
+
+	records := listTrashRecords(t, store)
+	if len(records) != 1 || records[0].DurationSeconds != 1800 || records[0].Description != "Make me exact" {
+		t.Fatalf("expected only conflicting remote row to be archived, got %#v", records)
+	}
+}
+
+func TestApplyPlanJiraDataReplaceDeletesOnlyConflictingRemoteRows(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Keep me")
+	seedWorklogRow(t, store, "row-2", "AAPP-1", "2026-05-01T10:00:00Z", 3600, "Make me exact")
+
+	client := &fakeJiraDataClient{
+		user: jiradatacenter.User{AccountID: "u1"},
+		worklogsByIssue: map[string][]jiradatacenter.Worklog{
+			"AAPP-1": {
+				{ID: "w-keep", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "Keep me", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
+				{ID: "w-conflict", Started: "2026-05-01T10:00:00.000+0000", TimeSpentSeconds: 1800, Comment: "Make me exact", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
+			},
+		},
+	}
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient { return client }
+
+	cfg := testJiraDataConfig()
+	plan, err := service.CreateJiraDataPushPlan(context.Background(), cfg, "", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraDataPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 || plan.Items[0].PlannedAction != "replace" {
+		t.Fatalf("expected one replace item, got %#v", plan.Items)
+	}
+
+	result, err := service.ApplyPlan(cfg, plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if result.AppliedCount != 1 || result.FailedCount != 0 || result.TrashArchivedCount != 1 {
+		t.Fatalf("unexpected apply result %#v", result)
+	}
+
+	remote := client.worklogsByIssue["AAPP-1"]
+	if len(remote) != 2 {
+		t.Fatalf("expected two remote worklogs after minimal diff apply, got %#v", remote)
+	}
+	foundKeep := false
+	foundCreated := false
+	for _, item := range remote {
+		if item.ID == "w-keep" {
+			foundKeep = true
+		}
+		if item.ID == "w-conflict" {
+			t.Fatalf("expected conflicting Jira Data worklog to be deleted, got %#v", remote)
+		}
+		if item.ID == "created" && item.TimeSpentSeconds == 3600 && item.Comment == "Make me exact" {
+			foundCreated = true
+		}
+	}
+	if !foundKeep || !foundCreated {
+		t.Fatalf("expected exact match to remain and one replacement to be created, got %#v", remote)
+	}
+
+	records := listTrashRecords(t, store)
+	if len(records) != 1 || records[0].DurationSeconds != 1800 || records[0].Description != "Make me exact" {
+		t.Fatalf("expected only conflicting Jira Data row to be archived, got %#v", records)
+	}
+}
+
+func TestApplyPlanJiraCloudReplaceDeletesOnlyConflictingRemoteRows(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Keep me")
+	seedWorklogRow(t, store, "row-2", "AAPP-1", "2026-05-01T10:00:00Z", 3600, "Make me exact")
+
+	client := &fakeJiraCloudClient{
+		user: jiracloud.User{AccountID: "u1"},
+		worklogsByIssue: map[string][]jiracloud.Worklog{
+			"AAPP-1": {
+				{ID: "w-keep", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "Keep me", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+				{ID: "w-conflict", Started: "2026-05-01T10:00:00.000+0000", TimeSpentSeconds: 1800, Comment: "Make me exact", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+			},
+		},
+	}
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient { return client }
+
+	cfg := testJiraCloudConfig()
+	plan, err := service.CreateJiraCloudPushPlan(context.Background(), cfg, "", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraCloudPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 || plan.Items[0].PlannedAction != "replace" {
+		t.Fatalf("expected one replace item, got %#v", plan.Items)
+	}
+
+	result, err := service.ApplyPlan(cfg, plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if result.AppliedCount != 1 || result.FailedCount != 0 || result.TrashArchivedCount != 1 {
+		t.Fatalf("unexpected apply result %#v", result)
+	}
+
+	remote := client.worklogsByIssue["AAPP-1"]
+	if len(remote) != 2 {
+		t.Fatalf("expected two remote worklogs after minimal diff apply, got %#v", remote)
+	}
+	foundKeep := false
+	foundCreated := false
+	for _, item := range remote {
+		if item.ID == "w-keep" {
+			foundKeep = true
+		}
+		if item.ID == "w-conflict" {
+			t.Fatalf("expected conflicting Jira Cloud worklog to be deleted, got %#v", remote)
+		}
+		if item.ID == "created" && item.TimeSpentSeconds == 3600 && item.Comment == "Make me exact" {
+			foundCreated = true
+		}
+	}
+	if !foundKeep || !foundCreated {
+		t.Fatalf("expected exact match to remain and one replacement to be created, got %#v", remote)
+	}
+
+	records := listTrashRecords(t, store)
+	if len(records) != 1 || records[0].DurationSeconds != 1800 || records[0].Description != "Make me exact" {
+		t.Fatalf("expected only conflicting Jira Cloud row to be archived, got %#v", records)
+	}
+}
+
+func TestApplyPlanJiraCloudReportingReplaceDeletesOnlyConflictingRemoteRows(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Keep me")
+	seedWorklogRow(t, store, "row-2", "AAPP-1", "2026-05-01T10:00:00Z", 3600, "Make me exact")
+
+	client := &fakeJiraCloudClient{
+		user: jiracloud.User{AccountID: "u1"},
+		worklogsByIssue: map[string][]jiracloud.Worklog{
+			"REPORT-1": {
+				{ID: "w-keep", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "AAPP-1 | Keep me", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+				{ID: "w-conflict", Started: "2026-05-01T10:00:00.000+0000", TimeSpentSeconds: 1800, Comment: "AAPP-1 | Make me exact", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+			},
+		},
+	}
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient { return client }
+
+	cfg := testJiraCloudConfig()
+	plan, err := service.CreateJiraCloudPushPlan(context.Background(), cfg, "reporting", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraCloudPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 || plan.Items[0].PlannedAction != "replace" {
+		t.Fatalf("expected one reporting replace item, got %#v", plan.Items)
+	}
+
+	result, err := service.ApplyPlan(cfg, plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if result.AppliedCount != 1 || result.FailedCount != 0 || result.TrashArchivedCount != 1 {
+		t.Fatalf("unexpected apply result %#v", result)
+	}
+
+	remote := client.worklogsByIssue["REPORT-1"]
+	if len(remote) != 2 {
+		t.Fatalf("expected two reporting worklogs after minimal diff apply, got %#v", remote)
+	}
+	foundKeep := false
+	foundCreated := false
+	for _, item := range remote {
+		if item.ID == "w-keep" {
+			foundKeep = true
+		}
+		if item.ID == "w-conflict" {
+			t.Fatalf("expected conflicting reporting worklog to be deleted, got %#v", remote)
+		}
+		if item.ID == "created" && item.TimeSpentSeconds == 3600 && item.Comment == "AAPP-1 | Make me exact" {
+			foundCreated = true
+		}
+	}
+	if !foundKeep || !foundCreated {
+		t.Fatalf("expected reporting exact match to remain and one replacement to be created, got %#v", remote)
+	}
+
+	records := listTrashRecords(t, store)
+	if len(records) != 1 || records[0].DurationSeconds != 1800 || records[0].Description != "AAPP-1 | Make me exact" {
+		t.Fatalf("expected only conflicting reporting row to be archived, got %#v", records)
 	}
 }
 
@@ -2068,6 +2465,28 @@ func countTombstones(t *testing.T, store *sqlitestore.Store) int {
 		t.Fatalf("count tombstones: %v", err)
 	}
 	return count
+}
+
+func countTrashRecords(t *testing.T, store *sqlitestore.Store) int {
+	t.Helper()
+	var count int
+	if err := store.DB().QueryRow(`SELECT COUNT(1) FROM trashed_worklogs`).Scan(&count); err != nil {
+		t.Fatalf("count trash records: %v", err)
+	}
+	return count
+}
+
+func listTrashRecords(t *testing.T, store *sqlitestore.Store) []worklogs.TrashRecord {
+	t.Helper()
+	service := worklogs.NewService(store)
+	items, _, err := service.ListTrash(config.EffectiveConfig{Location: time.UTC}, worklogs.ListFilters{
+		From: "2026-05-01",
+		To:   "2026-05-31",
+	})
+	if err != nil {
+		t.Fatalf("list trash records: %v", err)
+	}
+	return items
 }
 
 func countClockifyEntriesByTag(entries []clockify.TimeEntry, tagID string) int {
