@@ -31,7 +31,7 @@ Do not add or preserve trivial, self-evident spec detail that does not protect a
 ## Skill Alignment
 
 Future CLI work around local worklogs, planning, status, or reconcile flows must use the supporting skill at `.ruler/skills/session-worklog-creator/SKILL.md`.
-Do not let the skill drift from `specs/` or the Mermaid sequence diagrams under `sequence_diagrams/`.
+Do not let the skill drift from `specs/`.
 If one changes, update the other in the same task.
 
 ## Commit & Pull Request Guidelines
