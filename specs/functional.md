@@ -353,7 +353,7 @@ Placement rule:
 - [ ] FUNC-271: `workledger plan apply` for `plan_direction=push` shall apply apply-time remote cleanup only for remote rows inside the saved target scope that are unmatched by the saved payload before creating missing replacement worklogs.
 - [ ] FUNC-271a: `workledger plan apply` for `plan_direction=pull` shall archive local active rows removed by the saved merge into `workledger trash`.
 - [ ] FUNC-271b: `workledger plan apply` for `plan_direction=push` shall archive successfully deleted remote cleanup rows into `workledger trash`.
-- [ ] FUNC-271c: `workledger plan apply` success output shall include trash archive counts for scopes that archived rows.
+- [ ] FUNC-271c: human-readable `workledger plan apply` success output shall include the aggregate trash archive count for the execution summary.
 
 ## Plan Retry
 - [ ] FUNC-272: `workledger plan retry` shall load the requested saved plan by ID.

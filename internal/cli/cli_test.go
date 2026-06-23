@@ -4953,6 +4953,55 @@ func TestPlanApplyJSONIncludesTrashSummary(t *testing.T) {
 	}
 }
 
+func TestPlanApplyPlainOutputOmitsPerScopeTrashLines(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTCAndClockify(t)
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	first := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-01T08:00:00Z", "--duration", "1h", "--description", "Keep me", "--output", "json")
+	if first.code != 0 {
+		t.Fatalf("seed first worklog failed: %s", first.stdout)
+	}
+	second := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-01T10:00:00Z", "--duration", "30m", "--description", "Remove me", "--output", "json")
+	if second.code != 0 {
+		t.Fatalf("seed second worklog failed: %s", second.stdout)
+	}
+
+	effective, err := config.LoadEffective()
+	if err != nil {
+		t.Fatalf("load effective config: %v", err)
+	}
+	fingerprint, err := config.FingerprintEffective(effective)
+	if err != nil {
+		t.Fatalf("fingerprint config: %v", err)
+	}
+
+	seedSavedPlan(t, savedPlanSeed{
+		planID:      "plan-trash-summary-plain",
+		fingerprint: fingerprint,
+		itemID:      "item-trash-summary-plain",
+		direction:   "pull",
+		adapter:     "clockify",
+		target:      "ABC-123",
+		action:      "merge",
+		payloadJSON: `[{"issue_key":"ABC-123","started_at_utc":"2026-05-01T08:00:00Z","duration_seconds":3600,"description":"Keep me"},{"issue_key":"ABC-123","started_at_utc":"2026-05-01T09:00:00Z","duration_seconds":900,"description":"Add me"}]`,
+	})
+
+	result := runCLI(t, "plan", "apply", "plan-trash-summary-plain")
+	if result.code != 0 {
+		t.Fatalf("plan apply failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "plan_id=plan-trash-summary-plain applied=1 failed=0 skipped=0 mixed_result=false noop=false trashed=1\n") {
+		t.Fatalf("expected summary trash count in plain output, got %q", result.stdout)
+	}
+	if strings.Contains(result.stdout, "scope=ABC-123") || strings.Contains(result.stdout, "plan_item_id=item-trash-summary-plain trashed=1") {
+		t.Fatalf("expected no per-scope trash lines in plain output, got %q", result.stdout)
+	}
+}
+
 func TestPlanReconcilePlainProgressWritesStderrOnly(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTCAndClockify(t)

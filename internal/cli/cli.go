@@ -4865,9 +4865,6 @@ func (a *app) renderPlanExecutionResult(mode string, result reconcile.ApplyResul
 			_, _ = fmt.Fprintf(a.stdout, "plan_id=%s applied=%d failed=%d skipped=%d mixed_result=%t noop=%t trashed=%d\n", result.PlanID, result.AppliedCount, result.FailedCount, result.SkippedCount, result.MixedResult, result.NoOp, result.TrashArchivedCount)
 		}
 		for _, item := range result.ScopeResults {
-			if item.TrashArchivedCount > 0 {
-				_, _ = fmt.Fprintf(a.stdout, "scope=%s plan_item_id=%s trashed=%d\n", item.ScopeLabel, item.PlanItemID, item.TrashArchivedCount)
-			}
 			for _, warning := range item.Warnings {
 				_, _ = fmt.Fprintf(a.stdout, "scope=%s warning=%s\n", item.ScopeLabel, warning)
 			}
