@@ -362,7 +362,7 @@ func (a *app) newInitCommand() *cobra.Command {
 			if err != nil {
 				var bootstrapErr *sqlitestore.BootstrapError
 				if errors.As(err, &bootstrapErr) {
-					return a.failUnrecoverableSQLiteInit(mode, bootstrapErr.Path)
+					return a.failUnrecoverableSQLite(mode, bootstrapErr.Path)
 				}
 				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
 			}
@@ -3942,7 +3942,7 @@ func (a *app) loadStore(mode string, requireWrite bool, operation string) (confi
 	effective, err := config.LoadEffective()
 	if err != nil {
 		if errors.Is(err, config.ErrConfigNotFound) {
-			return config.EffectiveConfig{}, nil, nil, a.fail(mode, 2, "validation_error", "config file does not exist", nil)
+			return config.EffectiveConfig{}, nil, nil, a.fail(mode, 2, "validation_error", "config file does not exist; run workledger init", nil)
 		}
 		var validationErr config.ValidationErrors
 		if errors.As(err, &validationErr) {
@@ -3963,8 +3963,17 @@ func (a *app) loadStore(mode string, requireWrite bool, operation string) (confi
 
 	store, err := sqlitestore.OpenExisting(effective.SQLitePath)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, sqlitestore.ErrSchemaMissing) {
-			return config.EffectiveConfig{}, nil, nil, a.fail(mode, 2, "validation_error", "sqlite store is not initialized; run workledger init", nil)
+		if errors.Is(err, os.ErrNotExist) {
+			return config.EffectiveConfig{}, nil, nil, a.failSQLiteStoreNotReady(mode)
+		}
+		var storeErr *sqlitestore.OpenExistingError
+		if errors.As(err, &storeErr) {
+			switch storeErr.Kind {
+			case sqlitestore.OpenExistingErrorSchemaMismatch:
+				return config.EffectiveConfig{}, nil, nil, a.failSQLiteStoreSchemaMismatch(mode)
+			case sqlitestore.OpenExistingErrorCorrupt, sqlitestore.OpenExistingErrorIncompatible:
+				return config.EffectiveConfig{}, nil, nil, a.failUnrecoverableSQLite(mode, storeErr.Path)
+			}
 		}
 		return config.EffectiveConfig{}, nil, nil, a.fail(mode, 1, "unexpected_error", err.Error(), nil)
 	}
@@ -4854,7 +4863,15 @@ func (a *app) fail(mode string, code int, errorCode, message string, details any
 	return exitError{code: code}
 }
 
-func (a *app) failUnrecoverableSQLiteInit(mode, sqlitePath string) error {
+func (a *app) failSQLiteStoreNotReady(mode string) error {
+	return a.fail(mode, 2, "sqlite_store_not_ready", "SQLite store is not ready; run workledger init.", nil)
+}
+
+func (a *app) failSQLiteStoreSchemaMismatch(mode string) error {
+	return a.fail(mode, 2, "sqlite_store_schema_mismatch", "SQLite store schema is outdated or mismatched; run workledger init to repair it.", nil)
+}
+
+func (a *app) failUnrecoverableSQLite(mode, sqlitePath string) error {
 	message := "Local SQLite store is corrupt or incompatible and cannot be repaired additively."
 	next := "Next step: inspect, replace, or restore the SQLite file, then rerun workledger init."
 

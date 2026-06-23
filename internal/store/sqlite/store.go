@@ -13,8 +13,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var ErrSchemaMissing = errors.New("sqlite schema missing")
-
 type BootstrapErrorKind string
 
 const (
@@ -33,6 +31,28 @@ func (e *BootstrapError) Error() string {
 }
 
 func (e *BootstrapError) Unwrap() error {
+	return e.Err
+}
+
+type OpenExistingErrorKind string
+
+const (
+	OpenExistingErrorSchemaMismatch OpenExistingErrorKind = "schema_mismatch"
+	OpenExistingErrorCorrupt        OpenExistingErrorKind = "corrupt"
+	OpenExistingErrorIncompatible   OpenExistingErrorKind = "incompatible"
+)
+
+type OpenExistingError struct {
+	Kind OpenExistingErrorKind
+	Path string
+	Err  error
+}
+
+func (e *OpenExistingError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *OpenExistingError) Unwrap() error {
 	return e.Err
 }
 
@@ -229,17 +249,12 @@ func OpenExisting(path string) (*Store, error) {
 	store := &Store{db: db}
 	if err := store.pingAndConfigure(); err != nil {
 		_ = db.Close()
-		return nil, err
+		return nil, wrapOpenExistingError(path, err)
 	}
 
-	ok, err := store.hasRequiredTables()
-	if err != nil {
+	if err := store.validateSchemaCompatibility(); err != nil {
 		_ = db.Close()
-		return nil, err
-	}
-	if !ok {
-		_ = db.Close()
-		return nil, ErrSchemaMissing
+		return nil, wrapOpenExistingError(path, err)
 	}
 
 	return store, nil
@@ -343,22 +358,6 @@ func (s *Store) hasColumn(tx *sql.Tx, table, column string) (bool, error) {
 	return false, rows.Err()
 }
 
-func (s *Store) hasRequiredTables() (bool, error) {
-	required := []string{"worklogs", "worklog_tombstones"}
-	for _, table := range required {
-		var name string
-		err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`, table).Scan(&name)
-		if err == sql.ErrNoRows {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-	}
-
-	return true, nil
-}
-
 func (s *Store) schemaFingerprint() (string, error) {
 	rows, err := s.db.Query(`SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%' ORDER BY name`)
 	if err != nil {
@@ -386,42 +385,192 @@ type columnRequirement struct {
 	notNull bool
 }
 
-var requiredSchema = map[string][]columnRequirement{
-	"worklogs": {
-		{column: "id", typ: "TEXT", notNull: false},
-		{column: "issue_key", typ: "TEXT", notNull: true},
-		{column: "started_at_utc", typ: "TEXT", notNull: true},
-		{column: "duration_seconds", typ: "INTEGER", notNull: true},
-		{column: "description", typ: "TEXT", notNull: true},
-		{column: "created_at", typ: "TEXT", notNull: true},
-		{column: "updated_at", typ: "TEXT", notNull: true},
+type tableRequirement struct {
+	table   string
+	columns []columnRequirement
+}
+
+type schemaValidationErrorKind string
+
+const (
+	schemaValidationErrorMismatch     schemaValidationErrorKind = "mismatch"
+	schemaValidationErrorIncompatible schemaValidationErrorKind = "incompatible"
+)
+
+type schemaValidationError struct {
+	Kind schemaValidationErrorKind
+	Err  error
+}
+
+func (e *schemaValidationError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *schemaValidationError) Unwrap() error {
+	return e.Err
+}
+
+var requiredSchema = []tableRequirement{
+	{
+		table: "worklogs",
+		columns: []columnRequirement{
+			{column: "id", typ: "TEXT", notNull: false},
+			{column: "issue_key", typ: "TEXT", notNull: true},
+			{column: "started_at_utc", typ: "TEXT", notNull: true},
+			{column: "duration_seconds", typ: "INTEGER", notNull: true},
+			{column: "description", typ: "TEXT", notNull: true},
+			{column: "created_at", typ: "TEXT", notNull: true},
+			{column: "updated_at", typ: "TEXT", notNull: true},
+		},
 	},
-	"worklog_tombstones": {
-		{column: "worklog_id", typ: "TEXT", notNull: false},
-		{column: "issue_key", typ: "TEXT", notNull: true},
-		{column: "started_at_utc", typ: "TEXT", notNull: true},
-		{column: "duration_seconds", typ: "INTEGER", notNull: true},
-		{column: "description", typ: "TEXT", notNull: true},
-		{column: "deleted_at", typ: "TEXT", notNull: true},
+	{
+		table: "worklog_tombstones",
+		columns: []columnRequirement{
+			{column: "worklog_id", typ: "TEXT", notNull: false},
+			{column: "issue_key", typ: "TEXT", notNull: true},
+			{column: "started_at_utc", typ: "TEXT", notNull: true},
+			{column: "duration_seconds", typ: "INTEGER", notNull: true},
+			{column: "description", typ: "TEXT", notNull: true},
+			{column: "deleted_at", typ: "TEXT", notNull: true},
+		},
+	},
+	{
+		table: "trashed_worklogs",
+		columns: []columnRequirement{
+			{column: "id", typ: "TEXT", notNull: false},
+			{column: "storage_scope", typ: "TEXT", notNull: true},
+			{column: "source_worklog_id", typ: "TEXT", notNull: false},
+			{column: "issue_key", typ: "TEXT", notNull: true},
+			{column: "started_at_utc", typ: "TEXT", notNull: true},
+			{column: "duration_seconds", typ: "INTEGER", notNull: true},
+			{column: "description", typ: "TEXT", notNull: true},
+			{column: "trashed_at", typ: "TEXT", notNull: true},
+			{column: "reason_code", typ: "TEXT", notNull: true},
+			{column: "reason_detail", typ: "TEXT", notNull: true},
+			{column: "plan_direction", typ: "TEXT", notNull: true},
+			{column: "origin_plan_id", typ: "TEXT", notNull: false},
+			{column: "origin_plan_item_id", typ: "TEXT", notNull: false},
+			{column: "adapter_family", typ: "TEXT", notNull: false},
+			{column: "adapter_instance", typ: "TEXT", notNull: false},
+		},
+	},
+	{
+		table: "issue_metadata",
+		columns: []columnRequirement{
+			{column: "issue_key", typ: "TEXT", notNull: false},
+			{column: "max_estimate_seconds", typ: "INTEGER", notNull: false},
+			{column: "source_adapter_family", typ: "TEXT", notNull: true},
+			{column: "source_adapter_instance", typ: "TEXT", notNull: true},
+			{column: "refreshed_at", typ: "TEXT", notNull: true},
+		},
+	},
+	{
+		table: "saved_plans",
+		columns: []columnRequirement{
+			{column: "id", typ: "TEXT", notNull: false},
+			{column: "plan_direction", typ: "TEXT", notNull: true},
+			{column: "adapter_family", typ: "TEXT", notNull: true},
+			{column: "adapter_families_json", typ: "TEXT", notNull: true},
+			{column: "target_instances_json", typ: "TEXT", notNull: true},
+			{column: "config_fingerprint", typ: "TEXT", notNull: true},
+			{column: "window_from_utc", typ: "TEXT", notNull: true},
+			{column: "window_to_utc", typ: "TEXT", notNull: true},
+			{column: "created_at", typ: "TEXT", notNull: true},
+			{column: "aggregate_status", typ: "TEXT", notNull: true},
+			{column: "applied_at", typ: "TEXT", notNull: false},
+		},
+	},
+	{
+		table: "saved_plan_items",
+		columns: []columnRequirement{
+			{column: "id", typ: "TEXT", notNull: false},
+			{column: "plan_id", typ: "TEXT", notNull: true},
+			{column: "issue_key", typ: "TEXT", notNull: true},
+			{column: "plan_direction", typ: "TEXT", notNull: true},
+			{column: "target_adapter_family", typ: "TEXT", notNull: true},
+			{column: "target_adapter_instance", typ: "TEXT", notNull: true},
+			{column: "target_issue", typ: "TEXT", notNull: true},
+			{column: "route_profile", typ: "TEXT", notNull: false},
+			{column: "window_from_utc", typ: "TEXT", notNull: true},
+			{column: "window_to_utc", typ: "TEXT", notNull: true},
+			{column: "plan_status", typ: "TEXT", notNull: true},
+			{column: "planned_action", typ: "TEXT", notNull: true},
+			{column: "comparison_status", typ: "TEXT", notNull: true},
+			{column: "reason_code", typ: "TEXT", notNull: true},
+			{column: "reason_detail", typ: "TEXT", notNull: true},
+			{column: "payload_json", typ: "TEXT", notNull: true},
+			{column: "inspection_summary_json", typ: "TEXT", notNull: true},
+			{column: "delivery_key", typ: "TEXT", notNull: true},
+			{column: "content_hash", typ: "TEXT", notNull: true},
+			{column: "local_row_count", typ: "INTEGER", notNull: true},
+			{column: "local_total_seconds", typ: "INTEGER", notNull: true},
+			{column: "remote_row_count", typ: "INTEGER", notNull: true},
+			{column: "remote_total_seconds", typ: "INTEGER", notNull: true},
+			{column: "applied_state", typ: "TEXT", notNull: true},
+			{column: "applied_at", typ: "TEXT", notNull: false},
+			{column: "apply_message", typ: "TEXT", notNull: true},
+		},
+	},
+	{
+		table: "saved_plan_findings",
+		columns: []columnRequirement{
+			{column: "id", typ: "TEXT", notNull: false},
+			{column: "plan_id", typ: "TEXT", notNull: true},
+			{column: "source_row_id", typ: "TEXT", notNull: true},
+			{column: "reason_code", typ: "TEXT", notNull: true},
+			{column: "reason_detail", typ: "TEXT", notNull: true},
+			{column: "payload_json", typ: "TEXT", notNull: true},
+		},
+	},
+	{
+		table: "delivery_attempts",
+		columns: []columnRequirement{
+			{column: "id", typ: "TEXT", notNull: false},
+			{column: "plan_id", typ: "TEXT", notNull: true},
+			{column: "plan_item_id", typ: "TEXT", notNull: true},
+			{column: "attempt_state", typ: "TEXT", notNull: true},
+			{column: "message", typ: "TEXT", notNull: true},
+			{column: "created_at", typ: "TEXT", notNull: true},
+		},
 	},
 }
 
 func (s *Store) validateSchemaCompatibility() error {
-	for table, columns := range requiredSchema {
-		actual, err := s.tableColumns(table)
+	for _, requirement := range requiredSchema {
+		exists, err := s.tableExists(requirement.table)
 		if err != nil {
 			return err
 		}
-		for _, requirement := range columns {
-			column, ok := actual[requirement.column]
+		if !exists {
+			return &schemaValidationError{
+				Kind: schemaValidationErrorMismatch,
+				Err:  fmt.Errorf("table %s is missing", requirement.table),
+			}
+		}
+
+		actual, err := s.tableColumns(requirement.table)
+		if err != nil {
+			return err
+		}
+		for _, columnRequirement := range requirement.columns {
+			column, ok := actual[columnRequirement.column]
 			if !ok {
-				return fmt.Errorf("table %s is missing required column %s", table, requirement.column)
+				return &schemaValidationError{
+					Kind: schemaValidationErrorMismatch,
+					Err:  fmt.Errorf("table %s is missing required column %s", requirement.table, columnRequirement.column),
+				}
 			}
-			if normalizeSQLiteType(column.typ) != requirement.typ {
-				return fmt.Errorf("table %s column %s has type %s; expected %s", table, requirement.column, column.typ, requirement.typ)
+			if normalizeSQLiteType(column.typ) != columnRequirement.typ {
+				return &schemaValidationError{
+					Kind: schemaValidationErrorIncompatible,
+					Err:  fmt.Errorf("table %s column %s has type %s; expected %s", requirement.table, columnRequirement.column, column.typ, columnRequirement.typ),
+				}
 			}
-			if column.notNull != requirement.notNull {
-				return fmt.Errorf("table %s column %s has not_null=%t; expected %t", table, requirement.column, column.notNull, requirement.notNull)
+			if column.notNull != columnRequirement.notNull {
+				return &schemaValidationError{
+					Kind: schemaValidationErrorIncompatible,
+					Err:  fmt.Errorf("table %s column %s has not_null=%t; expected %t", requirement.table, columnRequirement.column, column.notNull, columnRequirement.notNull),
+				}
 			}
 		}
 	}
@@ -431,6 +580,18 @@ func (s *Store) validateSchemaCompatibility() error {
 type tableColumn struct {
 	typ     string
 	notNull bool
+}
+
+func (s *Store) tableExists(table string) (bool, error) {
+	var name string
+	err := s.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`, table).Scan(&name)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) tableColumns(table string) (map[string]tableColumn, error) {
@@ -470,11 +631,37 @@ func wrapBootstrapError(path string, existed bool, err error) error {
 	if !existed || err == nil {
 		return err
 	}
+	var schemaErr *schemaValidationError
+	if errors.As(err, &schemaErr) {
+		return &BootstrapError{Kind: BootstrapErrorIncompatible, Path: path, Err: err}
+	}
 	if isSQLiteCorruptionError(err) {
 		return &BootstrapError{Kind: BootstrapErrorCorrupt, Path: path, Err: err}
 	}
 	if isSQLiteIncompatibilityError(err) {
 		return &BootstrapError{Kind: BootstrapErrorIncompatible, Path: path, Err: err}
+	}
+	return err
+}
+
+func wrapOpenExistingError(path string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var schemaErr *schemaValidationError
+	if errors.As(err, &schemaErr) {
+		kind := OpenExistingErrorIncompatible
+		if schemaErr.Kind == schemaValidationErrorMismatch {
+			kind = OpenExistingErrorSchemaMismatch
+		}
+		return &OpenExistingError{Kind: kind, Path: path, Err: err}
+	}
+	if isSQLiteCorruptionError(err) {
+		return &OpenExistingError{Kind: OpenExistingErrorCorrupt, Path: path, Err: err}
+	}
+	if isSQLiteIncompatibilityError(err) {
+		return &OpenExistingError{Kind: OpenExistingErrorIncompatible, Path: path, Err: err}
 	}
 	return err
 }

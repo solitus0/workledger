@@ -108,6 +108,7 @@ Placement rule:
 - [ ] NFR-082: CLI flags shall override YAML where applicable.
 - [ ] NFR-083: Hidden configuration precedence rules shall not be introduced.
 - [ ] NFR-084: Automatic config mutation shall not be introduced outside explicit setup or init flows.
+- [ ] NFR-084a: Automatic SQLite schema creation or repair shall not be introduced outside explicit `init` flows.
 - [ ] NFR-085: Formatting-only YAML changes shall not invalidate a saved plan.
 - [ ] NFR-086: Secret rotation alone shall not invalidate a saved plan fingerprint.
 
@@ -407,7 +408,9 @@ Placement rule:
 - [ ] NFR-336: Plan apply shall build a deterministic execution order by resolved target issue key, target adapter family, target adapter instance, window start, and stable saved plan item ID.
 - [ ] NFR-337: Plan execution results shall sort and render deterministically after execution finishes.
 - [ ] NFR-338: Machine-readable reason codes shall be used instead of raw `error` values in user-facing result models, including `sqlite_unrecoverable` for unrecoverable SQLite corruption or incompatibility during `workledger init`.
-- [ ] NFR-338a: Local SQLite write-path storage failures shall use machine-readable reason code `local_storage_not_writable`.
+- [ ] NFR-338a: Ordinary command JSON failures for missing local SQLite state shall use `sqlite_store_not_ready`.
+- [ ] NFR-338b: Ordinary command JSON failures for outdated or mismatched local SQLite schema shall use `sqlite_store_schema_mismatch`.
+- [ ] NFR-338c: Local SQLite write-path storage failures shall use machine-readable reason code `local_storage_not_writable`.
 
 ## Security
 - [ ] NFR-339: The config directory shall be created with private permissions suitable for local credentials.

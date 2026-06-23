@@ -216,6 +216,94 @@ func TestStatusWithoutConfigSuggestsInit(t *testing.T) {
 	}
 }
 
+func TestWorklogsListRejectsMissingSQLiteStoreWithInitGuidance(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	result := runCLI(t, "worklogs", "list", "--today")
+	if result.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "SQLite store is not ready; run workledger init.") {
+		t.Fatalf("expected sqlite init guidance, got stdout=%s stderr=%s", result.stdout, result.stderr)
+	}
+}
+
+func TestTrashListRejectsOutdatedSQLiteStoreBeforeRuntimeSQL(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	sqlitePath := filepath.Join(t.TempDir(), "worklogs.db")
+	writeConfigAtPath(t, sqlitePath)
+	seedLegacySQLiteStoreMissingTrashTable(t, sqlitePath)
+
+	result := runCLI(t, "trash", "list", "--today", "--output", "json")
+	if result.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if strings.Contains(result.stdout, "no such table") {
+		t.Fatalf("expected startup validation failure, got %s", result.stdout)
+	}
+	payload := decodeErrorPayload(t, result.stdout)
+	if payload["code"] != "sqlite_store_schema_mismatch" {
+		t.Fatalf("expected sqlite_store_schema_mismatch, got %s", result.stdout)
+	}
+	if payload["message"] != "SQLite store schema is outdated or mismatched; run workledger init to repair it." {
+		t.Fatalf("unexpected message %s", result.stdout)
+	}
+}
+
+func TestPlanApplyRejectsOutdatedSQLiteStoreBeforeRuntimeSQL(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	sqlitePath := filepath.Join(t.TempDir(), "worklogs.db")
+	writeConfigAtPath(t, sqlitePath)
+	seedLegacySQLiteStoreMissingSavedPlanItemDeliveryKey(t, sqlitePath)
+
+	result := runCLI(t, "plan", "apply", "plan-legacy", "--output", "json")
+	if result.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if strings.Contains(result.stdout, "no such column") {
+		t.Fatalf("expected startup validation failure, got %s", result.stdout)
+	}
+	payload := decodeErrorPayload(t, result.stdout)
+	if payload["code"] != "sqlite_store_schema_mismatch" {
+		t.Fatalf("expected sqlite_store_schema_mismatch, got %s", result.stdout)
+	}
+	if payload["message"] != "SQLite store schema is outdated or mismatched; run workledger init to repair it." {
+		t.Fatalf("unexpected message %s", result.stdout)
+	}
+}
+
+func TestWorklogsListKeepsDedicatedUnrecoverableSQLiteFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	sqlitePath := filepath.Join(t.TempDir(), "worklogs.db")
+	if err := os.WriteFile(sqlitePath, []byte("not a sqlite database"), 0o600); err != nil {
+		t.Fatalf("seed invalid sqlite: %v", err)
+	}
+	writeConfigAtPath(t, sqlitePath)
+
+	result := runCLI(t, "worklogs", "list", "--today", "--output", "json")
+	if result.code != 1 {
+		t.Fatalf("expected exit 1, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	payload := decodeJSONMap(t, []byte(result.stdout))
+	if payload["reason"] != "sqlite_unrecoverable" {
+		t.Fatalf("expected sqlite_unrecoverable reason, got %#v", payload["reason"])
+	}
+	if payload["message"] != "Local SQLite store is corrupt or incompatible and cannot be repaired additively." {
+		t.Fatalf("unexpected message %#v", payload["message"])
+	}
+	if payload["sqlite_path"] != sqlitePath {
+		t.Fatalf("expected sqlite_path %s, got %#v", sqlitePath, payload["sqlite_path"])
+	}
+	if !strings.Contains(result.stderr, "sqlite_path: "+sqlitePath) {
+		t.Fatalf("expected stderr diagnostic path, got %s", result.stderr)
+	}
+}
+
 func TestInitValidateAndListEmptyForToday(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
@@ -6672,6 +6760,17 @@ func decodeJSONMap(t *testing.T, data []byte) map[string]any {
 	return payload
 }
 
+func decodeErrorPayload(t *testing.T, raw string) map[string]any {
+	t.Helper()
+
+	payload := decodeJSONMap(t, []byte(raw))
+	errorPayload, ok := payload["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error object, got %s", raw)
+	}
+	return errorPayload
+}
+
 func statusItems(t *testing.T, raw string) []map[string]any {
 	t.Helper()
 
@@ -6747,6 +6846,156 @@ func writeConfigContent(t *testing.T, content string) {
 	}
 	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
+	}
+}
+
+func seedLegacySQLiteStoreMissingTrashTable(t *testing.T, sqlitePath string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", sqlitePath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	statements := []string{
+		`CREATE TABLE worklogs (
+			id TEXT PRIMARY KEY,
+			issue_key TEXT NOT NULL,
+			started_at_utc TEXT NOT NULL,
+			duration_seconds INTEGER NOT NULL,
+			description TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE worklog_tombstones (
+			worklog_id TEXT PRIMARY KEY,
+			issue_key TEXT NOT NULL,
+			started_at_utc TEXT NOT NULL,
+			duration_seconds INTEGER NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			deleted_at TEXT NOT NULL
+		)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("seed legacy schema: %v", err)
+		}
+	}
+}
+
+func seedLegacySQLiteStoreMissingSavedPlanItemDeliveryKey(t *testing.T, sqlitePath string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", sqlitePath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	statements := []string{
+		`CREATE TABLE worklogs (
+			id TEXT PRIMARY KEY,
+			issue_key TEXT NOT NULL,
+			started_at_utc TEXT NOT NULL,
+			duration_seconds INTEGER NOT NULL,
+			description TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE worklog_tombstones (
+			worklog_id TEXT PRIMARY KEY,
+			issue_key TEXT NOT NULL,
+			started_at_utc TEXT NOT NULL,
+			duration_seconds INTEGER NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			deleted_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE trashed_worklogs (
+			id TEXT PRIMARY KEY,
+			storage_scope TEXT NOT NULL,
+			source_worklog_id TEXT NULL,
+			issue_key TEXT NOT NULL,
+			started_at_utc TEXT NOT NULL,
+			duration_seconds INTEGER NOT NULL,
+			description TEXT NOT NULL,
+			trashed_at TEXT NOT NULL,
+			reason_code TEXT NOT NULL,
+			reason_detail TEXT NOT NULL,
+			plan_direction TEXT NOT NULL,
+			origin_plan_id TEXT NULL,
+			origin_plan_item_id TEXT NULL,
+			adapter_family TEXT NULL,
+			adapter_instance TEXT NULL
+		)`,
+		`CREATE TABLE issue_metadata (
+			issue_key TEXT PRIMARY KEY,
+			max_estimate_seconds INTEGER NULL,
+			source_adapter_family TEXT NOT NULL,
+			source_adapter_instance TEXT NOT NULL,
+			refreshed_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE saved_plans (
+			id TEXT PRIMARY KEY,
+			plan_direction TEXT NOT NULL,
+			adapter_family TEXT NOT NULL,
+			adapter_families_json TEXT NOT NULL DEFAULT '[]',
+			target_instances_json TEXT NOT NULL DEFAULT '[]',
+			config_fingerprint TEXT NOT NULL,
+			window_from_utc TEXT NOT NULL,
+			window_to_utc TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			aggregate_status TEXT NOT NULL,
+			applied_at TEXT NULL
+		)`,
+		`CREATE TABLE saved_plan_items (
+			id TEXT PRIMARY KEY,
+			plan_id TEXT NOT NULL,
+			issue_key TEXT NOT NULL,
+			plan_direction TEXT NOT NULL DEFAULT 'pull',
+			target_adapter_family TEXT NOT NULL DEFAULT '',
+			target_adapter_instance TEXT NOT NULL DEFAULT '',
+			target_issue TEXT NOT NULL DEFAULT '',
+			route_profile TEXT NULL,
+			window_from_utc TEXT NOT NULL,
+			window_to_utc TEXT NOT NULL,
+			plan_status TEXT NOT NULL,
+			planned_action TEXT NOT NULL,
+			comparison_status TEXT NOT NULL,
+			reason_code TEXT NOT NULL,
+			reason_detail TEXT NOT NULL,
+			payload_json TEXT NOT NULL,
+			inspection_summary_json TEXT NOT NULL DEFAULT '{}',
+			content_hash TEXT NOT NULL,
+			local_row_count INTEGER NOT NULL,
+			local_total_seconds INTEGER NOT NULL,
+			remote_row_count INTEGER NOT NULL,
+			remote_total_seconds INTEGER NOT NULL,
+			applied_state TEXT NOT NULL,
+			applied_at TEXT NULL,
+			apply_message TEXT NOT NULL
+		)`,
+		`CREATE TABLE saved_plan_findings (
+			id TEXT PRIMARY KEY,
+			plan_id TEXT NOT NULL,
+			source_row_id TEXT NOT NULL,
+			reason_code TEXT NOT NULL,
+			reason_detail TEXT NOT NULL,
+			payload_json TEXT NOT NULL
+		)`,
+		`CREATE TABLE delivery_attempts (
+			id TEXT PRIMARY KEY,
+			plan_id TEXT NOT NULL,
+			plan_item_id TEXT NOT NULL,
+			attempt_state TEXT NOT NULL,
+			message TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("seed legacy schema: %v", err)
+		}
 	}
 }
 

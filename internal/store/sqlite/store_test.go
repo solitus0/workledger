@@ -206,3 +206,189 @@ func TestBootstrapCreatesTrashTableAndIndexes(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenExistingRejectsSchemaMissingTrashTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+	seedLegacyStoreMissingTrashTable(t, path)
+
+	_, err := OpenExisting(path)
+	if err == nil {
+		t.Fatal("expected open existing error")
+	}
+
+	var openErr *OpenExistingError
+	if !errors.As(err, &openErr) {
+		t.Fatalf("expected open existing error type, got %T", err)
+	}
+	if openErr.Kind != OpenExistingErrorSchemaMismatch {
+		t.Fatalf("expected schema mismatch error kind, got %s", openErr.Kind)
+	}
+}
+
+func TestOpenExistingRejectsSchemaMissingSavedPlanItemDeliveryKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+	seedLegacyStoreMissingSavedPlanItemDeliveryKey(t, path)
+
+	_, err := OpenExisting(path)
+	if err == nil {
+		t.Fatal("expected open existing error")
+	}
+
+	var openErr *OpenExistingError
+	if !errors.As(err, &openErr) {
+		t.Fatalf("expected open existing error type, got %T", err)
+	}
+	if openErr.Kind != OpenExistingErrorSchemaMismatch {
+		t.Fatalf("expected schema mismatch error kind, got %s", openErr.Kind)
+	}
+}
+
+func seedLegacyStoreMissingTrashTable(t *testing.T, path string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	statements := []string{
+		`CREATE TABLE worklogs (
+			id TEXT PRIMARY KEY,
+			issue_key TEXT NOT NULL,
+			started_at_utc TEXT NOT NULL,
+			duration_seconds INTEGER NOT NULL,
+			description TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE worklog_tombstones (
+			worklog_id TEXT PRIMARY KEY,
+			issue_key TEXT NOT NULL,
+			started_at_utc TEXT NOT NULL,
+			duration_seconds INTEGER NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			deleted_at TEXT NOT NULL
+		)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("seed legacy schema: %v", err)
+		}
+	}
+}
+
+func seedLegacyStoreMissingSavedPlanItemDeliveryKey(t *testing.T, path string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	statements := []string{
+		`CREATE TABLE worklogs (
+			id TEXT PRIMARY KEY,
+			issue_key TEXT NOT NULL,
+			started_at_utc TEXT NOT NULL,
+			duration_seconds INTEGER NOT NULL,
+			description TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE worklog_tombstones (
+			worklog_id TEXT PRIMARY KEY,
+			issue_key TEXT NOT NULL,
+			started_at_utc TEXT NOT NULL,
+			duration_seconds INTEGER NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			deleted_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE trashed_worklogs (
+			id TEXT PRIMARY KEY,
+			storage_scope TEXT NOT NULL,
+			source_worklog_id TEXT NULL,
+			issue_key TEXT NOT NULL,
+			started_at_utc TEXT NOT NULL,
+			duration_seconds INTEGER NOT NULL,
+			description TEXT NOT NULL,
+			trashed_at TEXT NOT NULL,
+			reason_code TEXT NOT NULL,
+			reason_detail TEXT NOT NULL,
+			plan_direction TEXT NOT NULL,
+			origin_plan_id TEXT NULL,
+			origin_plan_item_id TEXT NULL,
+			adapter_family TEXT NULL,
+			adapter_instance TEXT NULL
+		)`,
+		`CREATE TABLE issue_metadata (
+			issue_key TEXT PRIMARY KEY,
+			max_estimate_seconds INTEGER NULL,
+			source_adapter_family TEXT NOT NULL,
+			source_adapter_instance TEXT NOT NULL,
+			refreshed_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE saved_plans (
+			id TEXT PRIMARY KEY,
+			plan_direction TEXT NOT NULL,
+			adapter_family TEXT NOT NULL,
+			adapter_families_json TEXT NOT NULL DEFAULT '[]',
+			target_instances_json TEXT NOT NULL DEFAULT '[]',
+			config_fingerprint TEXT NOT NULL,
+			window_from_utc TEXT NOT NULL,
+			window_to_utc TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			aggregate_status TEXT NOT NULL,
+			applied_at TEXT NULL
+		)`,
+		`CREATE TABLE saved_plan_items (
+			id TEXT PRIMARY KEY,
+			plan_id TEXT NOT NULL,
+			issue_key TEXT NOT NULL,
+			plan_direction TEXT NOT NULL DEFAULT 'pull',
+			target_adapter_family TEXT NOT NULL DEFAULT '',
+			target_adapter_instance TEXT NOT NULL DEFAULT '',
+			target_issue TEXT NOT NULL DEFAULT '',
+			route_profile TEXT NULL,
+			window_from_utc TEXT NOT NULL,
+			window_to_utc TEXT NOT NULL,
+			plan_status TEXT NOT NULL,
+			planned_action TEXT NOT NULL,
+			comparison_status TEXT NOT NULL,
+			reason_code TEXT NOT NULL,
+			reason_detail TEXT NOT NULL,
+			payload_json TEXT NOT NULL,
+			inspection_summary_json TEXT NOT NULL DEFAULT '{}',
+			content_hash TEXT NOT NULL,
+			local_row_count INTEGER NOT NULL,
+			local_total_seconds INTEGER NOT NULL,
+			remote_row_count INTEGER NOT NULL,
+			remote_total_seconds INTEGER NOT NULL,
+			applied_state TEXT NOT NULL,
+			applied_at TEXT NULL,
+			apply_message TEXT NOT NULL
+		)`,
+		`CREATE TABLE saved_plan_findings (
+			id TEXT PRIMARY KEY,
+			plan_id TEXT NOT NULL,
+			source_row_id TEXT NOT NULL,
+			reason_code TEXT NOT NULL,
+			reason_detail TEXT NOT NULL,
+			payload_json TEXT NOT NULL
+		)`,
+		`CREATE TABLE delivery_attempts (
+			id TEXT PRIMARY KEY,
+			plan_id TEXT NOT NULL,
+			plan_item_id TEXT NOT NULL,
+			attempt_state TEXT NOT NULL,
+			message TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("seed legacy schema: %v", err)
+		}
+	}
+}

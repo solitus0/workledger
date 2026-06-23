@@ -53,6 +53,9 @@ Placement rule:
 - [ ] FUNC-035: `workledger init` shall attempt SQLite path provisioning and schema bootstrap from configured `storage.sqlite_path` even when a valid config file already exists.
 - [ ] FUNC-036: `workledger init` shall support `table` output.
 - [ ] FUNC-037: `workledger init` shall support `json` output.
+- [ ] FUNC-037a: Ordinary commands shall never create or repair the SQLite schema during startup.
+- [ ] FUNC-037b: Ordinary commands shall fail clearly when the configured SQLite file is missing, saying the SQLite store is not ready and telling the operator to run `workledger init`.
+- [ ] FUNC-037c: Ordinary commands shall fail clearly before feature SQL runs when the configured SQLite schema is outdated or mismatched, telling the operator to run `workledger init` to repair it.
 
 ## Configuration Commands
 - [ ] FUNC-038: `workledger config validate` shall validate the effective local config without requiring adapter connectivity.
