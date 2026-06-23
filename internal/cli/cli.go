@@ -3253,22 +3253,7 @@ func (a *app) newPlanShowCommand() *cobra.Command {
 				return a.writeJSON(planJSON(plan))
 			}
 
-			rows := make([][]string, 0, len(plan.Items))
-			for _, item := range plan.Items {
-				rows = append(rows, []string{
-					item.TargetAdapterFamily,
-					displayOrDash(item.TargetAdapterInstance),
-					item.TargetIssue,
-					formatSavedPlanWindow(item.WindowFromUTC, item.WindowToUTC, effective.Location),
-					item.PlanStatus,
-					item.PlannedAction,
-					item.ComparisonStatus,
-					fmt.Sprint(item.RemoteRowCount),
-					fmt.Sprint(item.LocalRowCount),
-					item.ExecutionState,
-				})
-			}
-			return renderTable(a.stdout, []string{"TARGET_ADAPTER", "TARGET_INSTANCE", "TARGET_ISSUE", "WINDOW", "STATUS", "ACTION", "COMPARE", "REMOTE_ROWS", "LOCAL_ROWS", "EXECUTION"}, rows)
+			return renderPlanShowTable(a.stdout, effective.Location, plan.Items)
 		},
 	}
 
@@ -3769,6 +3754,57 @@ func filterPlanItemsByStatus(items []reconcile.PlanItem, status string) []reconc
 		filtered = append(filtered, item)
 	}
 	return filtered
+}
+
+func renderPlanShowTable(w io.Writer, location *time.Location, items []reconcile.PlanItem) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, strings.Join([]string{"TARGET", "ISSUE", "WINDOW", "STATUS", "ACTION", "COMPARE", "LOCAL", "REMOTE", "MATCH", "CREATE", "DELETE", "EXECUTION"}, "\t"))
+	for _, item := range items {
+		_, _ = fmt.Fprintln(tw, strings.Join([]string{
+			planShowTargetValue(item),
+			item.TargetIssue,
+			formatSavedPlanWindow(item.WindowFromUTC, item.WindowToUTC, location),
+			item.PlanStatus,
+			item.PlannedAction,
+			item.ComparisonStatus,
+			fmt.Sprint(item.LocalRowCount),
+			fmt.Sprint(item.RemoteRowCount),
+			planShowDiffMetricValue(item, item.InspectionSummary.MatchedRowCount),
+			planShowDiffMetricValue(item, item.InspectionSummary.CreateRowCount),
+			planShowDiffMetricValue(item, item.InspectionSummary.DeleteRowCount),
+			item.ExecutionState,
+		}, "\t"))
+	}
+	return tw.Flush()
+}
+
+func planShowTargetValue(item reconcile.PlanItem) string {
+	if item.TargetAdapterInstance == "" {
+		return item.TargetAdapterFamily
+	}
+	return item.TargetAdapterFamily + "/" + item.TargetAdapterInstance
+}
+
+func planShowDiffMetricValue(item reconcile.PlanItem, value int) string {
+	if !planShowHasDiffCounts(item) {
+		return "-"
+	}
+	if item.ComparisonStatus == "not_checked" || item.ComparisonStatus == "check_failed" {
+		return "-"
+	}
+	return fmt.Sprint(value)
+}
+
+func planShowHasDiffCounts(item reconcile.PlanItem) bool {
+	matched := item.InspectionSummary.MatchedRowCount
+	create := item.InspectionSummary.CreateRowCount
+	deleteCount := item.InspectionSummary.DeleteRowCount
+	switch item.PlanDirection {
+	case "pull":
+		return matched+create == item.RemoteRowCount && matched+deleteCount == item.LocalRowCount
+	default:
+		return matched+create == item.LocalRowCount && matched+deleteCount == item.RemoteRowCount
+	}
 }
 
 func planJSON(plan reconcile.Plan) map[string]any {

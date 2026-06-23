@@ -61,6 +61,76 @@ func TestCreateClockifyPushPlanClassifiesScopes(t *testing.T) {
 	}
 }
 
+func TestSummarizeRowDiffs(t *testing.T) {
+	base := func(issueKey, startedAt, description string, durationSeconds int) model.Row {
+		return model.Row{
+			IssueKey:        issueKey,
+			StartedAtUTC:    mustTime(startedAt),
+			DurationSeconds: durationSeconds,
+			Description:     description,
+		}
+	}
+
+	tests := []struct {
+		name    string
+		desired []model.Row
+		current []model.Row
+		want    rowDiffCounts
+	}{
+		{
+			name: "same counts different content",
+			desired: []model.Row{
+				base("APPS-993", "2026-06-22T08:00:00Z", "Keep one", 1800),
+				base("APPS-993", "2026-06-22T09:00:00Z", "Keep two", 1800),
+				base("APPS-993", "2026-06-22T10:00:00Z", "Create one", 1800),
+				base("APPS-993", "2026-06-22T11:00:00Z", "Create two", 1800),
+			},
+			current: []model.Row{
+				base("APPS-993", "2026-06-22T08:00:00Z", "Keep one", 1800),
+				base("APPS-993", "2026-06-22T09:00:00Z", "Keep two", 1800),
+				base("APPS-993", "2026-06-22T12:00:00Z", "Delete one", 1800),
+				base("APPS-993", "2026-06-22T13:00:00Z", "Delete two", 1800),
+			},
+			want: rowDiffCounts{Matched: 2, Create: 2, Delete: 2},
+		},
+		{
+			name: "create only",
+			desired: []model.Row{
+				base("APPS-993", "2026-06-22T08:00:00Z", "Create one", 1800),
+				base("APPS-993", "2026-06-22T09:00:00Z", "Create two", 1800),
+			},
+			want: rowDiffCounts{Create: 2},
+		},
+		{
+			name: "delete only",
+			current: []model.Row{
+				base("APPS-993", "2026-06-22T08:00:00Z", "Delete one", 1800),
+				base("APPS-993", "2026-06-22T09:00:00Z", "Delete two", 1800),
+			},
+			want: rowDiffCounts{Delete: 2},
+		},
+		{
+			name: "exact match",
+			desired: []model.Row{
+				base("APPS-993", "2026-06-22T08:00:00Z", "Keep one", 1800),
+			},
+			current: []model.Row{
+				base("APPS-993", "2026-06-22T08:00:00Z", "Keep one", 1800),
+			},
+			want: rowDiffCounts{Matched: 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := summarizeRowDiffs(tt.desired, tt.current)
+			if got != tt.want {
+				t.Fatalf("summarizeRowDiffs() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCreateClockifyPushPlanDefaultsMissingTagCreationToTrue(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()

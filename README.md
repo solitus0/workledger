@@ -143,6 +143,8 @@ workledger plan show
 workledger plan apply
 ```
 
+`plan show` stays offline: it renders the saved plan without new external requests. In table mode it shows one compact row per scope with explicit `LOCAL`, `REMOTE`, `MATCH`, `CREATE`, and `DELETE` columns so saved row churn is visible without decoding combined fields.
+
 ## Core concepts
 
 | Concept | Role |

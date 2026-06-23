@@ -4229,14 +4229,34 @@ func TestPlanTableOutputIsAligned(t *testing.T) {
 	if strings.Contains(show.stdout, "\t") {
 		t.Fatalf("expected aligned plan show output without raw tabs, got %q", show.stdout)
 	}
-	if !strings.Contains(show.stdout, "TARGET_INSTANCE") || !strings.Contains(show.stdout, "REMOTE_ROWS") {
+	if !strings.Contains(show.stdout, "TARGET") || !strings.Contains(show.stdout, "ISSUE") || !strings.Contains(show.stdout, "LOCAL") || !strings.Contains(show.stdout, "MATCH") {
 		t.Fatalf("expected plan show headers, got %q", show.stdout)
 	}
-	if !strings.Contains(show.stdout, "  -  ") && !strings.Contains(show.stdout, "\nclockify") {
-		t.Fatalf("expected plan show target instance placeholder, got %q", show.stdout)
+	if strings.Contains(show.stdout, "TARGET_INSTANCE") || strings.Contains(show.stdout, "ROWS") || strings.Contains(show.stdout, "CHANGES") {
+		t.Fatalf("expected diff-aware row headers, got %q", show.stdout)
+	}
+	if !strings.Contains(show.stdout, "\nclockify") {
+		t.Fatalf("expected plan show target value, got %q", show.stdout)
 	}
 	if !strings.Contains(show.stdout, "2026-04-01 - 2026-04-30") {
 		t.Fatalf("expected plan show window value, got %q", show.stdout)
+	}
+
+	showJSON := runCLI(t, "plan", "show", "--output", "json")
+	if showJSON.code != 0 {
+		t.Fatalf("show json failed: code=%d stdout=%s stderr=%s", showJSON.code, showJSON.stdout, showJSON.stderr)
+	}
+	planPayload := decodeJSONMap(t, []byte(showJSON.stdout))
+	items := planPayload["items"].([]any)
+	if len(items) == 0 {
+		t.Fatalf("expected at least one plan item, got %s", showJSON.stdout)
+	}
+	inspection := items[0].(map[string]any)["inspection_summary"].(map[string]any)
+	matchedCount := int(inspection["matched_row_count"].(float64))
+	createCount := int(inspection["create_row_count"].(float64))
+	deleteCount := int(inspection["delete_row_count"].(float64))
+	if !strings.Contains(show.stdout, fmt.Sprintf(" %d ", matchedCount)) || !strings.Contains(show.stdout, fmt.Sprintf(" %d ", createCount)) || !strings.Contains(show.stdout, fmt.Sprintf(" %d ", deleteCount)) {
+		t.Fatalf("expected plan show to render saved diff counts, got %q", show.stdout)
 	}
 }
 
@@ -4427,6 +4447,97 @@ func TestPlanShowDeleteOnlyScopeReportsZeroLocalRowsAndMatch(t *testing.T) {
 	}
 	if item["comparison_status"] != "match" || item["reason_code"] != "exact_match" {
 		t.Fatalf("expected tombstone empty remote scope to render as match, got %#v", item)
+	}
+}
+
+func TestPlanShowTableUsesDiffCountsForSameRowTotals(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	seedSavedPlan(t, savedPlanSeed{
+		planID:      "plan-diff-aware",
+		fingerprint: "fp",
+		itemID:      "item-diff-aware",
+		direction:   "push",
+		adapter:     "clockify",
+		target:      "APPS-993",
+		action:      "replace",
+		payloadJSON: "[]",
+	})
+
+	db := openTestDB(t)
+	defer db.Close()
+
+	if _, err := db.Exec(
+		`UPDATE saved_plan_items
+		 SET local_row_count = ?, local_total_seconds = ?, remote_row_count = ?, remote_total_seconds = ?, inspection_summary_json = ?
+		 WHERE id = ?`,
+		8, 28800, 8, 28800, `{"matched_row_count":6,"create_row_count":2,"delete_row_count":2}`, "item-diff-aware",
+	); err != nil {
+		t.Fatalf("update saved diff-aware plan item: %v", err)
+	}
+
+	result := runCLI(t, "plan", "show", "plan-diff-aware")
+	if result.code != 0 {
+		t.Fatalf("plan show failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "clockify") || !strings.Contains(result.stdout, "APPS-993") || !strings.Contains(result.stdout, " 8  ") || !strings.Contains(result.stdout, " 6  ") || !strings.Contains(result.stdout, " 2  ") {
+		t.Fatalf("expected explicit diff columns, got %q", result.stdout)
+	}
+
+	showJSON := runCLI(t, "plan", "show", "plan-diff-aware", "--output", "json")
+	if showJSON.code != 0 {
+		t.Fatalf("plan show json failed: code=%d stdout=%s stderr=%s", showJSON.code, showJSON.stdout, showJSON.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(showJSON.stdout))
+	items := payload["items"].([]any)
+	summary := items[0].(map[string]any)["inspection_summary"].(map[string]any)
+	if summary["matched_row_count"].(float64) != 6 || summary["create_row_count"].(float64) != 2 || summary["delete_row_count"].(float64) != 2 {
+		t.Fatalf("expected inspection summary diff counts in json, got %#v", summary)
+	}
+}
+
+func TestPlanShowTableFallsBackWhenLegacyPlanLacksDiffCounts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	seedSavedPlan(t, savedPlanSeed{
+		planID:      "plan-legacy-diff",
+		fingerprint: "fp",
+		itemID:      "item-legacy-diff",
+		direction:   "push",
+		adapter:     "clockify",
+		target:      "APPS-993",
+		action:      "replace",
+		payloadJSON: "[]",
+	})
+
+	db := openTestDB(t)
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE saved_plan_items SET local_row_count = ?, remote_row_count = ? WHERE id = ?`, 8, 8, "item-legacy-diff"); err != nil {
+		t.Fatalf("update legacy saved plan item: %v", err)
+	}
+
+	result := runCLI(t, "plan", "show", "plan-legacy-diff")
+	if result.code != 0 {
+		t.Fatalf("plan show failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "APPS-993") || !strings.Contains(result.stdout, " 8  ") {
+		t.Fatalf("expected row counts in legacy plan output, got %q", result.stdout)
+	}
+	if !strings.Contains(result.stdout, "MATCH  CREATE  DELETE") || !strings.Contains(result.stdout, "-      -       -") {
+		t.Fatalf("expected legacy plan to show unknown diff metrics, got %q", result.stdout)
+	}
+	if strings.Contains(result.stdout, "+0/-0") || strings.Contains(result.stdout, "matched,") {
+		t.Fatalf("expected legacy plan to suppress missing diff metrics, got %q", result.stdout)
 	}
 }
 

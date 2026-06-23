@@ -119,6 +119,9 @@ type InspectionSummary struct {
 	LocalTotalSeconds      int            `json:"local_total_seconds"`
 	RemoteRowCount         int            `json:"remote_row_count"`
 	RemoteTotalSeconds     int            `json:"remote_total_seconds"`
+	MatchedRowCount        int            `json:"matched_row_count"`
+	CreateRowCount         int            `json:"create_row_count"`
+	DeleteRowCount         int            `json:"delete_row_count"`
 	RequiresTagCreate      bool           `json:"requires_tag_create,omitempty"`
 	SourceIssueKeys        []string       `json:"source_issue_keys,omitempty"`
 	PerSourceTotals        map[string]int `json:"per_source_totals,omitempty"`
@@ -710,6 +713,14 @@ func (s *Service) buildClockifyPullPlanFromRows(cfg config.EffectiveConfig, wind
 		item.RemoteRowCount = len(remoteRows)
 		item.RemoteTotal = sumRows(remoteRows)
 		item.Payload = remoteRows
+		item.InspectionSummary = InspectionSummary{
+			IssueTagName:       issueKey,
+			LocalRowCount:      item.LocalRowCount,
+			LocalTotalSeconds:  item.LocalTotal,
+			RemoteRowCount:     item.RemoteRowCount,
+			RemoteTotalSeconds: item.RemoteTotal,
+		}
+		applyInspectionRowDiffSummary(&item, remoteRows, localPayload)
 
 		if tombstoneProtected(remoteRows, s.store.DB()) {
 			item.PlanStatus = "invalid"
@@ -905,12 +916,14 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 				item.ComparisonStatus = "match"
 				item.ReasonCode = "exact_match"
 				item.ReasonDetail = "Clockify scope already matches the local empty state"
+				applyInspectionRowDiffCounts(&item, rowDiffCounts{})
 			} else {
 				item.PlanStatus = "ready"
 				item.PlannedAction = "delete"
 				item.ComparisonStatus = "remote_present"
 				item.ReasonCode = "remote_present"
 				item.ReasonDetail = "Clockify scope contains rows that should be deleted"
+				applyInspectionRowDiffCounts(&item, rowDiffCounts{Delete: len(matchedEntries)})
 			}
 		case !tagExists && !clockifyCreateIssueTagIfMissing(clockifyCfg):
 			item.PlanStatus = "blocked"
@@ -924,18 +937,21 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 			item.ComparisonStatus = "match"
 			item.ReasonCode = "exact_match"
 			item.ReasonDetail = "Clockify rows already match the local ledger in the target project"
+			applyInspectionRowDiffSummary(&item, localPayload, targetRows)
 		case len(targetEntries) == 0 && len(issueEntries) == 0:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "create"
 			item.ComparisonStatus = "remote_missing"
 			item.ReasonCode = "remote_missing"
 			item.ReasonDetail = "Clockify scope is empty and will be created"
+			applyInspectionRowDiffSummary(&item, localPayload, targetRows)
 		default:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "replace"
 			item.ComparisonStatus = "remote_diff"
 			item.ReasonCode = "remote_diff"
 			item.ReasonDetail = "Clockify scope differs from the saved local payload"
+			applyInspectionRowDiffSummary(&item, localPayload, targetRows)
 		}
 
 		item.DeliveryKey = buildDeliveryKey(item)
@@ -2101,6 +2117,76 @@ func rowsEqual(a, b []model.Row) bool {
 		}
 	}
 	return true
+}
+
+type rowDiffCounts struct {
+	Matched int
+	Create  int
+	Delete  int
+}
+
+func compareRows(a, b model.Row) int {
+	if !a.StartedAtUTC.Equal(b.StartedAtUTC) {
+		if a.StartedAtUTC.Before(b.StartedAtUTC) {
+			return -1
+		}
+		return 1
+	}
+	if a.DurationSeconds != b.DurationSeconds {
+		if a.DurationSeconds < b.DurationSeconds {
+			return -1
+		}
+		return 1
+	}
+	if a.Description != b.Description {
+		if a.Description < b.Description {
+			return -1
+		}
+		return 1
+	}
+	if a.IssueKey != b.IssueKey {
+		if a.IssueKey < b.IssueKey {
+			return -1
+		}
+		return 1
+	}
+	return 0
+}
+
+func summarizeRowDiffs(desired, current []model.Row) rowDiffCounts {
+	desiredRows := sortRows(desired)
+	currentRows := sortRows(current)
+	counts := rowDiffCounts{}
+
+	i := 0
+	j := 0
+	for i < len(desiredRows) && j < len(currentRows) {
+		switch compareRows(desiredRows[i], currentRows[j]) {
+		case 0:
+			counts.Matched++
+			i++
+			j++
+		case -1:
+			counts.Create++
+			i++
+		default:
+			counts.Delete++
+			j++
+		}
+	}
+	counts.Create += len(desiredRows) - i
+	counts.Delete += len(currentRows) - j
+	return counts
+}
+
+func applyInspectionRowDiffCounts(item *PlanItem, counts rowDiffCounts) {
+	item.InspectionSummary.MatchedRowCount = counts.Matched
+	item.InspectionSummary.CreateRowCount = counts.Create
+	item.InspectionSummary.DeleteRowCount = counts.Delete
+}
+
+func applyInspectionRowDiffSummary(item *PlanItem, desired, current []model.Row) {
+	applyInspectionRowDiffCounts(item, summarizeRowDiffs(desired, current))
 }
 
 func rowsEquivalent(a, b []model.Row) bool {

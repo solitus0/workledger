@@ -325,7 +325,9 @@ Placement rule:
 - [ ] FUNC-250: `workledger plan show` shall report `plan_status` per scope.
 - [ ] FUNC-251: `workledger plan show` shall report `planned_action` per scope.
 - [ ] FUNC-252: `workledger plan show` shall report comparison status per scope.
-- [ ] FUNC-253: `workledger plan show` shall report target adapter family, target issue, saved reconcile time window, local row count, remote row count, and execution state per scope.
+- [ ] FUNC-253: `workledger plan show` shall report target adapter family, target issue, saved reconcile time window, local row count, remote row count, saved change counts, and execution state per scope.
+- [ ] FUNC-253b: Human-readable `workledger plan show` output shall render one compact table row per scope with explicit `LOCAL`, `REMOTE`, `MATCH`, `CREATE`, and `DELETE` columns.
+- [ ] FUNC-253c: When saved diff metrics are unavailable, human-readable `workledger plan show` output shall render `-` in `MATCH`, `CREATE`, and `DELETE` without any additional detail line.
 - [ ] FUNC-253a: `workledger plan show` shall limit rendered scopes to saved plan items whose `plan_status` is `ready` by default; `workledger plan show --all` shall render all saved plan items regardless of status.
 
 ## Plan Listing

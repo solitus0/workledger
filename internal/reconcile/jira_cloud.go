@@ -168,6 +168,7 @@ func (s *Service) buildJiraCloudPullPlan(ctx context.Context, cfg config.Effecti
 			ResolvedTargetInstance: instance.name,
 			ResolvedTargetIssue:    issueKey,
 		}
+		applyInspectionRowDiffSummary(&item, remoteRows, localPayload)
 		if tombstoneProtected(remoteRows, s.store.DB()) {
 			item.PlanStatus = "invalid"
 			item.PlannedAction = "none"
@@ -373,6 +374,7 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 			item.ComparisonStatus = "match"
 			item.ReasonCode = "exact_match"
 			item.ReasonDetail = "Jira Cloud scope already matches the local empty state"
+			applyInspectionRowDiffCounts(&item, rowDiffCounts{})
 		case scope.isDeleteOnly && fetched.foreignPresent:
 			item.PlanStatus = "blocked"
 			item.PlannedAction = "none"
@@ -385,24 +387,28 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 			item.ComparisonStatus = "remote_present"
 			item.ReasonCode = "remote_present"
 			item.ReasonDetail = "Jira Cloud scope contains rows that should be deleted"
+			applyInspectionRowDiffSummary(&item, nil, fetched.targetRows)
 		case rowsEqual(scope.localPayload, fetched.targetRows):
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
 			item.ComparisonStatus = "match"
 			item.ReasonCode = "exact_match"
 			item.ReasonDetail = "Jira Cloud rows already match the local ledger"
+			applyInspectionRowDiffSummary(&item, scope.localPayload, fetched.targetRows)
 		case len(fetched.targetRows) == 0:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "create"
 			item.ComparisonStatus = "remote_missing"
 			item.ReasonCode = "remote_missing"
 			item.ReasonDetail = "Jira Cloud scope has no normalized remote rows and will be created"
+			applyInspectionRowDiffSummary(&item, scope.localPayload, fetched.targetRows)
 		default:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "replace"
 			item.ComparisonStatus = "remote_diff"
 			item.ReasonCode = "remote_diff"
 			item.ReasonDetail = "Jira Cloud scope differs from the saved local payload"
+			applyInspectionRowDiffSummary(&item, scope.localPayload, fetched.targetRows)
 		}
 		item.DeliveryKey = buildDeliveryKey(item)
 		items = append(items, item)
@@ -515,6 +521,7 @@ func (s *Service) buildJiraCloudReportingPushPlan(ctx context.Context, cfg confi
 			item.ComparisonStatus = "match"
 			item.ReasonCode = "exact_match"
 			item.ReasonDetail = "Jira Cloud scope already matches the local empty state"
+			applyInspectionRowDiffCounts(&item, rowDiffCounts{})
 		case isDeleteOnly && fetched.foreignPresent:
 			item.PlanStatus = "blocked"
 			item.PlannedAction = "none"
@@ -527,24 +534,28 @@ func (s *Service) buildJiraCloudReportingPushPlan(ctx context.Context, cfg confi
 			item.ComparisonStatus = "remote_present"
 			item.ReasonCode = "remote_present"
 			item.ReasonDetail = "Jira Cloud scope contains rows that should be deleted"
+			applyInspectionRowDiffSummary(&item, nil, fetched.targetRows)
 		case rowsEqual(desiredRows, fetched.targetRows):
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
 			item.ComparisonStatus = "match"
 			item.ReasonCode = "exact_match"
 			item.ReasonDetail = "Jira Cloud rows already match the local ledger"
+			applyInspectionRowDiffSummary(&item, desiredRows, fetched.targetRows)
 		case len(fetched.targetRows) == 0:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "create"
 			item.ComparisonStatus = "remote_missing"
 			item.ReasonCode = "remote_missing"
 			item.ReasonDetail = "Jira Cloud scope has no normalized remote rows and will be created"
+			applyInspectionRowDiffSummary(&item, desiredRows, fetched.targetRows)
 		default:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "replace"
 			item.ComparisonStatus = "remote_diff"
 			item.ReasonCode = "remote_diff"
 			item.ReasonDetail = "Jira Cloud scope differs from the saved local payload"
+			applyInspectionRowDiffSummary(&item, desiredRows, fetched.targetRows)
 		}
 
 		item.DeliveryKey = buildDeliveryKey(item)
