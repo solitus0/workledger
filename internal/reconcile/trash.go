@@ -29,6 +29,7 @@ type applyItemExecution struct {
 
 type pushApplyResult struct {
 	trashArchivedCount int
+	deletedRows        []model.Row
 	warnings           []string
 }
 

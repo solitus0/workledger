@@ -199,7 +199,7 @@ Placement rule:
 - [ ] FUNC-147: `workledger worklogs update <id>` shall validate the full resulting record after patching.
 - [ ] FUNC-148: `workledger worklogs update <id>` shall succeed and return the canonical record when normalization makes the patch a semantic no-op.
 - [ ] FUNC-149: `workledger worklogs update <id> --force` shall allow the operator to bypass duplicate or overlap rejection explicitly.
-- [ ] FUNC-150: `workledger worklogs update <id>` shall treat tombstoned IDs as not found.
+- [ ] FUNC-150: `workledger worklogs update <id>` shall return not found when the requested active local worklog ID does not exist.
 - [ ] FUNC-151: `workledger worklogs update <id>` shall return the updated canonical worklog on success.
 
 ## Batch Shift
@@ -229,10 +229,10 @@ Placement rule:
 ## Worklog Delete
 - [ ] FUNC-171: `workledger worklogs delete <id>` shall delete exactly one active local worklog.
 - [ ] FUNC-172: `workledger worklogs delete <id>` shall remove the selected worklog from the active worklog set.
-- [ ] FUNC-173: `workledger worklogs delete <id>` shall write one tombstone by default.
-- [ ] FUNC-174: `workledger worklogs delete <id> --hard` shall permanently remove the selected active local worklog without creating a tombstone.
+- [ ] FUNC-173: `workledger worklogs delete <id>` shall permanently remove the selected active local worklog.
+- [ ] FUNC-174: `workledger worklogs delete` shall not expose delete-mode flags.
 - [ ] FUNC-175: `workledger worklogs delete <id>` shall remain non-interactive once validation passes.
-- [ ] FUNC-176: `workledger worklogs delete <id>` shall return deterministic success output with `id`, `issue_key`, `deleted_at`, and `hard_delete`.
+- [ ] FUNC-176: `workledger worklogs delete <id>` shall return deterministic success output with `id`, `issue_key`, and `deleted_at`.
 - [ ] FUNC-177: `workledger worklogs delete <id>` shall be local-only.
 
 ## Batch Delete
@@ -240,7 +240,7 @@ Placement rule:
 - [ ] FUNC-179: Filtered batch delete shall reuse active-worklog selectors.
 - [ ] FUNC-180: Filtered batch delete shall accept any non-empty valid selector subset from the active-worklog selector set.
 - [ ] FUNC-181: Filtered batch delete shall require `--yes` for execution.
-- [ ] FUNC-182: Filtered batch delete shall support `--hard` to delete matched active worklogs without writing tombstones.
+- [ ] FUNC-182: Filtered batch delete shall permanently remove matched active worklogs when executed.
 - [ ] FUNC-183: Single-delete by `<id>` and filtered batch-delete selectors shall be mutually exclusive modes.
 - [ ] FUNC-184: Filtered batch delete shall be a valid no-op when zero active worklogs match the selector set.
 - [ ] FUNC-185: Filtered batch delete shall apply to active worklogs only.
@@ -248,21 +248,6 @@ Placement rule:
 - [ ] FUNC-187: Filtered batch delete shall support `--dry` to preview matched active worklogs without deleting them.
 - [ ] FUNC-188: Batch-delete dry-run shall return the full matched active records together with the matched count.
 - [ ] FUNC-189: Executed filtered batch delete shall return deleted IDs and deleted count rather than full deleted records.
-
-## Tombstone Restore
-- [ ] FUNC-190: `workledger tombstones restore` shall operate in selector-based batch mode only.
-- [ ] FUNC-191: `workledger tombstones restore` shall reuse the active-worklog selector family.
-- [ ] FUNC-192: `workledger tombstones restore` shall require at least one explicit time selector.
-- [ ] FUNC-193: `workledger tombstones restore` shall optionally accept `--issue <KEY>`.
-- [ ] FUNC-194: `workledger tombstones restore` shall select tombstones by their original `started_at_utc`.
-- [ ] FUNC-195: `workledger tombstones restore` shall require `--yes` for execution.
-- [ ] FUNC-196: `workledger tombstones restore --dry` shall preview matched tombstones without restoring them.
-- [ ] FUNC-197: `workledger tombstones restore --dry` shall be mutually exclusive with `--yes`.
-- [ ] FUNC-198: `workledger tombstones restore --force` shall bypass duplicate or overlap rejection explicitly.
-- [ ] FUNC-199: `workledger tombstones restore` shall insert active local worklogs using the original `id`, `issue_key`, `started_at_utc`, `duration_seconds`, and `description`.
-- [ ] FUNC-200: `workledger tombstones restore` shall delete matching tombstones when execution succeeds.
-- [ ] FUNC-201: `workledger tombstones restore` shall be a valid no-op when zero tombstones match.
-- [ ] FUNC-202: `workledger tombstones restore` shall return executed success payloads with restored IDs and restored count rather than full active records.
 
 ## Worklog Context
 - [ ] FUNC-204: `workledger worklogs context` shall return read-only planning snapshots over canonical local worklogs.
@@ -395,19 +380,7 @@ Placement rule:
 - [ ] FUNC-302: `--progress=off` shall disable live progress output.
 
 ## Tombstone Commands
-- [ ] FUNC-306: `workledger tombstones list` shall require at least one explicit time selector from the shared date-window selector family.
-- [ ] FUNC-307: `workledger tombstones list` shall render deleted tombstones within the selected time scope.
-- [ ] FUNC-308: `workledger tombstones list` shall support `--issue` and `--issue-prefix` filters and date-window selectors.
-- [ ] FUNC-309: `workledger tombstones list` shall expose tombstone records using only `id`, `issue_key`, and `deleted_at`.
-- [ ] FUNC-310: `workledger tombstones search <query>` shall search tombstone `description` values by partial, case-insensitive substring match.
-- [ ] FUNC-311: `workledger tombstones search <query>` shall support `--issue`, `--issue-prefix`, and date-window selectors.
-- [ ] FUNC-312: `workledger tombstones delete <id>` shall permanently remove one tombstone record.
-- [ ] FUNC-313: `workledger tombstones delete <id>` shall return deterministic success output with `id`, `issue_key`, and `deleted_at`.
-- [ ] FUNC-314: Filtered batch tombstone delete shall select tombstones using the active-worklog selector family applied to `started_at_utc`.
-- [ ] FUNC-315: Filtered batch tombstone delete shall require `--yes` for execution.
-- [ ] FUNC-316: Filtered batch tombstone delete shall support `--dry` to preview matched tombstones without deleting them.
-- [ ] FUNC-317: Filtered batch tombstone delete shall be a valid no-op when zero tombstones match.
-- [ ] FUNC-318: `workledger worklogs update <id> --issue <new-key>` shall write a tombstone for the old issue allocation, using a new ID, when the resolved issue key changes to a different value.
+- [ ] FUNC-318: `workledger worklogs update <id> --issue <new-key>` shall mutate the active local worklog in place without persisting delete intent for the previous issue allocation.
 
 ## Trash Commands
 - [ ] FUNC-318a: `workledger trash list` shall require at least one explicit time selector from the shared date-window selector family.

@@ -355,15 +355,12 @@ func TestListAndSearchSupportExactIssuePrefixBoundary(t *testing.T) {
 		Description: "IRW docs item",
 	})
 
-	active, deleted, effective, err := service.List(cfg, ListFilters{
+	active, effective, err := service.List(cfg, ListFilters{
 		IssuePrefix:  "IRW",
 		CurrentMonth: true,
 	})
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
-	}
-	if len(deleted) != 0 {
-		t.Fatalf("expected no deleted rows, got %d", len(deleted))
 	}
 	if effective.IssuePrefix == nil || *effective.IssuePrefix != "IRW" {
 		t.Fatalf("unexpected effective issue prefix %#v", effective.IssuePrefix)
@@ -375,7 +372,7 @@ func TestListAndSearchSupportExactIssuePrefixBoundary(t *testing.T) {
 		t.Fatalf("unexpected list matches %#v", active)
 	}
 
-	filtered, _, _, err := service.List(cfg, ListFilters{
+	filtered, _, err := service.List(cfg, ListFilters{
 		Issue:        exact.IssueKey,
 		IssuePrefix:  "IRW",
 		CurrentMonth: true,
@@ -387,7 +384,7 @@ func TestListAndSearchSupportExactIssuePrefixBoundary(t *testing.T) {
 		t.Fatalf("expected intersection to keep %s, got %#v", exact.IssueKey, filtered)
 	}
 
-	empty, _, _, err := service.List(cfg, ListFilters{
+	empty, _, err := service.List(cfg, ListFilters{
 		Issue:        nearMiss.IssueKey,
 		IssuePrefix:  "IRW",
 		CurrentMonth: true,
@@ -399,7 +396,7 @@ func TestListAndSearchSupportExactIssuePrefixBoundary(t *testing.T) {
 		t.Fatalf("expected no IRW matches for %s, got %#v", nearMiss.IssueKey, empty)
 	}
 
-	search, _, _, _, err := service.Search(cfg, SearchInput{
+	search, _, _, err := service.Search(cfg, SearchInput{
 		Query: "item",
 		ListFilters: ListFilters{
 			IssuePrefix: "IRW",
@@ -436,14 +433,11 @@ func TestSearchMatchesCaseInsensitiveLiteralSubstringAndOrdering(t *testing.T) {
 		Description: "api DOCS follow-up",
 	})
 
-	active, deleted, effective, query, err := service.Search(cfg, SearchInput{
+	active, effective, query, err := service.Search(cfg, SearchInput{
 		Query: "Api DoCs",
 	})
 	if err != nil {
 		t.Fatalf("search failed: %v", err)
-	}
-	if len(deleted) != 0 {
-		t.Fatalf("expected no tombstones, got %d", len(deleted))
 	}
 	if query != "Api DoCs" {
 		t.Fatalf("expected normalized query to preserve internal text, got %q", query)
@@ -459,7 +453,7 @@ func TestSearchMatchesCaseInsensitiveLiteralSubstringAndOrdering(t *testing.T) {
 	}
 }
 
-func TestSearchSupportsIssueDateLiteralAndDeletedMode(t *testing.T) {
+func TestSearchSupportsIssueDateLiteral(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()
 
@@ -478,11 +472,11 @@ func TestSearchSupportsIssueDateLiteralAndDeletedMode(t *testing.T) {
 		Duration:    "30m",
 		Description: "Fix 100percent done behavior",
 	})
-	if _, err := service.Delete(literal.ID, false); err != nil {
+	if _, err := service.Delete(literal.ID); err != nil {
 		t.Fatalf("delete failed: %v", err)
 	}
 
-	active, deleted, _, _, err := service.Search(cfg, SearchInput{
+	active, _, _, err := service.Search(cfg, SearchInput{
 		Query: "%_done",
 		ListFilters: ListFilters{
 			From:  "2026-05-03",
@@ -493,27 +487,8 @@ func TestSearchSupportsIssueDateLiteralAndDeletedMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("active search failed: %v", err)
 	}
-	if len(active) != 0 || len(deleted) != 0 {
-		t.Fatalf("expected no active match after delete, got active=%d deleted=%d", len(active), len(deleted))
-	}
-
-	active, deleted, _, _, err = service.Search(cfg, SearchInput{
-		Query: "%_done",
-		ListFilters: ListFilters{
-			From:        "2026-05-03",
-			To:          "2026-05-04",
-			Issue:       "ABC-123",
-			OnlyDeleted: true,
-		},
-	})
-	if err != nil {
-		t.Fatalf("deleted search failed: %v", err)
-	}
 	if len(active) != 0 {
-		t.Fatalf("expected no active matches in deleted mode, got %d", len(active))
-	}
-	if len(deleted) != 1 || deleted[0].ID != literal.ID {
-		t.Fatalf("unexpected deleted matches: %#v", deleted)
+		t.Fatalf("expected no active match after delete, got active=%d", len(active))
 	}
 }
 
@@ -536,15 +511,12 @@ func TestListOrdersActiveWorklogsOldestFirst(t *testing.T) {
 		Description: "Earlier",
 	})
 
-	active, deleted, _, err := service.List(cfg, ListFilters{
+	active, _, err := service.List(cfg, ListFilters{
 		From: "2026-05-03",
 		To:   "2026-05-04",
 	})
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
-	}
-	if len(deleted) != 0 {
-		t.Fatalf("expected no tombstones, got %d", len(deleted))
 	}
 	if len(active) != 2 {
 		t.Fatalf("expected two active worklogs, got %d", len(active))
@@ -554,56 +526,12 @@ func TestListOrdersActiveWorklogsOldestFirst(t *testing.T) {
 	}
 }
 
-func TestListOrdersDeletedWorklogsOldestFirst(t *testing.T) {
-	store, service := newTestService(t)
-	defer store.Close()
-
-	cfg := config.EffectiveConfig{Location: time.UTC}
-
-	later := mustAddWorklog(t, service, cfg, AddInput{
-		IssueKey:    "ABC-124",
-		StartedUTC:  "2026-05-04T06:00:00Z",
-		Duration:    "30m",
-		Description: "Later",
-	})
-	earlier := mustAddWorklog(t, service, cfg, AddInput{
-		IssueKey:    "ABC-123",
-		StartedUTC:  "2026-05-03T06:00:00Z",
-		Duration:    "30m",
-		Description: "Earlier",
-	})
-	if _, err := service.Delete(later.ID, false); err != nil {
-		t.Fatalf("delete later failed: %v", err)
-	}
-	if _, err := service.Delete(earlier.ID, false); err != nil {
-		t.Fatalf("delete earlier failed: %v", err)
-	}
-
-	active, deleted, _, err := service.List(cfg, ListFilters{
-		From:        "2026-05-03",
-		To:          "2026-05-04",
-		OnlyDeleted: true,
-	})
-	if err != nil {
-		t.Fatalf("deleted list failed: %v", err)
-	}
-	if len(active) != 0 {
-		t.Fatalf("expected no active worklogs, got %d", len(active))
-	}
-	if len(deleted) != 2 {
-		t.Fatalf("expected two tombstones, got %d", len(deleted))
-	}
-	if deleted[0].ID != earlier.ID || deleted[1].ID != later.ID {
-		t.Fatalf("unexpected deleted ordering: %#v", deleted)
-	}
-}
-
 func TestSearchRejectsBlankQuery(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()
 
 	cfg := config.EffectiveConfig{Location: time.UTC}
-	_, _, _, _, err := service.Search(cfg, SearchInput{Query: "   "})
+	_, _, _, err := service.Search(cfg, SearchInput{Query: "   "})
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
@@ -963,20 +891,7 @@ func countActiveWorklogs(t *testing.T, store *sqlitestore.Store) int {
 	return count
 }
 
-func countTombstones(t *testing.T, store *sqlitestore.Store) int {
-	t.Helper()
-
-	var count int
-	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM worklog_tombstones`).Scan(&count); err != nil {
-		if err == sql.ErrNoRows {
-			return 0
-		}
-		t.Fatalf("count tombstones: %v", err)
-	}
-	return count
-}
-
-func TestUpdateIssueKeyCreatesTombstoneForOldIssue(t *testing.T) {
+func TestUpdateIssueKeyDoesNotCreateDeleteMarker(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()
 
@@ -988,42 +903,19 @@ func TestUpdateIssueKeyCreatesTombstoneForOldIssue(t *testing.T) {
 		Description: "original work",
 	})
 
-	t.Run("changing issue key creates tombstone for old issue", func(t *testing.T) {
-		newKey := "NEW-2"
-		updated, err := service.Update(cfg, wl.ID, PatchInput{IssueKey: &newKey})
-		if err != nil {
-			t.Fatalf("update failed: %v", err)
-		}
-		if updated.IssueKey != "NEW-2" {
-			t.Fatalf("expected issue key NEW-2, got %q", updated.IssueKey)
-		}
-		if got := countActiveWorklogs(t, store); got != 1 {
-			t.Fatalf("expected 1 active worklog, got %d", got)
-		}
-		if got := countTombstones(t, store); got != 1 {
-			t.Fatalf("expected 1 tombstone, got %d", got)
-		}
+	newKey := "NEW-2"
+	updated, err := service.Update(cfg, wl.ID, PatchInput{IssueKey: &newKey})
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	if updated.IssueKey != "NEW-2" {
+		t.Fatalf("expected issue key NEW-2, got %q", updated.IssueKey)
+	}
+	if got := countActiveWorklogs(t, store); got != 1 {
+		t.Fatalf("expected 1 active worklog, got %d", got)
+	}
 
-		var tombIssueKey, tombStarted string
-		var tombDuration int
-		err = store.DB().QueryRow(
-			`SELECT issue_key, started_at_utc, duration_seconds FROM worklog_tombstones LIMIT 1`,
-		).Scan(&tombIssueKey, &tombStarted, &tombDuration)
-		if err != nil {
-			t.Fatalf("read tombstone: %v", err)
-		}
-		if tombIssueKey != "OLD-1" {
-			t.Errorf("tombstone issue key: want OLD-1, got %q", tombIssueKey)
-		}
-		if tombStarted != "2026-05-29T09:00:00Z" {
-			t.Errorf("tombstone started_at_utc: want 2026-05-29T09:00:00Z, got %q", tombStarted)
-		}
-		if tombDuration != 3600 {
-			t.Errorf("tombstone duration_seconds: want 3600, got %d", tombDuration)
-		}
-	})
-
-	t.Run("changing non-issue fields creates no tombstone", func(t *testing.T) {
+	t.Run("changing non-issue fields creates no delete marker", func(t *testing.T) {
 		store2, service2 := newTestService(t)
 		defer store2.Close()
 
@@ -1037,12 +929,12 @@ func TestUpdateIssueKeyCreatesTombstoneForOldIssue(t *testing.T) {
 		if _, err := service2.Update(cfg, wl2.ID, PatchInput{Description: &newDesc}); err != nil {
 			t.Fatalf("update description failed: %v", err)
 		}
-		if got := countTombstones(t, store2); got != 0 {
-			t.Fatalf("expected no tombstones after description update, got %d", got)
+		if got := countActiveWorklogs(t, store2); got != 1 {
+			t.Fatalf("expected one active worklog after description update, got %d", got)
 		}
 	})
 
-	t.Run("same issue key creates no tombstone", func(t *testing.T) {
+	t.Run("same issue key creates no delete marker", func(t *testing.T) {
 		store3, service3 := newTestService(t)
 		defer store3.Close()
 
@@ -1056,8 +948,8 @@ func TestUpdateIssueKeyCreatesTombstoneForOldIssue(t *testing.T) {
 		if _, err := service3.Update(cfg, wl3.ID, PatchInput{IssueKey: &sameKey}); err != nil {
 			t.Fatalf("update same issue key failed: %v", err)
 		}
-		if got := countTombstones(t, store3); got != 0 {
-			t.Fatalf("expected no tombstones for same-key update, got %d", got)
+		if got := countActiveWorklogs(t, store3); got != 1 {
+			t.Fatalf("expected one active worklog for same-key update, got %d", got)
 		}
 	})
 }

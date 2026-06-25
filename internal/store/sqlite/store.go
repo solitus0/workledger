@@ -78,14 +78,6 @@ var schemaStatements = []string{
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	)`,
-	`CREATE TABLE IF NOT EXISTS worklog_tombstones (
-		worklog_id TEXT PRIMARY KEY,
-		issue_key TEXT NOT NULL,
-		started_at_utc TEXT NOT NULL,
-		duration_seconds INTEGER NOT NULL,
-		description TEXT NOT NULL DEFAULT '',
-		deleted_at TEXT NOT NULL
-	)`,
 	`CREATE TABLE IF NOT EXISTS trashed_worklogs (
 		id TEXT PRIMARY KEY,
 		storage_scope TEXT NOT NULL,
@@ -170,9 +162,6 @@ var schemaStatements = []string{
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_worklogs_id ON worklogs(id)`,
 	`CREATE INDEX IF NOT EXISTS idx_worklogs_issue_started ON worklogs(issue_key, started_at_utc)`,
 	`CREATE INDEX IF NOT EXISTS idx_worklogs_started ON worklogs(started_at_utc)`,
-	`CREATE UNIQUE INDEX IF NOT EXISTS idx_worklog_tombstones_worklog_id ON worklog_tombstones(worklog_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_worklog_tombstones_issue_started ON worklog_tombstones(issue_key, started_at_utc)`,
-	`CREATE INDEX IF NOT EXISTS idx_worklog_tombstones_deleted_at ON worklog_tombstones(deleted_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_trashed_worklogs_issue_started ON trashed_worklogs(issue_key, started_at_utc)`,
 	`CREATE INDEX IF NOT EXISTS idx_trashed_worklogs_trashed_at ON trashed_worklogs(trashed_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_trashed_worklogs_reason_code ON trashed_worklogs(reason_code)`,
@@ -281,6 +270,11 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		return err
 	}
 
+	if _, err := tx.ExecContext(ctx, `DROP TABLE IF EXISTS worklog_tombstones`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
 	for _, statement := range schemaStatements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			_ = tx.Rollback()
@@ -293,7 +287,6 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		column string
 		ddl    string
 	}{
-		{table: "worklog_tombstones", column: "description", ddl: `ALTER TABLE worklog_tombstones ADD COLUMN description TEXT NOT NULL DEFAULT ''`},
 		{table: "saved_plans", column: "adapter_families_json", ddl: `ALTER TABLE saved_plans ADD COLUMN adapter_families_json TEXT NOT NULL DEFAULT '[]'`},
 		{table: "saved_plans", column: "target_instances_json", ddl: `ALTER TABLE saved_plans ADD COLUMN target_instances_json TEXT NOT NULL DEFAULT '[]'`},
 		{table: "saved_plan_items", column: "plan_direction", ddl: `ALTER TABLE saved_plan_items ADD COLUMN plan_direction TEXT NOT NULL DEFAULT 'pull'`},
@@ -421,17 +414,6 @@ var requiredSchema = []tableRequirement{
 			{column: "description", typ: "TEXT", notNull: true},
 			{column: "created_at", typ: "TEXT", notNull: true},
 			{column: "updated_at", typ: "TEXT", notNull: true},
-		},
-	},
-	{
-		table: "worklog_tombstones",
-		columns: []columnRequirement{
-			{column: "worklog_id", typ: "TEXT", notNull: false},
-			{column: "issue_key", typ: "TEXT", notNull: true},
-			{column: "started_at_utc", typ: "TEXT", notNull: true},
-			{column: "duration_seconds", typ: "INTEGER", notNull: true},
-			{column: "description", typ: "TEXT", notNull: true},
-			{column: "deleted_at", typ: "TEXT", notNull: true},
 		},
 	},
 	{

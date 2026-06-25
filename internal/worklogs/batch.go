@@ -71,9 +71,6 @@ func ParseRawApplyPayload(data []byte) (RawApplyPayload, error) {
 }
 
 func (s *Service) Shift(cfg config.EffectiveConfig, filters ListFilters, by string, dryRun bool) (ShiftResult, error) {
-	if filters.OnlyDeleted {
-		return ShiftResult{}, ValidationError{Issues: []ValidationIssue{{Field: "only_deleted", Message: "is not valid for shift"}}}
-	}
 	if !hasExplicitSelector(filters) {
 		return ShiftResult{}, ValidationError{Issues: []ValidationIssue{{Field: "shift", Message: "requires at least one selector"}}}
 	}

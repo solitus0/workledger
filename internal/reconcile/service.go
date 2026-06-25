@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,6 +25,14 @@ import (
 )
 
 var ErrPlanNotFound = errors.New("saved plan not found")
+
+type ValidationError struct {
+	Message string
+}
+
+func (e ValidationError) Error() string {
+	return e.Message
+}
 
 type clockifyClient interface {
 	ListUserTimeEntries(ctx context.Context, workspaceID, userID string, start, end time.Time) ([]clockify.TimeEntry, error)
@@ -137,8 +146,6 @@ type reportingScopeGroup struct {
 	SourceIssueKeys       []string
 	PerSourceTotals       map[string]int
 	DesiredRows           []model.Row
-	TombstoneRows         []model.Row
-	HasTombstones         bool
 }
 
 type PlanFinding struct {
@@ -187,8 +194,10 @@ type ApplyScopeResult struct {
 }
 
 type ReconcileResult struct {
-	Plan   *Plan
-	NoPlan *ReconcileNoPlanResult
+	Plan                               *Plan
+	NoPlan                             *ReconcileNoPlanResult
+	ProfileSummaries                   []ReconcileProfileSummary
+	PreserveNonActionableReportingPlan bool
 }
 
 type ReconcileNoPlanResult struct {
@@ -202,6 +211,24 @@ type ReconcileNoPlanResult struct {
 	MatchedScopeCount       int
 	ActionableScopeCount    int
 	Reason                  string
+	ProfileSummaries        []ReconcileProfileSummary
+}
+
+type ReconcileProfileSummary struct {
+	AdapterFamily           string
+	RouteProfile            string
+	ResolvedTargetInstances []string
+	ScopeCount              int
+	ActionableScopeCount    int
+	PlanCreated             bool
+	Reason                  string
+}
+
+type autoRouteProfileSelection struct {
+	AdapterFamily string
+	Instance      string
+	Profile       string
+	Reporting     bool
 }
 
 func NewService(store *sqlitestore.Store) *Service {
@@ -276,6 +303,190 @@ func sortedSetKeys(values map[string]struct{}) []string {
 	}
 	sort.Strings(items)
 	return items
+}
+
+func sortedJiraCloudInstanceNames(instances map[string]config.JiraCloudInstance) []string {
+	names := make([]string, 0, len(instances))
+	for name := range instances {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func sortedJiraDataInstanceNames(instances map[string]config.JiraDataCenterInstance) []string {
+	names := make([]string, 0, len(instances))
+	for name := range instances {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func countItemsByStatus(items []PlanItem, status string) int {
+	count := 0
+	for _, item := range items {
+		if item.PlanStatus == status {
+			count++
+		}
+	}
+	return count
+}
+
+func summarizePlanProfile(adapterFamily, routeProfile string, plan Plan) ReconcileProfileSummary {
+	actionable := countItemsByStatus(plan.Items, "ready")
+	return ReconcileProfileSummary{
+		AdapterFamily:           adapterFamily,
+		RouteProfile:            routeProfile,
+		ResolvedTargetInstances: append([]string(nil), plan.TargetInstances...),
+		ScopeCount:              len(plan.Items),
+		ActionableScopeCount:    actionable,
+		PlanCreated:             true,
+		Reason:                  derivePlanProfileReason(plan.Items, actionable),
+	}
+}
+
+func derivePlanProfileReason(items []PlanItem, actionable int) string {
+	checkFailedReasons := itemReasonCodesByStatus(items, "check_failed")
+	if len(checkFailedReasons) > 0 {
+		return summarizeReasonCodes(checkFailedReasons)
+	}
+	if actionable > 0 {
+		return ""
+	}
+	return summarizeReasonCodes(itemReasonCodes(items))
+}
+
+func itemReasonCodesByStatus(items []PlanItem, status string) []string {
+	reasons := make([]string, 0)
+	for _, item := range items {
+		if item.PlanStatus != status {
+			continue
+		}
+		reason := strings.TrimSpace(item.ReasonCode)
+		if reason == "" {
+			continue
+		}
+		reasons = append(reasons, reason)
+	}
+	return reasons
+}
+
+func itemReasonCodes(items []PlanItem) []string {
+	reasons := make([]string, 0)
+	for _, item := range items {
+		reason := strings.TrimSpace(item.ReasonCode)
+		if reason == "" {
+			continue
+		}
+		reasons = append(reasons, reason)
+	}
+	return reasons
+}
+
+func summarizeReasonCodes(reasons []string) string {
+	reasonSet := map[string]struct{}{}
+	for _, reason := range reasons {
+		reasonSet[reason] = struct{}{}
+	}
+	switch len(reasonSet) {
+	case 0:
+		return ""
+	case 1:
+		return sortedSetKeys(reasonSet)[0]
+	default:
+		return "mixed"
+	}
+}
+
+func isSyntheticInstanceCheckFailure(item PlanItem, instance string) bool {
+	return item.PlanStatus == "check_failed" &&
+		item.LocalRowCount == 0 &&
+		item.IssueKey == instance &&
+		item.TargetAdapterInstance == instance &&
+		item.TargetIssue == instance
+}
+
+func isNoMatchingAutoInstanceFailurePlan(plan *Plan, instance string) bool {
+	if plan == nil || len(plan.Items) == 0 {
+		return false
+	}
+	for _, item := range plan.Items {
+		if !isSyntheticInstanceCheckFailure(item, instance) {
+			return false
+		}
+	}
+	return true
+}
+
+func effectiveRouteProfile(items []PlanItem) string {
+	for _, item := range items {
+		if strings.TrimSpace(item.RouteProfile) != "" {
+			return item.RouteProfile
+		}
+	}
+	return ""
+}
+
+func summarizeNoPlanProfile(result ReconcileNoPlanResult) ReconcileProfileSummary {
+	return ReconcileProfileSummary{
+		AdapterFamily:           result.AdapterFamily,
+		RouteProfile:            result.RouteProfile,
+		ResolvedTargetInstances: append([]string(nil), result.ResolvedTargetInstances...),
+		ScopeCount:              result.MatchedScopeCount,
+		ActionableScopeCount:    result.ActionableScopeCount,
+		PlanCreated:             false,
+		Reason:                  result.Reason,
+	}
+}
+
+func aggregateNoPlanResult(routeProfile string, windowFrom, windowTo time.Time, summaries []ReconcileProfileSummary) *ReconcileNoPlanResult {
+	if len(summaries) == 0 {
+		return nil
+	}
+
+	familySet := map[string]struct{}{}
+	instanceSet := map[string]struct{}{}
+	reasonSet := map[string]struct{}{}
+	matched := 0
+	actionable := 0
+	for _, summary := range summaries {
+		familySet[summary.AdapterFamily] = struct{}{}
+		for _, instance := range summary.ResolvedTargetInstances {
+			instanceSet[instance] = struct{}{}
+		}
+		if summary.Reason != "" {
+			reasonSet[summary.Reason] = struct{}{}
+		}
+		matched += summary.ScopeCount
+		actionable += summary.ActionableScopeCount
+	}
+
+	families := sortedSetKeys(familySet)
+	adapterFamily := "multiple"
+	if len(families) == 1 {
+		adapterFamily = families[0]
+	}
+
+	reason := "mixed"
+	if len(reasonSet) == 1 {
+		reasons := sortedSetKeys(reasonSet)
+		reason = reasons[0]
+	}
+
+	return &ReconcileNoPlanResult{
+		PlanCreated:             false,
+		AdapterFamily:           adapterFamily,
+		AdapterFamilies:         families,
+		RouteProfile:            routeProfile,
+		WindowFromUTC:           windowFrom.UTC(),
+		WindowToUTC:             windowTo.UTC(),
+		ResolvedTargetInstances: sortedSetKeys(instanceSet),
+		MatchedScopeCount:       matched,
+		ActionableScopeCount:    actionable,
+		Reason:                  reason,
+		ProfileSummaries:        append([]ReconcileProfileSummary(nil), summaries...),
+	}
 }
 
 func scopeSelectsClockify(instances []string) bool {
@@ -558,9 +769,8 @@ func (s *Service) buildCheckFailedPullPlan(cfg config.EffectiveConfig, family, i
 
 func (s *Service) ReconcileMultiPushPlan(ctx context.Context, cfg config.EffectiveConfig, scope ReconcileScope, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) (ReconcileResult, error) {
 	plans := make([]Plan, 0, len(scope.AdapterFamilies))
-	noPlanInstances := map[string]struct{}{}
-	noPlanFamilies := map[string]struct{}{}
-	noPlanReason := ""
+	profileSummaries := make([]ReconcileProfileSummary, 0)
+	noPlanProfileSummaries := make([]ReconcileProfileSummary, 0)
 	var lastNoPlan *ReconcileNoPlanResult
 	allNoPlan := true
 	for _, family := range scope.AdapterFamilies {
@@ -573,69 +783,79 @@ func (s *Service) ReconcileMultiPushPlan(ctx context.Context, cfg config.Effecti
 			if err != nil {
 				return ReconcileResult{}, err
 			}
+			profileSummaries = append(profileSummaries, summarizePlanProfile("clockify", "", plan))
 			plans = append(plans, plan)
 			allNoPlan = false
 		case "jira-cloud":
 			filtered := filterJiraScopeConfig(cfg, family, scope.Instances)
-			result, err := s.reconcileJiraCloudPushPlanInMemory(ctx, filtered, routeProfile, windowFrom, windowTo, onlyDeleted, options...)
+			results, err := s.reconcileJiraCloudPushProfilesInMemory(ctx, filtered, routeProfile, windowFrom, windowTo, onlyDeleted, options...)
 			if err != nil {
 				return ReconcileResult{}, err
 			}
-			if result.NoPlan != nil {
-				lastNoPlan = result.NoPlan
-				noPlanReason = result.NoPlan.Reason
-				noPlanFamilies[family] = struct{}{}
-				for _, instance := range result.NoPlan.ResolvedTargetInstances {
-					noPlanInstances[instance] = struct{}{}
+			for _, result := range results {
+				if result.NoPlan != nil {
+					lastNoPlan = result.NoPlan
+					noPlanSummary := summarizeNoPlanProfile(*result.NoPlan)
+					noPlanProfileSummaries = append(noPlanProfileSummaries, noPlanSummary)
+					if result.Plan == nil {
+						profileSummaries = append(profileSummaries, noPlanSummary)
+						continue
+					}
 				}
-				continue
-			}
-			allNoPlan = false
-			if result.Plan != nil {
-				plans = append(plans, *result.Plan)
+				if result.Plan != nil {
+					if !result.PreserveNonActionableReportingPlan {
+						allNoPlan = false
+					}
+					if len(result.ProfileSummaries) > 0 {
+						profileSummaries = append(profileSummaries, result.ProfileSummaries...)
+					} else {
+						profileSummaries = append(profileSummaries, summarizePlanProfile("jira-cloud", effectiveRouteProfile(result.Plan.Items), *result.Plan))
+					}
+					plans = append(plans, *result.Plan)
+					continue
+				}
 			}
 		case "jira-data-center":
 			filtered := filterJiraScopeConfig(cfg, family, scope.Instances)
-			result, err := s.reconcileJiraDataPushPlanInMemory(ctx, filtered, routeProfile, windowFrom, windowTo, onlyDeleted, options...)
+			results, err := s.reconcileJiraDataPushProfilesInMemory(ctx, filtered, routeProfile, windowFrom, windowTo, onlyDeleted, options...)
 			if err != nil {
 				return ReconcileResult{}, err
 			}
-			if result.NoPlan != nil {
-				lastNoPlan = result.NoPlan
-				noPlanReason = result.NoPlan.Reason
-				noPlanFamilies[family] = struct{}{}
-				for _, instance := range result.NoPlan.ResolvedTargetInstances {
-					noPlanInstances[instance] = struct{}{}
+			for _, result := range results {
+				if result.NoPlan != nil {
+					lastNoPlan = result.NoPlan
+					noPlanSummary := summarizeNoPlanProfile(*result.NoPlan)
+					noPlanProfileSummaries = append(noPlanProfileSummaries, noPlanSummary)
+					if result.Plan == nil {
+						profileSummaries = append(profileSummaries, noPlanSummary)
+						continue
+					}
 				}
-				continue
-			}
-			allNoPlan = false
-			if result.Plan != nil {
-				plans = append(plans, *result.Plan)
+				if result.Plan != nil {
+					if !result.PreserveNonActionableReportingPlan {
+						allNoPlan = false
+					}
+					if len(result.ProfileSummaries) > 0 {
+						profileSummaries = append(profileSummaries, result.ProfileSummaries...)
+					} else {
+						profileSummaries = append(profileSummaries, summarizePlanProfile("jira-data-center", effectiveRouteProfile(result.Plan.Items), *result.Plan))
+					}
+					plans = append(plans, *result.Plan)
+					continue
+				}
 			}
 		default:
 			return ReconcileResult{}, fmt.Errorf("unsupported adapter family %q", family)
 		}
 	}
 	if allNoPlan {
-		if len(scope.AdapterFamilies) == 1 && lastNoPlan != nil {
-			return ReconcileResult{NoPlan: lastNoPlan}, nil
+		if len(profileSummaries) == 1 && lastNoPlan != nil && strings.TrimSpace(routeProfile) != "" {
+			single := *lastNoPlan
+			single.ProfileSummaries = append([]ReconcileProfileSummary(nil), profileSummaries...)
+			return ReconcileResult{NoPlan: &single, ProfileSummaries: single.ProfileSummaries}, nil
 		}
-		families := sortedSetKeys(noPlanFamilies)
-		adapterFamily := "multiple"
-		if len(families) == 1 {
-			adapterFamily = families[0]
-		}
-		return ReconcileResult{NoPlan: &ReconcileNoPlanResult{
-			PlanCreated:             false,
-			AdapterFamily:           adapterFamily,
-			AdapterFamilies:         families,
-			RouteProfile:            routeProfile,
-			WindowFromUTC:           windowFrom.UTC(),
-			WindowToUTC:             windowTo.UTC(),
-			ResolvedTargetInstances: sortedSetKeys(noPlanInstances),
-			Reason:                  noPlanReason,
-		}}, nil
+		noPlan := aggregateNoPlanResult(routeProfile, windowFrom, windowTo, noPlanProfileSummaries)
+		return ReconcileResult{NoPlan: noPlan, ProfileSummaries: append([]ReconcileProfileSummary(nil), noPlanProfileSummaries...)}, nil
 	}
 	if len(plans) == 1 {
 		fingerprint, err := config.FingerprintEffective(cfg)
@@ -646,7 +866,7 @@ func (s *Service) ReconcileMultiPushPlan(ctx context.Context, cfg config.Effecti
 		if err := s.insertPlan(plans[0]); err != nil {
 			return ReconcileResult{}, err
 		}
-		return ReconcileResult{Plan: &plans[0]}, nil
+		return ReconcileResult{Plan: &plans[0], ProfileSummaries: append([]ReconcileProfileSummary(nil), profileSummaries...)}, nil
 	}
 	merged, err := mergePlans("push", cfg, windowFrom, windowTo, plans)
 	if err != nil {
@@ -655,7 +875,216 @@ func (s *Service) ReconcileMultiPushPlan(ctx context.Context, cfg config.Effecti
 	if err := s.insertPlan(merged); err != nil {
 		return ReconcileResult{}, err
 	}
-	return ReconcileResult{Plan: &merged}, nil
+	return ReconcileResult{Plan: &merged, ProfileSummaries: append([]ReconcileProfileSummary(nil), profileSummaries...)}, nil
+}
+
+func (s *Service) reconcileJiraCloudPushProfilesInMemory(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) ([]ReconcileResult, error) {
+	selections := []autoRouteProfileSelection{{AdapterFamily: "jira-cloud", Profile: routeProfile}}
+	autoMode := strings.TrimSpace(routeProfile) == ""
+	if autoMode {
+		var err error
+		selections, err = resolveAutoJiraCloudPushRouteProfiles(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	results := make([]ReconcileResult, 0, len(selections))
+	for _, selection := range selections {
+		profileOptions := append([]PlanOptions(nil), options...)
+		profileCfg := cfg
+		if autoMode {
+			opts := resolvePlanOptions(options)
+			opts.SuppressMissingRoutes = true
+			if !selection.Reporting {
+				opts.ExcludedRemoteOwnedIssueKeys = autoReportingTargetIssues(cfg, selection.AdapterFamily, selection.Instance)
+			}
+			if selection.Reporting {
+				opts.PreserveNonActionableReportingPlan = true
+			}
+			profileOptions = []PlanOptions{opts}
+			profileCfg = filterJiraScopeConfig(cfg, selection.AdapterFamily, []string{selection.Instance})
+		}
+		result, err := s.reconcileJiraCloudPushPlanInMemory(ctx, profileCfg, selection.Profile, windowFrom, windowTo, onlyDeleted, profileOptions...)
+		if err != nil {
+			return nil, err
+		}
+		if autoMode && isNoMatchingAutoInstanceFailurePlan(result.Plan, selection.Instance) {
+			result.Plan = nil
+			result.NoPlan = &ReconcileNoPlanResult{
+				PlanCreated:             false,
+				AdapterFamily:           "jira-cloud",
+				AdapterFamilies:         []string{"jira-cloud"},
+				RouteProfile:            selection.Profile,
+				WindowFromUTC:           windowFrom.UTC(),
+				WindowToUTC:             windowTo.UTC(),
+				ResolvedTargetInstances: []string{selection.Instance},
+				MatchedScopeCount:       0,
+				ActionableScopeCount:    0,
+				Reason:                  "no_matching_routes",
+			}
+		}
+		if autoMode && result.Plan != nil && len(result.Plan.Items) == 0 {
+			result.Plan = nil
+			result.NoPlan = &ReconcileNoPlanResult{
+				PlanCreated:             false,
+				AdapterFamily:           "jira-cloud",
+				AdapterFamilies:         []string{"jira-cloud"},
+				RouteProfile:            selection.Profile,
+				WindowFromUTC:           windowFrom.UTC(),
+				WindowToUTC:             windowTo.UTC(),
+				ResolvedTargetInstances: []string{selection.Instance},
+				MatchedScopeCount:       0,
+				ActionableScopeCount:    0,
+				Reason:                  "no_matching_routes",
+			}
+		}
+		if autoMode && result.NoPlan != nil && len(result.NoPlan.ResolvedTargetInstances) == 0 {
+			result.NoPlan.ResolvedTargetInstances = []string{selection.Instance}
+		}
+		if result.Plan != nil {
+			result.ProfileSummaries = []ReconcileProfileSummary{summarizePlanProfile("jira-cloud", selection.Profile, *result.Plan)}
+		} else if result.NoPlan != nil {
+			result.ProfileSummaries = []ReconcileProfileSummary{summarizeNoPlanProfile(*result.NoPlan)}
+			result.NoPlan.ProfileSummaries = append([]ReconcileProfileSummary(nil), result.ProfileSummaries...)
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func (s *Service) reconcileJiraDataPushProfilesInMemory(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) ([]ReconcileResult, error) {
+	selections := []autoRouteProfileSelection{{AdapterFamily: "jira-data-center", Profile: routeProfile}}
+	autoMode := strings.TrimSpace(routeProfile) == ""
+	if autoMode {
+		var err error
+		selections, err = resolveAutoJiraDataPushRouteProfiles(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	results := make([]ReconcileResult, 0, len(selections))
+	for _, selection := range selections {
+		profileOptions := append([]PlanOptions(nil), options...)
+		profileCfg := cfg
+		if autoMode {
+			opts := resolvePlanOptions(options)
+			opts.SuppressMissingRoutes = true
+			if !selection.Reporting {
+				opts.ExcludedRemoteOwnedIssueKeys = autoReportingTargetIssues(cfg, selection.AdapterFamily, selection.Instance)
+			}
+			if selection.Reporting {
+				opts.PreserveNonActionableReportingPlan = true
+			}
+			profileOptions = []PlanOptions{opts}
+			profileCfg = filterJiraScopeConfig(cfg, selection.AdapterFamily, []string{selection.Instance})
+		}
+		result, err := s.reconcileJiraDataPushPlanInMemory(ctx, profileCfg, selection.Profile, windowFrom, windowTo, onlyDeleted, profileOptions...)
+		if err != nil {
+			return nil, err
+		}
+		if autoMode && isNoMatchingAutoInstanceFailurePlan(result.Plan, selection.Instance) {
+			result.Plan = nil
+			result.NoPlan = &ReconcileNoPlanResult{
+				PlanCreated:             false,
+				AdapterFamily:           "jira-data-center",
+				AdapterFamilies:         []string{"jira-data-center"},
+				RouteProfile:            selection.Profile,
+				WindowFromUTC:           windowFrom.UTC(),
+				WindowToUTC:             windowTo.UTC(),
+				ResolvedTargetInstances: []string{selection.Instance},
+				MatchedScopeCount:       0,
+				ActionableScopeCount:    0,
+				Reason:                  "no_matching_routes",
+			}
+		}
+		if autoMode && result.Plan != nil && len(result.Plan.Items) == 0 {
+			result.Plan = nil
+			result.NoPlan = &ReconcileNoPlanResult{
+				PlanCreated:             false,
+				AdapterFamily:           "jira-data-center",
+				AdapterFamilies:         []string{"jira-data-center"},
+				RouteProfile:            selection.Profile,
+				WindowFromUTC:           windowFrom.UTC(),
+				WindowToUTC:             windowTo.UTC(),
+				ResolvedTargetInstances: []string{selection.Instance},
+				MatchedScopeCount:       0,
+				ActionableScopeCount:    0,
+				Reason:                  "no_matching_routes",
+			}
+		}
+		if autoMode && result.NoPlan != nil && len(result.NoPlan.ResolvedTargetInstances) == 0 {
+			result.NoPlan.ResolvedTargetInstances = []string{selection.Instance}
+		}
+		if result.Plan != nil {
+			result.ProfileSummaries = []ReconcileProfileSummary{summarizePlanProfile("jira-data-center", selection.Profile, *result.Plan)}
+		} else if result.NoPlan != nil {
+			result.ProfileSummaries = []ReconcileProfileSummary{summarizeNoPlanProfile(*result.NoPlan)}
+			result.NoPlan.ProfileSummaries = append([]ReconcileProfileSummary(nil), result.ProfileSummaries...)
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func autoReportingTargetIssues(cfg config.EffectiveConfig, adapterFamily, instanceName string) []string {
+	issues := map[string]struct{}{}
+	switch adapterFamily {
+	case "jira-cloud":
+		if cfg.File.JiraCloud == nil {
+			return nil
+		}
+		instance, ok := cfg.File.JiraCloud.Instances[instanceName]
+		if !ok || instance.Routing == nil {
+			return nil
+		}
+		for profileName, profile := range instance.Routing.Profiles {
+			if profileName == "default" {
+				continue
+			}
+			for _, targetIssue := range profile.ReportingTargets {
+				targetIssue = strings.TrimSpace(targetIssue)
+				if targetIssue != "" {
+					issues[targetIssue] = struct{}{}
+				}
+			}
+		}
+	case "jira-data-center":
+		if cfg.File.JiraData == nil {
+			return nil
+		}
+		instance, ok := cfg.File.JiraData.Instances[instanceName]
+		if !ok || instance.Routing == nil {
+			return nil
+		}
+		for profileName, profile := range instance.Routing.Profiles {
+			if profileName == "default" {
+				continue
+			}
+			for _, targetIssue := range profile.ReportingTargets {
+				targetIssue = strings.TrimSpace(targetIssue)
+				if targetIssue != "" {
+					issues[targetIssue] = struct{}{}
+				}
+			}
+		}
+	}
+	return sortedSetKeys(issues)
+}
+
+func stringSet(values []string) map[string]struct{} {
+	if len(values) == 0 {
+		return nil
+	}
+	items := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			items[value] = struct{}{}
+		}
+	}
+	return items
 }
 
 func (s *Service) buildClockifyPullPlanFromRows(cfg config.EffectiveConfig, windowFrom, windowTo time.Time, rows []model.Row, invalidRows []model.InvalidRow) (Plan, error) {
@@ -722,13 +1151,7 @@ func (s *Service) buildClockifyPullPlanFromRows(cfg config.EffectiveConfig, wind
 		}
 		applyInspectionRowDiffSummary(&item, remoteRows, localPayload)
 
-		if tombstoneProtected(remoteRows, s.store.DB()) {
-			item.PlanStatus = "invalid"
-			item.PlannedAction = "none"
-			item.ComparisonStatus = "not_checked"
-			item.ReasonCode = "tombstone_protected"
-			item.ReasonDetail = "Saved payload would recreate a tombstoned local allocation"
-		} else if rowsEqual(remoteRows, localPayload) {
+		if rowsEqual(remoteRows, localPayload) {
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
 			item.ComparisonStatus = "match"
@@ -771,6 +1194,8 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 		ID:                uuid.NewString(),
 		Direction:         "push",
 		AdapterFamily:     "clockify",
+		AdapterFamilies:   []string{"clockify"},
+		TargetInstances:   []string{config.ClockifyInstanceName},
 		ConfigFingerprint: fingerprint,
 		WindowFromUTC:     windowFrom.UTC(),
 		WindowToUTC:       windowTo.UTC(),
@@ -801,33 +1226,36 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 	if err != nil {
 		return Plan{}, err
 	}
-	tombstones, err := s.listTombstoneScope(windowFrom, windowTo)
-	if err != nil {
-		return Plan{}, err
-	}
-
 	activeRows := worklogsToRows(localRows)
-	tombstoneRows := tombstonesToRows(tombstones)
-	if len(activeRows) == 0 && len(tombstoneRows) == 0 {
+	remoteOwnedIssues := make(map[string]bool)
+	validRemoteRows, _ := clockify.NormalizeEntries(entries, tagsByID)
+	for _, row := range validRemoteRows {
+		projectName := config.ResolveClockifyProjectName(clockifyCfg.ProjectMapping, row.IssueKey)
+		if projectName == "" {
+			continue
+		}
+		projectMatches := matchingProjects(projects, projectName)
+		if len(projectMatches) != 1 {
+			continue
+		}
+		targetEntries := filterEntriesByProject(filterEntriesByIssue(entries, tagsByID, row.IssueKey), projectMatches[0].ID)
+		if len(targetEntries) == 0 {
+			continue
+		}
+		remoteOwnedIssues[row.IssueKey] = true
+	}
+	if len(activeRows) == 0 && len(remoteOwnedIssues) == 0 {
 		plan.Items = nil
 		plan.AggregateStatus = "ready"
 		normalizePlanSummary(&plan)
 		return plan, nil
 	}
 
-	issueKeys := unionKeys(activeRows, tombstoneRows)
+	issueKeys := unionKeys(activeRows, remoteOwnedIssues)
 	items := make([]PlanItem, 0, len(issueKeys))
 	for _, issueKey := range issueKeys {
 		activePayload := sortRows(activeRows[issueKey])
 		localPayload := activePayload
-		deletePayload := sortRows(tombstoneRows[issueKey])
-		isDeleteOnly := len(localPayload) == 0 && len(deletePayload) > 0
-		if onlyDeleted && !isDeleteOnly {
-			continue
-		}
-		if isDeleteOnly {
-			localPayload = deletePayload
-		}
 
 		item := newPlanItem(plan, issueKey, localPayload)
 		item.TargetAdapterFamily = "clockify"
@@ -886,7 +1314,7 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 		if tagExists {
 			item.InspectionSummary.IssueTagName = tag.Name
 		}
-		item.InspectionSummary.RequiresTagCreate = !tagExists && !isDeleteOnly && clockifyCreateIssueTagIfMissing(clockifyCfg)
+		item.InspectionSummary.RequiresTagCreate = !tagExists && len(localPayload) > 0 && clockifyCreateIssueTagIfMissing(clockifyCfg)
 
 		issueEntries := filterEntriesByIssue(entries, tagsByID, issueKey)
 		targetEntries := filterEntriesByProject(issueEntries, project.ID)
@@ -899,33 +1327,7 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 		item.InspectionSummary.RemoteTotalSeconds = item.RemoteTotal
 
 		switch {
-		case isDeleteOnly:
-			matchedEntries := targetEntries
-			if len(matchedEntries) == 0 {
-				matchedEntries = findEntriesByTimeIntervals(entries, deletePayload)
-				if len(matchedEntries) > 0 {
-					item.RemoteRowCount = len(matchedEntries)
-					item.RemoteTotal = sumEntryDurations(matchedEntries)
-					item.InspectionSummary.RemoteRowCount = item.RemoteRowCount
-					item.InspectionSummary.RemoteTotalSeconds = item.RemoteTotal
-				}
-			}
-			if len(matchedEntries) == 0 {
-				item.PlanStatus = "skipped"
-				item.PlannedAction = "none"
-				item.ComparisonStatus = "match"
-				item.ReasonCode = "exact_match"
-				item.ReasonDetail = "Clockify scope already matches the local empty state"
-				applyInspectionRowDiffCounts(&item, rowDiffCounts{})
-			} else {
-				item.PlanStatus = "ready"
-				item.PlannedAction = "delete"
-				item.ComparisonStatus = "remote_present"
-				item.ReasonCode = "remote_present"
-				item.ReasonDetail = "Clockify scope contains rows that should be deleted"
-				applyInspectionRowDiffCounts(&item, rowDiffCounts{Delete: len(matchedEntries)})
-			}
-		case !tagExists && !clockifyCreateIssueTagIfMissing(clockifyCfg):
+		case len(localPayload) > 0 && !tagExists && !clockifyCreateIssueTagIfMissing(clockifyCfg):
 			item.PlanStatus = "blocked"
 			item.PlannedAction = "none"
 			item.ComparisonStatus = "not_checked"
@@ -1158,6 +1560,7 @@ func (s *Service) executeSavedPlan(cfg config.EffectiveConfig, id, retryScope st
 	})
 
 	pullItems, pushItems := splitPlanExecutionItems(ready)
+	allReadyPushItems := allReadyPushExecutionItems(plan.Items)
 	var scopeDone int
 	var workDone int
 	for _, item := range pullItems {
@@ -1197,7 +1600,7 @@ func (s *Service) executeSavedPlan(cfg config.EffectiveConfig, id, retryScope st
 		})
 	}
 	if len(pushItems) > 0 {
-		pushResult, err := s.executeSavedPushGroups(context.Background(), cfg, retryScope, pushItems, scopeDone, workDone, len(ready), totalApplyWorkUnits(ready), opts.Reporter)
+		pushResult, err := s.executeSavedPushGroups(context.Background(), cfg, retryScope, pushItems, allReadyPushItems, scopeDone, workDone, len(ready), totalApplyWorkUnits(ready), opts.Reporter)
 		if err != nil {
 			return ApplyResult{}, err
 		}
@@ -1256,10 +1659,6 @@ func (s *Service) executePullItem(item PlanItem) (applyItemExecution, error) {
 
 func (s *Service) executePushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem, retryScope string) (applyItemExecution, error) {
 	appliedAt := s.now().UTC()
-	if err := s.recordDeliveryAttempt(item.PlanID, item.ID, "pending", "push delivery started"); err != nil {
-		return applyItemExecution{}, err
-	}
-
 	if retryScope == "uncertain" {
 		reconciledState, message, err := s.reconcileUncertainPushItem(ctx, cfg, item)
 		if err != nil {
@@ -1285,6 +1684,10 @@ func (s *Service) executePushItem(ctx context.Context, cfg config.EffectiveConfi
 		}
 	}
 
+	if err := s.recordDeliveryAttempt(item.PlanID, item.ID, "pending", "push delivery started"); err != nil {
+		return applyItemExecution{}, err
+	}
+
 	pushResult, err := s.applyPushItem(ctx, cfg, item)
 	if err != nil {
 		finalState := "failed"
@@ -1304,10 +1707,6 @@ func (s *Service) executePushItem(ctx context.Context, cfg config.EffectiveConfi
 			warnings:           append([]string(nil), pushResult.warnings...),
 		}, nil
 	}
-	if err := s.clearDeleteTombstones(item); err != nil {
-		return applyItemExecution{}, err
-	}
-
 	message := pushApplySuccessMessage(item.TargetAdapterFamily)
 	if len(pushResult.warnings) > 0 {
 		message = message + " with warnings"
@@ -1537,12 +1936,13 @@ func (s *Service) applyClockifyPushItem(ctx context.Context, cfg config.Effectiv
 		}
 		scopeEntries := filterEntriesByProject(filterEntriesByIssue(entries, tagsByID, item.TargetIssue), project.ID)
 		deleteRows, createRows := diffScopedRemoteRows(buildClockifyScopedRows(scopeEntries, tagsByID, item.TargetIssue), item.Payload)
+		deletedRows := scopedRemoteRowValues(deleteRows)
 		if len(deleteRows) > 0 {
 			if err := deleteRemoteClockifyEntries(ctx, client, clockifyCfg.WorkspaceID, scopedRemoteRawValues(deleteRows)); err != nil {
 				return result, err
 			}
 		}
-		deletedRows := scopedRemoteRowValues(deleteRows)
+		result.deletedRows = append([]model.Row(nil), deletedRows...)
 		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
 			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
 		} else {
@@ -1563,6 +1963,7 @@ func (s *Service) applyClockifyPushItem(ctx context.Context, cfg config.Effectiv
 			scopeEntries = findEntriesByTimeIntervals(entries, item.Payload)
 		}
 		deletedRows := normalizeDeletedClockifyRows(scopeEntries, tagsByID, item.TargetIssue)
+		result.deletedRows = append([]model.Row(nil), deletedRows...)
 		if err := deleteRemoteClockifyEntries(ctx, client, clockifyCfg.WorkspaceID, scopeEntries); err != nil {
 			return result, err
 		}
@@ -1613,12 +2014,13 @@ func (s *Service) applyJiraDataPushItem(ctx context.Context, cfg config.Effectiv
 		}
 	case "replace":
 		deleteRows, createRows := diffScopedRemoteRows(buildJiraDataScopedRows(item.TargetIssue, scope), item.Payload)
+		deletedRows := scopedRemoteRowValues(deleteRows)
 		if len(deleteRows) > 0 {
 			if err := deleteRemoteJiraDataWorklogs(ctx, client, item.TargetIssue, scopedRemoteRawValues(deleteRows)); err != nil {
 				return result, err
 			}
 		}
-		deletedRows := scopedRemoteRowValues(deleteRows)
+		result.deletedRows = append([]model.Row(nil), deletedRows...)
 		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
 			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
 		} else {
@@ -1631,6 +2033,7 @@ func (s *Service) applyJiraDataPushItem(ctx context.Context, cfg config.Effectiv
 		}
 	case "delete":
 		deletedRows := normalizeDeletedJiraDataRows(item.TargetIssue, scope)
+		result.deletedRows = append([]model.Row(nil), deletedRows...)
 		if err := deleteRemoteJiraDataWorklogs(ctx, client, item.TargetIssue, scope); err != nil {
 			return result, err
 		}
@@ -1670,12 +2073,13 @@ func (s *Service) applyJiraCloudPushItem(ctx context.Context, cfg config.Effecti
 		}
 	case "replace":
 		deleteRows, createRows := diffScopedRemoteRows(buildJiraCloudScopedRows(item.TargetIssue, scope), item.Payload)
+		deletedRows := scopedRemoteRowValues(deleteRows)
 		if len(deleteRows) > 0 {
 			if err := deleteRemoteJiraCloudWorklogs(ctx, client, item.TargetIssue, scopedRemoteRawValues(deleteRows)); err != nil {
 				return result, err
 			}
 		}
-		deletedRows := scopedRemoteRowValues(deleteRows)
+		result.deletedRows = append([]model.Row(nil), deletedRows...)
 		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
 			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
 		} else {
@@ -1688,6 +2092,7 @@ func (s *Service) applyJiraCloudPushItem(ctx context.Context, cfg config.Effecti
 		}
 	case "delete":
 		deletedRows := normalizeDeletedJiraCloudRows(item.TargetIssue, scope)
+		result.deletedRows = append([]model.Row(nil), deletedRows...)
 		if err := deleteRemoteJiraCloudWorklogs(ctx, client, item.TargetIssue, scope); err != nil {
 			return result, err
 		}
@@ -1976,44 +2381,6 @@ func (s *Service) listActiveWindow(windowFrom, windowTo time.Time) ([]worklogs.L
 	return items, rows.Err()
 }
 
-func (s *Service) listTombstoneScope(windowFrom, windowTo time.Time) ([]worklogs.Tombstone, error) {
-	rows, err := s.store.DB().Query(
-		`SELECT worklog_id, issue_key, started_at_utc, duration_seconds, deleted_at FROM worklog_tombstones WHERE started_at_utc >= ? AND started_at_utc <= ? ORDER BY issue_key ASC, started_at_utc ASC, worklog_id ASC`,
-		sqlitestore.RFC3339UTC(windowFrom.UTC()),
-		sqlitestore.RFC3339UTC(windowTo.UTC()),
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	items := make([]worklogs.Tombstone, 0)
-	for rows.Next() {
-		item, err := scanTombstone(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	return items, rows.Err()
-}
-
-func tombstoneProtected(rows []model.Row, db *sql.DB) bool {
-	for _, row := range rows {
-		var count int
-		err := db.QueryRow(
-			`SELECT COUNT(1) FROM worklog_tombstones WHERE issue_key = ? AND started_at_utc = ? AND duration_seconds = ?`,
-			row.IssueKey,
-			sqlitestore.RFC3339UTC(row.StartedAtUTC),
-			row.DurationSeconds,
-		).Scan(&count)
-		if err == nil && count > 0 {
-			return true
-		}
-	}
-	return false
-}
-
 func localToRows(items []worklogs.LocalWorklog) []model.Row {
 	rows := make([]model.Row, 0, len(items))
 	for _, item := range items {
@@ -2038,56 +2405,6 @@ func worklogsToRows(items []worklogs.LocalWorklog) map[string][]model.Row {
 		})
 	}
 	return grouped
-}
-
-func tombstonesToRows(items []worklogs.Tombstone) map[string][]model.Row {
-	grouped := map[string][]model.Row{}
-	for _, item := range items {
-		grouped[item.IssueKey] = append(grouped[item.IssueKey], model.Row{
-			IssueKey:        item.IssueKey,
-			StartedAtUTC:    item.StartedAtUTC.UTC(),
-			DurationSeconds: item.DurationSeconds,
-			SourceRowID:     item.ID,
-		})
-	}
-	return grouped
-}
-
-func (s *Service) clearDeleteTombstones(item PlanItem) error {
-	if item.PlanDirection != "push" || item.PlannedAction != "delete" {
-		return nil
-	}
-
-	ids := make([]string, 0, len(item.Payload))
-	seen := make(map[string]struct{}, len(item.Payload))
-	for _, row := range item.Payload {
-		if row.SourceRowID == "" {
-			continue
-		}
-		if _, ok := seen[row.SourceRowID]; ok {
-			continue
-		}
-		seen[row.SourceRowID] = struct{}{}
-		ids = append(ids, row.SourceRowID)
-	}
-	if len(ids) == 0 {
-		return nil
-	}
-
-	tx, err := s.store.DB().BeginTx(context.Background(), nil)
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if _, err := tx.Exec(`DELETE FROM worklog_tombstones WHERE worklog_id = ?`, id); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return nil
 }
 
 func sortRows(items []model.Row) []model.Row {
@@ -2358,13 +2675,9 @@ func newReportingScopeGroup(adapterFamily, targetInstance, targetIssue string) *
 	}
 }
 
-func (g *reportingScopeGroup) addSource(issueKey string, activeRows, tombstoneRows []model.Row, normalizeDescription func(sourceIssue, description string) string) {
+func (g *reportingScopeGroup) addSource(issueKey string, activeRows []model.Row, normalizeDescription func(sourceIssue, description string) string) {
 	g.SourceIssueKeys = append(g.SourceIssueKeys, issueKey)
 	g.PerSourceTotals[issueKey] = sumRows(activeRows)
-	if len(tombstoneRows) > 0 {
-		g.HasTombstones = true
-		g.TombstoneRows = append(g.TombstoneRows, tombstoneRows...)
-	}
 	for _, row := range activeRows {
 		row.IssueKey = g.TargetIssue
 		row.Description = normalizeDescription(issueKey, row.Description)
@@ -2482,7 +2795,7 @@ func summarizeReportingNoPlan(adapterFamily, routeProfile string, windowFrom, wi
 	}
 	sort.Strings(instances)
 
-	reason := "already_in_sync"
+	reason := "exact_match"
 	if matched == 0 {
 		reason = "no_matching_routes"
 	}
@@ -2650,25 +2963,5 @@ func scanWorklog(scanner interface{ Scan(dest ...any) error }) (worklogs.LocalWo
 		return worklogs.LocalWorklog{}, err
 	}
 	item.StartedAtUTC = parsed.UTC()
-	return item, nil
-}
-
-func scanTombstone(scanner interface{ Scan(dest ...any) error }) (worklogs.Tombstone, error) {
-	var item worklogs.Tombstone
-	var startedAt string
-	var deletedAt string
-	if err := scanner.Scan(&item.ID, &item.IssueKey, &startedAt, &item.DurationSeconds, &deletedAt); err != nil {
-		return worklogs.Tombstone{}, err
-	}
-	parsedStart, err := time.Parse(time.RFC3339, startedAt)
-	if err != nil {
-		return worklogs.Tombstone{}, err
-	}
-	parsedDeletedAt, err := time.Parse(time.RFC3339, deletedAt)
-	if err != nil {
-		return worklogs.Tombstone{}, err
-	}
-	item.StartedAtUTC = parsedStart.UTC()
-	item.DeletedAt = parsedDeletedAt.UTC()
 	return item, nil
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -169,13 +170,7 @@ func (s *Service) buildJiraCloudPullPlan(ctx context.Context, cfg config.Effecti
 			ResolvedTargetIssue:    issueKey,
 		}
 		applyInspectionRowDiffSummary(&item, remoteRows, localPayload)
-		if tombstoneProtected(remoteRows, s.store.DB()) {
-			item.PlanStatus = "invalid"
-			item.PlannedAction = "none"
-			item.ComparisonStatus = "not_checked"
-			item.ReasonCode = "tombstone_protected"
-			item.ReasonDetail = "Saved payload would recreate a tombstoned local allocation"
-		} else if rowsEqual(remoteRows, localPayload) {
+		if rowsEqual(remoteRows, localPayload) {
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
 			item.ComparisonStatus = "match"
@@ -227,6 +222,7 @@ func (s *Service) ReconcileJiraCloudPushPlan(ctx context.Context, cfg config.Eff
 }
 
 func (s *Service) reconcileJiraCloudPushPlanInMemory(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) (ReconcileResult, error) {
+	opts := resolvePlanOptions(options)
 	routes, err := resolveJiraCloudRouteProfile(cfg, routeProfile)
 	if err != nil {
 		return ReconcileResult{}, err
@@ -242,6 +238,9 @@ func (s *Service) reconcileJiraCloudPushPlanInMemory(ctx context.Context, cfg co
 
 	result := summarizeReportingNoPlan("jira-cloud", routeProfile, windowFrom, windowTo, plan.Items)
 	if result != nil {
+		if opts.PreserveNonActionableReportingPlan && result.Reason == "exact_match" {
+			return ReconcileResult{Plan: &plan, NoPlan: result, PreserveNonActionableReportingPlan: true}, nil
+		}
 		return ReconcileResult{NoPlan: result}, nil
 	}
 	return ReconcileResult{Plan: &plan}, nil
@@ -272,14 +271,8 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 	if err != nil {
 		return Plan{}, err
 	}
-	tombstones, err := s.listTombstoneScope(windowFrom, windowTo)
-	if err != nil {
-		return Plan{}, err
-	}
 
 	activeRows := worklogsToRows(localRows)
-	tombstoneRows := tombstonesToRows(tombstones)
-	issueKeys := unionKeys(activeRows, tombstoneRows)
 	plan := Plan{
 		ID:                uuid.NewString(),
 		Direction:         "push",
@@ -291,31 +284,33 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 		AggregateStatus:   "ready",
 	}
 	if routes.isReportingOnly() {
-		return s.buildJiraCloudReportingPushPlan(ctx, cfg, routeProfile, windowFrom, windowTo, onlyDeleted, plan, routes, activeRows, tombstoneRows, opts)
+		return s.buildJiraCloudReportingPushPlan(ctx, cfg, routeProfile, windowFrom, windowTo, onlyDeleted, plan, routes, activeRows, opts)
 	}
 	opts.Reporter.Start(progress.Event{Phase: "fetching", Message: "plan reconcile jira-cloud push"})
 	defer func() {
 		opts.Reporter.Finish(progress.Event{Phase: "finalizing", Message: "plan reconcile jira-cloud push complete"})
 	}()
+	remoteOwnedIssues, failedInstances, err := s.fetchJiraCloudRemoteOwnedIssues(ctx, cfg, routes, windowFrom, windowTo, opts.ExcludedRemoteOwnedIssueKeys)
+	if err != nil {
+		return Plan{}, err
+	}
+	issueKeys := unionKeys(activeRows, remoteOwnedIssues)
 	planned := make([]jiraCloudPlannedScope, 0, len(issueKeys))
 	items := make([]PlanItem, 0, len(issueKeys))
+	failedScopeInstances := map[string]struct{}{}
 	for _, issueKey := range issueKeys {
 		activePayload := sortRows(activeRows[issueKey])
 		localPayload := activePayload
-		deletePayload := sortRows(tombstoneRows[issueKey])
-		isDeleteOnly := len(localPayload) == 0 && len(deletePayload) > 0
-		if onlyDeleted && !isDeleteOnly {
-			continue
-		}
-		if isDeleteOnly {
-			localPayload = deletePayload
-		}
 		route, ok, err := routes.resolve(issueKey)
 		if err != nil {
 			return Plan{}, err
 		}
 		if !ok {
-			item := newPlanItem(plan, issueKey, localPayload)
+			if opts.SuppressMissingRoutes {
+				continue
+			}
+			item := newPlanItem(plan, issueKey, activePayload)
+			item.RouteProfile = routeProfile
 			applyActiveLocalMetrics(&item, activePayload)
 			item.PlanStatus = "blocked"
 			item.PlannedAction = "none"
@@ -331,13 +326,34 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 				return Plan{}, err
 			}
 		}
+		if failure, ok := failedInstances[route.targetInstance]; ok {
+			item := newPlanItem(plan, issueKey, localPayload)
+			item.RouteProfile = routeProfile
+			item.TargetAdapterFamily = "jira-cloud"
+			item.TargetAdapterInstance = route.targetInstance
+			item.TargetIssue = route.targetIssue
+			item.InspectionSummary = InspectionSummary{
+				LocalRowCount:          len(activePayload),
+				LocalTotalSeconds:      sumRows(activePayload),
+				SourceIssueKeys:        []string{issueKey},
+				PerSourceTotals:        map[string]int{issueKey: sumRows(activePayload)},
+				ResolvedTargetInstance: route.targetInstance,
+				ResolvedTargetIssue:    route.targetIssue,
+			}
+			applyActiveLocalMetrics(&item, activePayload)
+			applyJiraCloudCheckFailed(&item, failure)
+			item.DeliveryKey = buildDeliveryKey(item)
+			items = append(items, item)
+			failedScopeInstances[route.targetInstance] = struct{}{}
+			continue
+		}
 		if route.reporting {
 			for i := range localPayload {
 				localPayload[i].IssueKey = route.targetIssue
 				localPayload[i].Description = jiracloud.ReportingDescription(issueKey, localPayload[i].Description)
 			}
 		}
-		planned = append(planned, jiraCloudPlannedScope{issueKey: issueKey, activePayload: activePayload, localPayload: localPayload, isDeleteOnly: isDeleteOnly, route: route})
+		planned = append(planned, jiraCloudPlannedScope{issueKey: issueKey, activePayload: activePayload, localPayload: localPayload, route: route})
 	}
 	fetchedScopes, err := s.fetchJiraCloudPushScopes(ctx, cfg, planned, windowFrom, windowTo)
 	if err != nil {
@@ -368,26 +384,6 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 		switch {
 		case fetched.failure != nil:
 			applyJiraCloudCheckFailed(&item, *fetched.failure)
-		case scope.isDeleteOnly && len(fetched.remoteScope) == 0:
-			item.PlanStatus = "skipped"
-			item.PlannedAction = "none"
-			item.ComparisonStatus = "match"
-			item.ReasonCode = "exact_match"
-			item.ReasonDetail = "Jira Cloud scope already matches the local empty state"
-			applyInspectionRowDiffCounts(&item, rowDiffCounts{})
-		case scope.isDeleteOnly && fetched.foreignPresent:
-			item.PlanStatus = "blocked"
-			item.PlannedAction = "none"
-			item.ComparisonStatus = "remote_present"
-			item.ReasonCode = "foreign_authored_rows_present"
-			item.ReasonDetail = "Cleanup scope contains foreign-authored Jira worklogs"
-		case scope.isDeleteOnly:
-			item.PlanStatus = "ready"
-			item.PlannedAction = "delete"
-			item.ComparisonStatus = "remote_present"
-			item.ReasonCode = "remote_present"
-			item.ReasonDetail = "Jira Cloud scope contains rows that should be deleted"
-			applyInspectionRowDiffSummary(&item, nil, fetched.targetRows)
 		case rowsEqual(scope.localPayload, fetched.targetRows):
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
@@ -413,6 +409,23 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 		item.DeliveryKey = buildDeliveryKey(item)
 		items = append(items, item)
 	}
+	for instanceName, failure := range failedInstances {
+		if _, ok := failedScopeInstances[instanceName]; ok {
+			continue
+		}
+		item := newPlanItem(plan, instanceName, nil)
+		item.RouteProfile = routeProfile
+		item.TargetAdapterFamily = "jira-cloud"
+		item.TargetAdapterInstance = instanceName
+		item.TargetIssue = instanceName
+		item.InspectionSummary = InspectionSummary{
+			ResolvedTargetInstance: instanceName,
+			ResolvedTargetIssue:    instanceName,
+		}
+		applyJiraCloudCheckFailed(&item, failure)
+		item.DeliveryKey = buildDeliveryKey(item)
+		items = append(items, item)
+	}
 
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].TargetIssue != items[j].TargetIssue {
@@ -422,39 +435,42 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 	})
 	plan.Items = items
 	plan.AggregateStatus = deriveAggregateStatus(items, nil)
+	normalizePlanSummary(&plan)
 	opts.Reporter.Event(progress.Event{Phase: "finalizing", ScopeDone: len(items), ScopeTotal: len(items), Message: "saved jira-cloud push plan"})
 	return plan, nil
 }
 
-func (s *Service) buildJiraCloudReportingPushPlan(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, plan Plan, routes jiraRouteProfile, activeRows map[string][]model.Row, tombstoneRows map[string][]model.Row, opts PlanOptions) (Plan, error) {
+func (s *Service) buildJiraCloudReportingPushPlan(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, plan Plan, routes jiraRouteProfile, activeRows map[string][]model.Row, opts PlanOptions) (Plan, error) {
 	opts.Reporter.Start(progress.Event{Phase: "fetching", Message: "plan reconcile jira-cloud push"})
 	defer func() {
 		opts.Reporter.Finish(progress.Event{Phase: "finalizing", Message: "plan reconcile jira-cloud push complete"})
 	}()
-	issueKeys := unionKeys(activeRows, tombstoneRows)
+	issueKeys := sortedKeys(activeRows)
 	items := make([]PlanItem, 0, len(issueKeys))
 	groupOrder := make([]string, 0)
 	groups := map[string]*reportingScopeGroup{}
 
-	for _, issueKey := range issueKeys {
-		activePayload := sortRows(activeRows[issueKey])
-		deletePayload := sortRows(tombstoneRows[issueKey])
-		isDeleteOnly := len(activePayload) == 0 && len(deletePayload) > 0
-		if onlyDeleted && !isDeleteOnly {
+	for _, route := range routes.uniqueReportingTargets() {
+		groupKey := "jira-cloud\x00" + route.targetInstance + "\x00" + route.targetIssue
+		if _, ok := groups[groupKey]; ok {
 			continue
 		}
+		groups[groupKey] = newReportingScopeGroup("jira-cloud", route.targetInstance, route.targetIssue)
+		groupOrder = append(groupOrder, groupKey)
+	}
 
-		localPayload := activePayload
-		if isDeleteOnly {
-			localPayload = deletePayload
-		}
-
+	for _, issueKey := range issueKeys {
+		activePayload := sortRows(activeRows[issueKey])
 		route, ok, err := routes.resolve(issueKey)
 		if err != nil {
 			return Plan{}, err
 		}
 		if !ok {
-			item := newPlanItem(plan, issueKey, localPayload)
+			if opts.SuppressMissingRoutes {
+				continue
+			}
+			item := newPlanItem(plan, issueKey, activePayload)
+			item.RouteProfile = routeProfile
 			applyActiveLocalMetrics(&item, activePayload)
 			item.PlanStatus = "blocked"
 			item.PlannedAction = "none"
@@ -470,13 +486,8 @@ func (s *Service) buildJiraCloudReportingPushPlan(ctx context.Context, cfg confi
 		}
 
 		groupKey := "jira-cloud\x00" + route.targetInstance + "\x00" + route.targetIssue
-		group, ok := groups[groupKey]
-		if !ok {
-			group = newReportingScopeGroup("jira-cloud", route.targetInstance, route.targetIssue)
-			groups[groupKey] = group
-			groupOrder = append(groupOrder, groupKey)
-		}
-		group.addSource(issueKey, activePayload, deletePayload, jiracloud.ReportingDescription)
+		group := groups[groupKey]
+		group.addSource(issueKey, activePayload, jiracloud.ReportingDescription)
 	}
 
 	fetchedGroups, err := s.fetchJiraCloudReportingGroups(ctx, cfg, groups, windowFrom, windowTo)
@@ -488,23 +499,24 @@ func (s *Service) buildJiraCloudReportingPushPlan(ctx context.Context, cfg confi
 		group := groups[groupKey]
 		fetched := fetchedGroups[groupKey]
 		desiredRows := sortRows(group.DesiredRows)
-		isDeleteOnly := len(desiredRows) == 0 && group.HasTombstones
+		cleanupRows := normalizeDeletedJiraCloudRows(group.TargetIssue, fetched.remoteScope)
 
 		item := newPlanItem(plan, group.TargetIssue, desiredRows)
-		if isDeleteOnly {
-			item.Payload = sortRows(group.TombstoneRows)
-		}
 		item.RouteProfile = routeProfile
 		item.TargetAdapterFamily = group.TargetAdapterFamily
 		item.TargetAdapterInstance = group.TargetAdapterInstance
 		item.TargetIssue = group.TargetIssue
-		item.RemoteRowCount = len(fetched.targetRows)
-		item.RemoteTotal = sumRows(fetched.targetRows)
+		remoteRows := fetched.targetRows
+		if len(desiredRows) == 0 && len(cleanupRows) > 0 {
+			remoteRows = cleanupRows
+		}
+		item.RemoteRowCount = len(remoteRows)
+		item.RemoteTotal = sumRows(remoteRows)
 		item.InspectionSummary = InspectionSummary{
 			LocalRowCount:          len(desiredRows),
 			LocalTotalSeconds:      sumRows(desiredRows),
-			RemoteRowCount:         len(fetched.targetRows),
-			RemoteTotalSeconds:     sumRows(fetched.targetRows),
+			RemoteRowCount:         len(remoteRows),
+			RemoteTotalSeconds:     sumRows(remoteRows),
 			SourceIssueKeys:        group.sortedSourceIssueKeys(),
 			PerSourceTotals:        clonePerSourceTotals(group.PerSourceTotals),
 			ResolvedTargetInstance: group.TargetAdapterInstance,
@@ -515,26 +527,20 @@ func (s *Service) buildJiraCloudReportingPushPlan(ctx context.Context, cfg confi
 		switch {
 		case fetched.failure != nil:
 			applyJiraCloudCheckFailed(&item, *fetched.failure)
-		case isDeleteOnly && len(fetched.remoteScope) == 0:
+		case len(desiredRows) == 0 && len(fetched.remoteScope) == 0:
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
 			item.ComparisonStatus = "match"
 			item.ReasonCode = "exact_match"
 			item.ReasonDetail = "Jira Cloud scope already matches the local empty state"
 			applyInspectionRowDiffCounts(&item, rowDiffCounts{})
-		case isDeleteOnly && fetched.foreignPresent:
-			item.PlanStatus = "blocked"
-			item.PlannedAction = "none"
-			item.ComparisonStatus = "remote_present"
-			item.ReasonCode = "foreign_authored_rows_present"
-			item.ReasonDetail = "Cleanup scope contains foreign-authored Jira worklogs"
-		case isDeleteOnly:
+		case len(desiredRows) == 0:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "delete"
 			item.ComparisonStatus = "remote_present"
 			item.ReasonCode = "remote_present"
 			item.ReasonDetail = "Jira Cloud scope contains rows that should be deleted"
-			applyInspectionRowDiffSummary(&item, nil, fetched.targetRows)
+			applyInspectionRowDiffSummary(&item, nil, remoteRows)
 		case rowsEqual(desiredRows, fetched.targetRows):
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
@@ -570,6 +576,7 @@ func (s *Service) buildJiraCloudReportingPushPlan(ctx context.Context, cfg confi
 	})
 	plan.Items = items
 	plan.AggregateStatus = deriveAggregateStatus(items, nil)
+	normalizePlanSummary(&plan)
 	opts.Reporter.Event(progress.Event{Phase: "finalizing", ScopeDone: len(items), ScopeTotal: len(items), Message: "saved jira-cloud push plan"})
 	return plan, nil
 }
@@ -578,7 +585,6 @@ type jiraCloudPlannedScope struct {
 	issueKey      string
 	activePayload []model.Row
 	localPayload  []model.Row
-	isDeleteOnly  bool
 	route         jiraResolvedRoute
 }
 
@@ -592,6 +598,44 @@ type jiraCloudFetchedScope struct {
 type jiraCloudFetchFailure struct {
 	reasonCode   string
 	reasonDetail string
+}
+
+func (s *Service) fetchJiraCloudRemoteOwnedIssues(ctx context.Context, cfg config.EffectiveConfig, routes jiraRouteProfile, windowFrom, windowTo time.Time, excludedIssueKeys []string) (map[string]bool, map[string]jiraCloudFetchFailure, error) {
+	owned := make(map[string]bool)
+	failed := make(map[string]jiraCloudFetchFailure)
+	excluded := stringSet(excludedIssueKeys)
+	grouped := routes.groupedTargetInstances()
+	for instanceName := range grouped {
+		instance, err := requireJiraCloudInstance(cfg, instanceName)
+		if err != nil {
+			return nil, nil, err
+		}
+		client := s.newJiraCloudClient(instance)
+		jql := fmt.Sprintf("worklogAuthor = currentUser() AND worklogDate >= \"%s\" AND worklogDate <= \"%s\"", windowFrom.Format("2006-01-02"), windowTo.Format("2006-01-02"))
+		issues, err := client.SearchIssues(ctx, jql, nil)
+		if err != nil {
+			failed[instanceName] = classifyJiraCloudFetchFailure(err)
+			continue
+		}
+		for _, issue := range issues {
+			issueKey, _, err := resolveJiraCloudIssueReference(ctx, client, issue)
+			if err != nil {
+				return nil, nil, err
+			}
+			if _, ok := excluded[issueKey]; ok {
+				continue
+			}
+			route, ok, err := routes.resolve(issueKey)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !ok || route.reporting || route.targetInstance != instanceName {
+				continue
+			}
+			owned[issueKey] = true
+		}
+	}
+	return owned, failed, nil
 }
 
 func (s *Service) fetchJiraCloudPushScopes(ctx context.Context, cfg config.EffectiveConfig, planned []jiraCloudPlannedScope, windowFrom, windowTo time.Time) (map[string]jiraCloudFetchedScope, error) {
@@ -662,6 +706,35 @@ func (s *Service) fetchJiraCloudPushScopes(ctx context.Context, cfg config.Effec
 		fetched[result.key] = result.scope
 	}
 	return fetched, nil
+}
+
+func (p jiraRouteProfile) groupedTargetInstances() map[string]struct{} {
+	grouped := make(map[string]struct{})
+	for _, route := range p.routes {
+		grouped[route.targetInstance] = struct{}{}
+	}
+	return grouped
+}
+
+func (p jiraRouteProfile) uniqueReportingTargets() []jiraResolvedRoute {
+	targets := make([]jiraResolvedRoute, 0)
+	seen := make(map[string]struct{})
+	for _, route := range p.routes {
+		if !route.reporting {
+			continue
+		}
+		key := route.targetInstance + "\x00" + route.targetIssue
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		targets = append(targets, jiraResolvedRoute{
+			targetInstance: route.targetInstance,
+			targetIssue:    route.targetIssue,
+			reporting:      true,
+		})
+	}
+	return targets
 }
 
 func (s *Service) fetchJiraCloudReportingGroups(ctx context.Context, cfg config.EffectiveConfig, groups map[string]*reportingScopeGroup, windowFrom, windowTo time.Time) (map[string]jiraCloudFetchedScope, error) {
@@ -828,6 +901,79 @@ func resolveJiraCloudRouteProfile(cfg config.EffectiveConfig, name string) (jira
 	return jiraRouteProfile{routes: routes}, nil
 }
 
+func resolveAutoJiraCloudPushRouteProfiles(cfg config.EffectiveConfig) ([]autoRouteProfileSelection, error) {
+	if cfg.File.JiraCloud == nil || len(cfg.File.JiraCloud.Instances) == 0 {
+		return nil, ValidationError{Message: "jira_cloud routing is required for push"}
+	}
+
+	selections := make([]autoRouteProfileSelection, 0)
+	prefixOwners := map[string][]string{}
+	hasRouting := false
+
+	instanceNames := sortedJiraCloudInstanceNames(cfg.File.JiraCloud.Instances)
+	for _, instanceName := range instanceNames {
+		instance := cfg.File.JiraCloud.Instances[instanceName]
+		if instance.Routing == nil {
+			continue
+		}
+		hasRouting = true
+		if _, ok := instance.Routing.Profiles["default"]; ok {
+			selections = append(selections, autoRouteProfileSelection{
+				AdapterFamily: "jira-cloud",
+				Instance:      instanceName,
+				Profile:       "default",
+				Reporting:     false,
+			})
+		}
+		reportingProfiles := make([]string, 0)
+		for profileName, profile := range instance.Routing.Profiles {
+			if profileName == "default" || len(profile.ReportingTargets) == 0 {
+				continue
+			}
+			reportingProfiles = append(reportingProfiles, profileName)
+			for prefix := range profile.ReportingTargets {
+				prefix = strings.TrimSpace(prefix)
+				if prefix == "" {
+					continue
+				}
+				prefixOwners[prefix] = append(prefixOwners[prefix], instanceName+"/"+profileName)
+			}
+		}
+		sort.Strings(reportingProfiles)
+		for _, profileName := range reportingProfiles {
+			selections = append(selections, autoRouteProfileSelection{
+				AdapterFamily: "jira-cloud",
+				Instance:      instanceName,
+				Profile:       profileName,
+				Reporting:     true,
+			})
+		}
+	}
+
+	if !hasRouting {
+		return nil, ValidationError{Message: "jira_cloud routing is required for push"}
+	}
+
+	ambiguous := make([]string, 0)
+	for prefix, owners := range prefixOwners {
+		uniqueOwners := map[string]struct{}{}
+		for _, owner := range owners {
+			uniqueOwners[owner] = struct{}{}
+		}
+		if len(uniqueOwners) <= 1 {
+			continue
+		}
+		ownerList := sortedSetKeys(uniqueOwners)
+		ambiguous = append(ambiguous, fmt.Sprintf("%s (%s)", prefix, strings.Join(ownerList, ", ")))
+	}
+	if len(ambiguous) > 0 {
+		sort.Strings(ambiguous)
+		return nil, ValidationError{Message: "automatic jira-cloud reporting reconcile is ambiguous for prefixes " + strings.Join(ambiguous, "; ") + "; rerun with --route-profile <name>"}
+	}
+
+	return selections, nil
+}
+
 func (p jiraRouteProfile) isReportingOnly() bool {
 	if len(p.routes) == 0 {
 		return false
@@ -851,7 +997,7 @@ func filterJiraCloudWorklogsByUserAndWindow(items []jiracloud.Worklog, user jira
 		if startedAt.Before(from.UTC()) || startedAt.After(to.UTC()) {
 			continue
 		}
-		if item.Author.AccountID == user.AccountID || (user.AccountID == "" && (item.Author.Key == user.Key || item.Author.Name == user.Name)) {
+		if jiraWorklogAuthorMatchesUser(item.Author, user) {
 			filtered = append(filtered, item)
 		}
 	}
@@ -868,7 +1014,7 @@ func hasForeignJiraCloudWorklogs(items []jiracloud.Worklog, user jiracloud.User,
 		if startedAt.Before(from.UTC()) || startedAt.After(to.UTC()) {
 			continue
 		}
-		if !(item.Author.AccountID == user.AccountID || (user.AccountID == "" && (item.Author.Key == user.Key || item.Author.Name == user.Name))) {
+		if !jiraWorklogAuthorMatchesUser(item.Author, user) {
 			return true
 		}
 	}

@@ -97,13 +97,18 @@ func TestBootstrapRepairsSavedPlanPushColumns(t *testing.T) {
 		t.Fatalf("expected repaired row to be preserved, got %d", count)
 	}
 
-	columns := []string{"description", "adapter_families_json", "target_instances_json", "plan_direction", "target_adapter_family", "target_adapter_instance", "target_issue", "route_profile", "inspection_summary_json", "delivery_key"}
+	var tombstoneTables int
+	if err := store.DB().QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'worklog_tombstones'`).Scan(&tombstoneTables); err != nil {
+		t.Fatalf("check tombstone table removal: %v", err)
+	}
+	if tombstoneTables != 0 {
+		t.Fatalf("expected legacy tombstone table to be dropped, got %d", tombstoneTables)
+	}
+
+	columns := []string{"adapter_families_json", "target_instances_json", "plan_direction", "target_adapter_family", "target_adapter_instance", "target_issue", "route_profile", "inspection_summary_json", "delivery_key"}
 	for _, column := range columns {
 		var exists int
 		query := `SELECT COUNT(1) FROM pragma_table_info('saved_plan_items') WHERE name = ?`
-		if column == "description" {
-			query = `SELECT COUNT(1) FROM pragma_table_info('worklog_tombstones') WHERE name = ?`
-		}
 		if column == "adapter_families_json" || column == "target_instances_json" {
 			query = `SELECT COUNT(1) FROM pragma_table_info('saved_plans') WHERE name = ?`
 		}
@@ -205,6 +210,14 @@ func TestBootstrapCreatesTrashTableAndIndexes(t *testing.T) {
 			t.Fatalf("expected index %s to exist", index)
 		}
 	}
+
+	var tombstoneTables int
+	if err := store.DB().QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'worklog_tombstones'`).Scan(&tombstoneTables); err != nil {
+		t.Fatalf("check tombstone table absence: %v", err)
+	}
+	if tombstoneTables != 0 {
+		t.Fatalf("expected no tombstone table in current schema, got %d", tombstoneTables)
+	}
 }
 
 func TestOpenExistingRejectsSchemaMissingTrashTable(t *testing.T) {
@@ -262,14 +275,6 @@ func seedLegacyStoreMissingTrashTable(t *testing.T, path string) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
-		`CREATE TABLE worklog_tombstones (
-			worklog_id TEXT PRIMARY KEY,
-			issue_key TEXT NOT NULL,
-			started_at_utc TEXT NOT NULL,
-			duration_seconds INTEGER NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			deleted_at TEXT NOT NULL
-		)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
@@ -296,14 +301,6 @@ func seedLegacyStoreMissingSavedPlanItemDeliveryKey(t *testing.T, path string) {
 			description TEXT NOT NULL,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE worklog_tombstones (
-			worklog_id TEXT PRIMARY KEY,
-			issue_key TEXT NOT NULL,
-			started_at_utc TEXT NOT NULL,
-			duration_seconds INTEGER NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			deleted_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE trashed_worklogs (
 			id TEXT PRIMARY KEY,

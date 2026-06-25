@@ -160,10 +160,9 @@ func TestCreateClockifyPushPlanDefaultsMissingTagCreationToTrue(t *testing.T) {
 	}
 }
 
-func TestCreateClockifyPushPlanOnlyDeletedCreatesDeleteItem(t *testing.T) {
+func TestCreateClockifyPushPlanRemoteOwnedOrphanCreatesCleanupItem(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
-	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
 
 	client := &fakeClockifyClient{
 		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
@@ -182,18 +181,17 @@ func TestCreateClockifyPushPlanOnlyDeletedCreatesDeleteItem(t *testing.T) {
 		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
 	}
 	if len(plan.Items) != 1 {
-		t.Fatalf("expected one delete item, got %d", len(plan.Items))
+		t.Fatalf("expected one cleanup item, got %d", len(plan.Items))
 	}
-	assertPlanItem(t, plan.Items[0], "ready", "delete")
+	assertPlanItem(t, plan.Items[0], "ready", "replace")
 	if plan.Items[0].LocalRowCount != 0 || plan.Items[0].InspectionSummary.LocalRowCount != 0 {
-		t.Fatalf("expected tombstone delete scope to report zero local rows, got %#v", plan.Items[0])
+		t.Fatalf("expected orphan cleanup scope to report zero local rows, got %#v", plan.Items[0])
 	}
 }
 
-func TestCreateClockifyPushPlanIncludesTombstoneDeletesWithoutOnlyDeleted(t *testing.T) {
+func TestApplyPlanClockifyRemoteOwnedOrphanArchivesTrash(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
-	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
 
 	client := &fakeClockifyClient{
 		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
@@ -212,103 +210,10 @@ func TestCreateClockifyPushPlanIncludesTombstoneDeletesWithoutOnlyDeleted(t *tes
 		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
 	}
 	if len(plan.Items) != 1 {
-		t.Fatalf("expected one delete item, got %d", len(plan.Items))
+		t.Fatalf("expected one cleanup item, got %d", len(plan.Items))
 	}
-	assertPlanItem(t, plan.Items[0], "ready", "delete")
-	if plan.Items[0].LocalRowCount != 0 || plan.Items[0].InspectionSummary.LocalTotalSeconds != 0 {
-		t.Fatalf("expected tombstone delete scope to keep local metrics empty, got %#v", plan.Items[0])
-	}
-}
-
-func TestCreateClockifyPushPlanDeleteOnlyEmptyRemoteIsMatch(t *testing.T) {
-	store := newTestStore(t)
-	defer store.Close()
-	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
-
-	client := &fakeClockifyClient{
-		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
-		tagsByID: map[string]clockify.Tag{
-			"tag-a": {ID: "tag-a", Name: "AAPP-1"},
-		},
-	}
-	service := NewService(store)
-	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient { return client }
-
-	plan, err := service.CreateClockifyPushPlan(context.Background(), testClockifyConfig(true), mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
-	if err != nil {
-		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
-	}
-	if len(plan.Items) != 1 {
-		t.Fatalf("expected one delete-only item, got %d", len(plan.Items))
-	}
-	item := plan.Items[0]
-	assertPlanItem(t, item, "skipped", "none")
-	if item.ComparisonStatus != "match" || item.ReasonCode != "exact_match" {
-		t.Fatalf("expected empty delete scope to be exact match, got %#v", item)
-	}
-	if item.LocalRowCount != 0 || item.LocalTotal != 0 {
-		t.Fatalf("expected delete-only empty remote scope to report zero local metrics, got %#v", item)
-	}
-}
-
-func TestCreateClockifyPushPlanDeleteOnlyFallsBackToTimeIntervalWhenTagDeleted(t *testing.T) {
-	store := newTestStore(t)
-	defer store.Close()
-	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
-
-	client := &fakeClockifyClient{
-		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
-		// AAPP-1 tag absent from tagsByID — simulates the tag having been deleted in Clockify
-		tagsByID: map[string]clockify.Tag{},
-		entries: []clockify.TimeEntry{
-			{ID: "entry-orphan", ProjectID: "proj-app", Description: "Remote row", TagIDs: []string{"deleted-tag-id"}, TimeInterval: clockify.TimeInterval{Start: "2026-05-01T08:00:00Z", End: "2026-05-01T09:00:00Z"}},
-		},
-	}
-	service := NewService(store)
-	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient { return client }
-
-	plan, err := service.CreateClockifyPushPlan(context.Background(), testClockifyConfig(true), mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
-	if err != nil {
-		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
-	}
-	if len(plan.Items) != 1 {
-		t.Fatalf("expected one item, got %d", len(plan.Items))
-	}
-	assertPlanItem(t, plan.Items[0], "ready", "delete")
-	if plan.Items[0].RemoteRowCount != 1 {
-		t.Fatalf("expected remote row count 1 from time-interval fallback, got %d", plan.Items[0].RemoteRowCount)
-	}
-	if plan.Items[0].RemoteTotal != 3600 {
-		t.Fatalf("expected remote total 3600 from time-interval fallback, got %d", plan.Items[0].RemoteTotal)
-	}
-}
-
-func TestApplyPlanClockifyDeleteClearsTombstone(t *testing.T) {
-	store := newTestStore(t)
-	defer store.Close()
-	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
-
-	client := &fakeClockifyClient{
-		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
-		tagsByID: map[string]clockify.Tag{
-			"tag-a": {ID: "tag-a", Name: "AAPP-1"},
-		},
-		entries: []clockify.TimeEntry{
-			{ID: "entry-a", ProjectID: "proj-app", Description: "Remote row", TagIDs: []string{"tag-a"}, TimeInterval: clockify.TimeInterval{Start: "2026-05-01T08:00:00Z", End: "2026-05-01T09:00:00Z"}},
-		},
-	}
-	service := NewService(store)
-	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient { return client }
-
-	plan, err := service.CreateClockifyPushPlan(context.Background(), testClockifyConfig(true), mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
-	if err != nil {
-		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
-	}
-	if len(plan.Items) != 1 {
-		t.Fatalf("expected one delete item, got %d", len(plan.Items))
-	}
-	if plan.Items[0].Payload[0].SourceRowID != "row-1" {
-		t.Fatalf("expected tombstone source row id, got %#v", plan.Items[0].Payload)
+	if plan.Items[0].LocalRowCount != 0 || plan.Items[0].RemoteRowCount != 1 {
+		t.Fatalf("expected remote-only cleanup scope, got %#v", plan.Items[0])
 	}
 
 	result, err := service.ApplyPlan(testClockifyConfig(true), plan.ID)
@@ -321,53 +226,12 @@ func TestApplyPlanClockifyDeleteClearsTombstone(t *testing.T) {
 	if result.TrashArchivedCount != 1 {
 		t.Fatalf("expected one archived trash row, got %#v", result)
 	}
-	if got := countTombstones(t, store); got != 0 {
-		t.Fatalf("expected tombstone cleanup after successful delete, got %d", got)
-	}
 	if got := countTrashRecords(t, store); got != 1 {
 		t.Fatalf("expected one trashed remote row, got %d", got)
 	}
 	record := listTrashRecords(t, store)[0]
 	if record.StorageScope != worklogs.TrashScopeRemote || record.SourceWorklogID != nil || record.ReasonCode != pushTrashReasonCode {
 		t.Fatalf("unexpected trash record %#v", record)
-	}
-}
-
-func TestApplyPlanClockifyFailedDeleteKeepsTombstone(t *testing.T) {
-	store := newTestStore(t)
-	defer store.Close()
-	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
-
-	client := &fakeClockifyClient{
-		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
-		tagsByID: map[string]clockify.Tag{
-			"tag-a": {ID: "tag-a", Name: "AAPP-1"},
-		},
-		entries: []clockify.TimeEntry{
-			{ID: "entry-a", ProjectID: "proj-app", Description: "Remote row", TagIDs: []string{"tag-a"}, TimeInterval: clockify.TimeInterval{Start: "2026-05-01T08:00:00Z", End: "2026-05-01T09:00:00Z"}},
-		},
-		deleteTimeEntryErr: errors.New("delete failed"),
-	}
-	service := NewService(store)
-	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient { return client }
-
-	plan, err := service.CreateClockifyPushPlan(context.Background(), testClockifyConfig(true), mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
-	if err != nil {
-		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
-	}
-
-	result, err := service.ApplyPlan(testClockifyConfig(true), plan.ID)
-	if err != nil {
-		t.Fatalf("ApplyPlan failed: %v", err)
-	}
-	if result.AppliedCount != 0 || result.FailedCount != 1 {
-		t.Fatalf("unexpected apply result %#v", result)
-	}
-	if got := countTombstones(t, store); got != 1 {
-		t.Fatalf("expected tombstone to remain after failed delete, got %d", got)
-	}
-	if got := countTrashRecords(t, store); got != 0 {
-		t.Fatalf("expected no trash rows after failed delete, got %d", got)
 	}
 }
 
@@ -754,6 +618,373 @@ func TestApplyPlanJiraCloudReportingReplaceDeletesOnlyConflictingRemoteRows(t *t
 	}
 }
 
+func TestApplyPlanJiraCloudAutoReportingSharedTargetPreservesUnion(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+	seedWorklogRow(t, store, "row-2", "OPS-1", "2026-05-01T10:00:00Z", 1800, "Ops work")
+
+	client := &fakeJiraCloudClient{
+		user:            jiracloud.User{AccountID: "u1"},
+		worklogsByIssue: map[string][]jiracloud.Worklog{"REPORT-1": {}},
+	}
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient { return client }
+
+	cfg := testJiraCloudConfig()
+	cfg.File.JiraCloud.Instances["product"] = config.JiraCloudInstance{
+		BaseURL: "https://example.atlassian.net",
+		Auth:    config.JiraCloudAuthBlock{Email: "user@example.com", Token: "t1"},
+		Routing: &config.JiraInstanceRoutes{
+			Profiles: map[string]config.JiraRouteProfile{
+				"reporting-a": {ReportingTargets: map[string]string{"AAPP": "REPORT-1"}},
+				"reporting-b": {ReportingTargets: map[string]string{"OPS": "REPORT-1"}},
+			},
+		},
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || len(result.Plan.Items) != 2 {
+		t.Fatalf("expected two saved items for shared reporting target, got %#v", result)
+	}
+
+	applyResult, err := service.ApplyPlan(cfg, result.Plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if applyResult.AppliedCount != 2 || applyResult.FailedCount != 0 {
+		t.Fatalf("unexpected apply result %#v", applyResult)
+	}
+
+	remote := client.worklogsByIssue["REPORT-1"]
+	if len(remote) != 2 {
+		t.Fatalf("expected shared reporting target to keep both rows, got %#v", remote)
+	}
+	comments := map[string]struct{}{}
+	for _, item := range remote {
+		comment, _ := item.Comment.(string)
+		comments[comment] = struct{}{}
+	}
+	if _, ok := comments["AAPP-1 | Build feature"]; !ok {
+		t.Fatalf("expected AAPP reporting row, got %#v", remote)
+	}
+	if _, ok := comments["OPS-1 | Ops work"]; !ok {
+		t.Fatalf("expected OPS reporting row, got %#v", remote)
+	}
+}
+
+func TestApplyPlanJiraDataAutoReportingSharedTargetPreservesUnion(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+	seedWorklogRow(t, store, "row-2", "OPS-1", "2026-05-01T10:00:00Z", 1800, "Ops work")
+
+	client := &fakeJiraDataClient{
+		user:            jiradatacenter.User{AccountID: "u1"},
+		worklogsByIssue: map[string][]jiradatacenter.Worklog{"REPORT-1": {}},
+	}
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient { return client }
+
+	cfg := testJiraDataConfig()
+	cfg.File.JiraData.Instances["internal"] = config.JiraDataCenterInstance{
+		BaseURL: "https://jira.example.com",
+		Auth:    config.JiraDataCenterAuthWrap{Bearer: config.JiraDataCenterBearer{Token: "t1"}},
+		Routing: &config.JiraInstanceRoutes{
+			Profiles: map[string]config.JiraRouteProfile{
+				"reporting-a": {ReportingTargets: map[string]string{"AAPP": "REPORT-1"}},
+				"reporting-b": {ReportingTargets: map[string]string{"OPS": "REPORT-1"}},
+			},
+		},
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || len(result.Plan.Items) != 2 {
+		t.Fatalf("expected two saved items for shared reporting target, got %#v", result)
+	}
+
+	applyResult, err := service.ApplyPlan(cfg, result.Plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if applyResult.AppliedCount != 2 || applyResult.FailedCount != 0 {
+		t.Fatalf("unexpected apply result %#v", applyResult)
+	}
+
+	remote := client.worklogsByIssue["REPORT-1"]
+	if len(remote) != 2 {
+		t.Fatalf("expected shared reporting target to keep both rows, got %#v", remote)
+	}
+	comments := map[string]struct{}{}
+	for _, item := range remote {
+		comment, _ := item.Comment.(string)
+		comments[comment] = struct{}{}
+	}
+	if _, ok := comments["AAPP-1 | Build feature"]; !ok {
+		t.Fatalf("expected AAPP reporting row, got %#v", remote)
+	}
+	if _, ok := comments["OPS-1 | Ops work"]; !ok {
+		t.Fatalf("expected OPS reporting row, got %#v", remote)
+	}
+}
+
+func TestReconcileMultiJiraDataAutoExcludesReportingTargetsFromDefaultRemoteOwnedDiscovery(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	client := &fakeJiraDataClient{
+		user:         jiradatacenter.User{AccountID: "u1"},
+		searchIssues: []jiradatacenter.IssueBrief{{Key: "ACIU-4403"}},
+		worklogsByIssue: map[string][]jiradatacenter.Worklog{
+			"ACIU-4403": {
+				{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "AAPP-1 | Build feature", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
+			},
+		},
+	}
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient { return client }
+
+	cfg := testJiraDataConfig()
+	cfg.File.JiraData.Instances["internal"] = config.JiraDataCenterInstance{
+		BaseURL: "https://jira.example.com",
+		Auth:    config.JiraDataCenterAuthWrap{Bearer: config.JiraDataCenterBearer{Token: "t1"}},
+		Routing: &config.JiraInstanceRoutes{
+			Profiles: map[string]config.JiraRouteProfile{
+				"default":   {IssuePrefixes: []string{"ACIU"}},
+				"reporting": {ReportingTargets: map[string]string{"AAPP": "ACIU-4403"}},
+			},
+		},
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan != nil {
+		t.Fatalf("expected no saved plan for exact reporting match, got %#v", result.Plan.Items)
+	}
+	if result.NoPlan == nil || result.NoPlan.ActionableScopeCount != 0 {
+		t.Fatalf("expected aggregate no-plan result, got %#v", result)
+	}
+	for _, summary := range result.ProfileSummaries {
+		if summary.RouteProfile == "default" && summary.ActionableScopeCount != 0 {
+			t.Fatalf("default profile should not treat reporting target as actionable, got %#v", summary)
+		}
+	}
+}
+
+func TestReconcileMultiJiraCloudAutoExcludesReportingTargetsFromDefaultRemoteOwnedDiscovery(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	client := &fakeJiraCloudClient{
+		user:         jiracloud.User{AccountID: "u1"},
+		searchIssues: []jiracloud.IssueBrief{{Key: "ACIU-4403"}},
+		worklogsByIssue: map[string][]jiracloud.Worklog{
+			"ACIU-4403": {
+				{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "AAPP-1 | Build feature", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+			},
+		},
+	}
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient { return client }
+
+	cfg := testJiraCloudConfig()
+	cfg.File.JiraCloud.Instances["product"] = config.JiraCloudInstance{
+		BaseURL: "https://example.atlassian.net",
+		Auth:    config.JiraCloudAuthBlock{Email: "user@example.com", Token: "t1"},
+		Routing: &config.JiraInstanceRoutes{
+			Profiles: map[string]config.JiraRouteProfile{
+				"default":   {IssuePrefixes: []string{"ACIU"}},
+				"reporting": {ReportingTargets: map[string]string{"AAPP": "ACIU-4403"}},
+			},
+		},
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan != nil {
+		t.Fatalf("expected no saved plan for exact reporting match, got %#v", result.Plan.Items)
+	}
+	if result.NoPlan == nil || result.NoPlan.ActionableScopeCount != 0 {
+		t.Fatalf("expected aggregate no-plan result, got %#v", result)
+	}
+	for _, summary := range result.ProfileSummaries {
+		if summary.RouteProfile == "default" && summary.ActionableScopeCount != 0 {
+			t.Fatalf("default profile should not treat reporting target as actionable, got %#v", summary)
+		}
+	}
+}
+
+func TestReconcileMultiJiraDataAutoReportingDoesNotLoopAfterApply(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	client := &fakeJiraDataClient{
+		user:            jiradatacenter.User{AccountID: "u1"},
+		worklogsByIssue: map[string][]jiradatacenter.Worklog{"ACIU-4403": {}},
+	}
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient { return client }
+
+	cfg := testJiraDataConfig()
+	cfg.File.JiraData.Instances["internal"] = config.JiraDataCenterInstance{
+		BaseURL: "https://jira.example.com",
+		Auth:    config.JiraDataCenterAuthWrap{Bearer: config.JiraDataCenterBearer{Token: "t1"}},
+		Routing: &config.JiraInstanceRoutes{
+			Profiles: map[string]config.JiraRouteProfile{
+				"default":   {IssuePrefixes: []string{"ACIU"}},
+				"reporting": {ReportingTargets: map[string]string{"AAPP": "ACIU-4403"}},
+			},
+		},
+	}
+
+	first, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("first ReconcileMultiPushPlan failed: %v", err)
+	}
+	if first.Plan == nil || len(first.Plan.Items) != 1 || first.Plan.Items[0].RouteProfile != "reporting" || first.Plan.Items[0].PlannedAction != "create" {
+		t.Fatalf("expected first reconcile to create reporting row only, got %#v", first)
+	}
+	if _, err := service.ApplyPlan(cfg, first.Plan.ID); err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+
+	client.searchIssues = []jiradatacenter.IssueBrief{{Key: "ACIU-4403"}}
+	second, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("second ReconcileMultiPushPlan failed: %v", err)
+	}
+	if second.Plan != nil {
+		t.Fatalf("expected no follow-up cleanup plan, got %#v", second.Plan.Items)
+	}
+	if second.NoPlan == nil || second.NoPlan.ActionableScopeCount != 0 {
+		t.Fatalf("expected second reconcile to be non-actionable, got %#v", second)
+	}
+}
+
+func TestFinalizeSuccessfulPushGroupAttributesTrashToMatchingScope(t *testing.T) {
+	items := []PlanItem{
+		{
+			ID:            "item-ops",
+			PlanDirection: "push",
+			PlannedAction: "replace",
+			IssueKey:      "REPORT-1",
+			TargetIssue:   "REPORT-1",
+			InspectionSummary: InspectionSummary{
+				SourceIssueKeys: []string{"OPS-1"},
+			},
+			Payload: []model.Row{{
+				IssueKey:        "REPORT-1",
+				StartedAtUTC:    mustTime("2026-05-01T10:00:00Z"),
+				DurationSeconds: 1800,
+				Description:     "OPS-1 | Ops work",
+			}},
+		},
+		{
+			ID:            "item-aapp",
+			PlanDirection: "push",
+			PlannedAction: "replace",
+			IssueKey:      "REPORT-1",
+			TargetIssue:   "REPORT-1",
+			InspectionSummary: InspectionSummary{
+				SourceIssueKeys: []string{"AAPP-1"},
+			},
+			Payload: []model.Row{{
+				IssueKey:        "REPORT-1",
+				StartedAtUTC:    mustTime("2026-05-01T08:00:00Z"),
+				DurationSeconds: 3600,
+				Description:     "AAPP-1 | Build feature",
+			}},
+		},
+	}
+
+	outcomes := finalizeSuccessfulPushGroup(items, "jira-cloud", pushApplyResult{
+		trashArchivedCount: 1,
+		deletedRows: []model.Row{{
+			IssueKey:        "REPORT-1",
+			StartedAtUTC:    mustTime("2026-05-01T08:00:00Z"),
+			DurationSeconds: 1800,
+			Description:     "AAPP-1 | Old feature",
+		}},
+	})
+
+	if len(outcomes) != 2 {
+		t.Fatalf("expected two outcomes, got %#v", outcomes)
+	}
+
+	outcomesByID := map[string]pushExecutionOutcome{}
+	for _, outcome := range outcomes {
+		outcomesByID[outcome.item.ID] = outcome
+	}
+
+	if outcomesByID["item-ops"].trashArchivedCount != 0 {
+		t.Fatalf("expected item-ops to have no trash attribution, got %#v", outcomesByID["item-ops"])
+	}
+	if outcomesByID["item-aapp"].trashArchivedCount != 1 {
+		t.Fatalf("expected item-aapp to receive the grouped trash attribution, got %#v", outcomesByID["item-aapp"])
+	}
+}
+
 func TestApplyPlanPushMixedResult(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
@@ -857,6 +1088,48 @@ func TestApplyPlanSkipsNonNotAttemptedReadyItems(t *testing.T) {
 	}
 }
 
+func TestApplyPlanClockifyPreflightFailureDoesNotCreatePendingAttempt(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Create me")
+
+	client := &fakeClockifyClient{
+		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
+		tagsByID: map[string]clockify.Tag{
+			"tag-a": {ID: "tag-a", Name: "AAPP-1"},
+		},
+	}
+	service := NewService(store)
+	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient { return client }
+
+	cfg := testClockifyConfig(false)
+	plan, err := service.CreateClockifyPushPlan(context.Background(), cfg, mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
+	}
+	client.tagsByID = map[string]clockify.Tag{}
+
+	if _, err := service.ApplyPlan(cfg, plan.ID); err == nil || err.Error() != `issue tag "AAPP-1" is missing and config forbids creating it` {
+		t.Fatalf("expected clockify preflight failure, got %v", err)
+	}
+
+	var attempts int
+	if err := store.DB().QueryRow(`SELECT COUNT(1) FROM delivery_attempts`).Scan(&attempts); err != nil {
+		t.Fatalf("count attempts: %v", err)
+	}
+	if attempts != 0 {
+		t.Fatalf("expected no delivery attempts after preflight failure, got %d", attempts)
+	}
+
+	loaded, err := service.LoadPlan(plan.ID)
+	if err != nil {
+		t.Fatalf("LoadPlan failed: %v", err)
+	}
+	if len(loaded.Items) != 1 || loaded.Items[0].ExecutionState != "not_attempted" {
+		t.Fatalf("expected plan item to remain not_attempted, got %#v", loaded.Items)
+	}
+}
+
 func TestRetryPlanFailedReexecutesOnlyFailedReadyItems(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
@@ -889,6 +1162,115 @@ func TestRetryPlanFailedReexecutesOnlyFailedReadyItems(t *testing.T) {
 	}
 	if len(client.entries) != 1 {
 		t.Fatalf("expected one retried remote create, got %#v", client.entries)
+	}
+}
+
+func TestRetryPlanFailedSharedPushScopeUsesFullGroupReconcileContext(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+	seedWorklogRow(t, store, "row-2", "BAPP-1", "2026-05-01T10:00:00Z", 1800, "Review PR")
+
+	cfg := config.EffectiveConfig{
+		SQLitePath:             "/tmp/workledger.db",
+		MinimumDurationSeconds: 900,
+		Location:               time.UTC,
+		File: config.FileConfig{
+			JiraCloud: &config.JiraCloudConfig{
+				Instances: map[string]config.JiraCloudInstance{
+					"product": {
+						BaseURL: "https://example.atlassian.net",
+						Auth:    config.JiraCloudAuthBlock{Email: "user@example.com", Token: "t1"},
+						Pull:    config.JiraPullConfig{ExcludeIssues: []string{"REPORT-1"}},
+						Routing: &config.JiraInstanceRoutes{
+							Profiles: map[string]config.JiraRouteProfile{
+								"reporting-a": {ReportingTargets: map[string]string{"AAPP": "REPORT-1"}},
+								"reporting-b": {ReportingTargets: map[string]string{"BAPP": "REPORT-1"}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	client := &fakeJiraCloudClient{
+		user:            jiracloud.User{AccountID: "u1"},
+		worklogsByIssue: map[string][]jiracloud.Worklog{"REPORT-1": {}},
+	}
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient { return client }
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || len(result.Plan.Items) != 2 {
+		t.Fatalf("expected two saved reporting items, got %#v", result.Plan)
+	}
+
+	itemsByProfile := map[string]PlanItem{}
+	for _, item := range result.Plan.Items {
+		itemsByProfile[item.RouteProfile] = item
+	}
+	itemA := itemsByProfile["reporting-a"]
+	itemB := itemsByProfile["reporting-b"]
+	if itemA.ID == "" || itemB.ID == "" {
+		t.Fatalf("expected reporting items by profile, got %#v", result.Plan.Items)
+	}
+
+	client.worklogsByIssue["REPORT-1"] = []jiracloud.Worklog{
+		{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "AAPP-1 | Build feature", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+		{ID: "w2", Started: "2026-05-01T10:00:00.000+0000", TimeSpentSeconds: 1800, Comment: "BAPP-1 | Review PR", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+	}
+
+	seedDeliveryAttempt(t, store, result.Plan.ID, itemA.ID, "succeeded", "done", "2026-05-02T10:00:00Z")
+	seedDeliveryAttempt(t, store, result.Plan.ID, itemB.ID, "failed", "cleanup failed", "2026-05-02T10:00:00Z")
+
+	retryResult, err := service.RetryPlan(cfg, result.Plan.ID, "failed")
+	if err != nil {
+		t.Fatalf("RetryPlan failed: %v", err)
+	}
+	if retryResult.AppliedCount != 1 || retryResult.FailedCount != 0 || retryResult.SkippedCount != 1 {
+		t.Fatalf("unexpected retry result %#v", retryResult)
+	}
+
+	loaded, err := service.LoadPlan(result.Plan.ID)
+	if err != nil {
+		t.Fatalf("LoadPlan failed: %v", err)
+	}
+	statesByProfile := map[string]string{}
+	for _, item := range loaded.Items {
+		statesByProfile[item.RouteProfile] = item.ExecutionState
+	}
+	if statesByProfile["reporting-a"] != "succeeded" || statesByProfile["reporting-b"] != "succeeded" {
+		t.Fatalf("expected both grouped scopes to be succeeded after retry, got %#v", statesByProfile)
+	}
+
+	comments := map[string]struct{}{}
+	for _, item := range client.worklogsByIssue["REPORT-1"] {
+		comment, ok := item.Comment.(string)
+		if !ok {
+			t.Fatalf("expected string comment, got %#v", item.Comment)
+		}
+		comments[comment] = struct{}{}
+	}
+	if len(comments) != 2 {
+		t.Fatalf("expected grouped retry to preserve both remote rows, got %#v", client.worklogsByIssue["REPORT-1"])
+	}
+	if _, ok := comments["AAPP-1 | Build feature"]; !ok {
+		t.Fatalf("expected AAPP reporting row to remain, got %#v", client.worklogsByIssue["REPORT-1"])
+	}
+	if _, ok := comments["BAPP-1 | Review PR"]; !ok {
+		t.Fatalf("expected BAPP reporting row to remain, got %#v", client.worklogsByIssue["REPORT-1"])
 	}
 }
 
@@ -1112,43 +1494,9 @@ func TestCreateJiraDataPullPlanImplicitlyExcludesReportingTargets(t *testing.T) 
 	}
 }
 
-func TestCreateJiraDataPushPlanDeleteOnlyMetricsAndEmptyRemoteMatch(t *testing.T) {
+func TestCreateJiraDataPushPlanReportingRemoteOwnedGroupCreatesDeleteItem(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
-	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
-
-	service := NewService(store)
-	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
-		return &fakeJiraDataClient{
-			user:         jiradatacenter.User{AccountID: "u1"},
-			searchIssues: []jiradatacenter.IssueBrief{{Key: "AAPP-1"}},
-			worklogsByIssue: map[string][]jiradatacenter.Worklog{
-				"REPORT-1": {},
-			},
-		}
-	}
-
-	plan, err := service.CreateJiraDataPushPlan(context.Background(), testJiraDataConfig(), "reporting", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
-	if err != nil {
-		t.Fatalf("CreateJiraDataPushPlan failed: %v", err)
-	}
-	if len(plan.Items) != 1 {
-		t.Fatalf("expected one delete-only item, got %d", len(plan.Items))
-	}
-	item := plan.Items[0]
-	assertPlanItem(t, item, "skipped", "none")
-	if item.ComparisonStatus != "match" || item.ReasonCode != "exact_match" {
-		t.Fatalf("expected empty delete scope to be exact match, got %#v", item)
-	}
-	if item.LocalRowCount != 0 || item.InspectionSummary.LocalRowCount != 0 || item.InspectionSummary.PerSourceTotals["AAPP-1"] != 0 {
-		t.Fatalf("expected tombstone-backed Jira scope to report zero local metrics, got %#v", item)
-	}
-}
-
-func TestCreateJiraDataPushPlanDeleteOnlyRemotePresentStaysDelete(t *testing.T) {
-	store := newTestStore(t)
-	defer store.Close()
-	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
 
 	service := NewService(store)
 	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
@@ -1157,7 +1505,7 @@ func TestCreateJiraDataPushPlanDeleteOnlyRemotePresentStaysDelete(t *testing.T) 
 			searchIssues: []jiradatacenter.IssueBrief{{Key: "AAPP-1"}},
 			worklogsByIssue: map[string][]jiradatacenter.Worklog{
 				"REPORT-1": {
-					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "remote", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
+					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "AAPP-1 | remote", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
 				},
 			},
 		}
@@ -1168,19 +1516,18 @@ func TestCreateJiraDataPushPlanDeleteOnlyRemotePresentStaysDelete(t *testing.T) 
 		t.Fatalf("CreateJiraDataPushPlan failed: %v", err)
 	}
 	if len(plan.Items) != 1 {
-		t.Fatalf("expected one delete-only item, got %d", len(plan.Items))
+		t.Fatalf("expected one reporting cleanup item, got %d", len(plan.Items))
 	}
 	item := plan.Items[0]
 	assertPlanItem(t, item, "ready", "delete")
-	if item.LocalRowCount != 0 || item.InspectionSummary.LocalTotalSeconds != 0 {
-		t.Fatalf("expected tombstone-backed Jira delete scope to report zero local metrics, got %#v", item)
+	if item.LocalRowCount != 0 || item.InspectionSummary.LocalTotalSeconds != 0 || item.RemoteRowCount != 1 {
+		t.Fatalf("expected remote-owned Jira cleanup scope to report zero local metrics, got %#v", item)
 	}
 }
 
-func TestApplyPlanJiraDataDeleteClearsTombstone(t *testing.T) {
+func TestCreateJiraDataPushPlanReportingCleanupUsesDeletableRemoteRowsForMetrics(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
-	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
 
 	service := NewService(store)
 	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
@@ -1189,7 +1536,74 @@ func TestApplyPlanJiraDataDeleteClearsTombstone(t *testing.T) {
 			searchIssues: []jiradatacenter.IssueBrief{{Key: "AAPP-1"}},
 			worklogsByIssue: map[string][]jiradatacenter.Worklog{
 				"REPORT-1": {
-					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "remote", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
+					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
+				},
+			},
+		}
+	}
+
+	plan, err := service.CreateJiraDataPushPlan(context.Background(), testJiraDataConfig(), "reporting", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraDataPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("expected one reporting cleanup item, got %d", len(plan.Items))
+	}
+	item := plan.Items[0]
+	assertPlanItem(t, item, "ready", "delete")
+	if item.ComparisonStatus != "remote_present" || item.ReasonCode != "remote_present" {
+		t.Fatalf("expected remote_present cleanup classification, got %#v", item)
+	}
+	if item.RemoteRowCount != 1 || item.RemoteTotal != 3600 || item.InspectionSummary.DeleteRowCount != 1 {
+		t.Fatalf("expected deletable remote rows to drive metrics, got %#v", item)
+	}
+}
+
+func TestCreateJiraDataPushPlanReportingCleanupIgnoresForeignRowsWithEmptyAccountIDs(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
+		return &fakeJiraDataClient{
+			user:         jiradatacenter.User{Name: "ernestas@ito.lt", Key: "JIRAUSER21702"},
+			searchIssues: []jiradatacenter.IssueBrief{{Key: "AAPP-1"}},
+			worklogsByIssue: map[string][]jiradatacenter.Worklog{
+				"REPORT-1": {
+					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "foreign", Author: jiradatacenter.WorklogUser{Name: "vilius@ito.lt", Key: "JIRAUSER27201"}},
+				},
+			},
+		}
+	}
+
+	plan, err := service.CreateJiraDataPushPlan(context.Background(), testJiraDataConfig(), "reporting", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraDataPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("expected one reporting item, got %d", len(plan.Items))
+	}
+	item := plan.Items[0]
+	if item.PlanStatus != "skipped" || item.PlannedAction != "none" || item.ReasonCode != "exact_match" {
+		t.Fatalf("expected foreign-only reporting scope to match empty local state, got %#v", item)
+	}
+	if item.RemoteRowCount != 0 || item.InspectionSummary.ForeignAuthorPresent != true {
+		t.Fatalf("expected no owned remote metrics and foreign marker, got %#v", item)
+	}
+}
+
+func TestApplyPlanJiraDataRemoteOwnedCleanupArchivesTrash(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
+		return &fakeJiraDataClient{
+			user:         jiradatacenter.User{AccountID: "u1"},
+			searchIssues: []jiradatacenter.IssueBrief{{Key: "AAPP-1"}},
+			worklogsByIssue: map[string][]jiradatacenter.Worklog{
+				"REPORT-1": {
+					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "AAPP-1 | remote", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
 				},
 			},
 		}
@@ -1207,8 +1621,11 @@ func TestApplyPlanJiraDataDeleteClearsTombstone(t *testing.T) {
 	if result.AppliedCount != 1 || result.FailedCount != 0 {
 		t.Fatalf("unexpected apply result %#v", result)
 	}
-	if got := countTombstones(t, store); got != 0 {
-		t.Fatalf("expected tombstone cleanup after Jira Data delete, got %d", got)
+	if result.TrashArchivedCount != 1 {
+		t.Fatalf("expected one archived trash row, got %#v", result)
+	}
+	if got := countTrashRecords(t, store); got != 1 {
+		t.Fatalf("expected one remote trash row, got %d", got)
 	}
 }
 
@@ -1341,16 +1758,19 @@ func TestCreateJiraCloudPullPlanImplicitlyExcludesReportingTargets(t *testing.T)
 	}
 }
 
-func TestCreateJiraCloudPushPlanDeleteOnlyMetricsAndValidation(t *testing.T) {
+func TestCreateJiraCloudPushPlanReportingRemoteOwnedGroupCreatesDeleteItem(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
-	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
 
 	service := NewService(store)
 	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
 		return &fakeJiraCloudClient{
-			user:            jiracloud.User{AccountID: "u1"},
-			worklogsByIssue: map[string][]jiracloud.Worklog{"REPORT-1": {}},
+			user: jiracloud.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiracloud.Worklog{
+				"REPORT-1": {
+					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "AAPP-1 | remote", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+				},
+			},
 		}
 	}
 
@@ -1359,15 +1779,86 @@ func TestCreateJiraCloudPushPlanDeleteOnlyMetricsAndValidation(t *testing.T) {
 		t.Fatalf("CreateJiraCloudPushPlan failed: %v", err)
 	}
 	if len(plan.Items) != 1 {
-		t.Fatalf("expected one delete-only item, got %d", len(plan.Items))
+		t.Fatalf("expected one reporting cleanup item, got %d", len(plan.Items))
 	}
 	item := plan.Items[0]
-	assertPlanItem(t, item, "skipped", "none")
-	if item.LocalRowCount != 0 || item.InspectionSummary.LocalRowCount != 0 || item.InspectionSummary.PerSourceTotals["AAPP-1"] != 0 {
-		t.Fatalf("expected tombstone-backed Jira Cloud scope to report zero local metrics, got %#v", item)
+	assertPlanItem(t, item, "ready", "delete")
+	if item.LocalRowCount != 0 || item.InspectionSummary.LocalRowCount != 0 || item.RemoteRowCount != 1 {
+		t.Fatalf("expected remote-owned Jira Cloud cleanup scope to report zero local metrics, got %#v", item)
+	}
+}
+
+func TestCreateJiraCloudPushPlanReportingCleanupUsesDeletableRemoteRowsForMetrics(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			user: jiracloud.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiracloud.Worklog{
+				"REPORT-1": {
+					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+				},
+			},
+		}
 	}
 
-	_, err = service.CreateJiraCloudPushPlan(context.Background(), config.EffectiveConfig{
+	plan, err := service.CreateJiraCloudPushPlan(context.Background(), testJiraCloudConfig(), "reporting", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraCloudPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("expected one reporting cleanup item, got %d", len(plan.Items))
+	}
+	item := plan.Items[0]
+	assertPlanItem(t, item, "ready", "delete")
+	if item.ComparisonStatus != "remote_present" || item.ReasonCode != "remote_present" {
+		t.Fatalf("expected remote_present cleanup classification, got %#v", item)
+	}
+	if item.RemoteRowCount != 1 || item.RemoteTotal != 3600 || item.InspectionSummary.DeleteRowCount != 1 {
+		t.Fatalf("expected deletable remote rows to drive metrics, got %#v", item)
+	}
+}
+
+func TestCreateJiraCloudPushPlanReportingCleanupIgnoresForeignRowsWithEmptyAccountIDs(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			user: jiracloud.User{Name: "ernestas@ito.lt", Key: "JIRAUSER21702"},
+			worklogsByIssue: map[string][]jiracloud.Worklog{
+				"REPORT-1": {
+					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "foreign", Author: jiracloud.WorklogUser{Name: "vilius@ito.lt", Key: "JIRAUSER27201"}},
+				},
+			},
+		}
+	}
+
+	plan, err := service.CreateJiraCloudPushPlan(context.Background(), testJiraCloudConfig(), "reporting", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraCloudPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("expected one reporting item, got %d", len(plan.Items))
+	}
+	item := plan.Items[0]
+	if item.PlanStatus != "skipped" || item.PlannedAction != "none" || item.ReasonCode != "exact_match" {
+		t.Fatalf("expected foreign-only reporting scope to match empty local state, got %#v", item)
+	}
+	if item.RemoteRowCount != 0 || item.InspectionSummary.ForeignAuthorPresent != true {
+		t.Fatalf("expected no owned remote metrics and foreign marker, got %#v", item)
+	}
+}
+
+func TestCreateJiraCloudPushPlanRequiresRouting(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	service := NewService(store)
+	_, err := service.CreateJiraCloudPushPlan(context.Background(), config.EffectiveConfig{
 		SQLitePath:             "/tmp/workledger.db",
 		MinimumDurationSeconds: 900,
 		Location:               time.UTC,
@@ -1387,10 +1878,9 @@ func TestCreateJiraCloudPushPlanDeleteOnlyMetricsAndValidation(t *testing.T) {
 	}
 }
 
-func TestApplyPlanJiraCloudDeleteClearsTombstone(t *testing.T) {
+func TestApplyPlanJiraCloudRemoteOwnedCleanupArchivesTrash(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
-	seedTombstoneRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "2026-05-02T08:00:00Z")
 
 	service := NewService(store)
 	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
@@ -1398,7 +1888,7 @@ func TestApplyPlanJiraCloudDeleteClearsTombstone(t *testing.T) {
 			user: jiracloud.User{AccountID: "u1"},
 			worklogsByIssue: map[string][]jiracloud.Worklog{
 				"REPORT-1": {
-					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "remote", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "AAPP-1 | remote", Author: jiracloud.WorklogUser{AccountID: "u1"}},
 				},
 			},
 		}
@@ -1416,8 +1906,11 @@ func TestApplyPlanJiraCloudDeleteClearsTombstone(t *testing.T) {
 	if result.AppliedCount != 1 || result.FailedCount != 0 {
 		t.Fatalf("unexpected apply result %#v", result)
 	}
-	if got := countTombstones(t, store); got != 0 {
-		t.Fatalf("expected tombstone cleanup after Jira Cloud delete, got %d", got)
+	if result.TrashArchivedCount != 1 {
+		t.Fatalf("expected one archived trash row, got %#v", result)
+	}
+	if got := countTrashRecords(t, store); got != 1 {
+		t.Fatalf("expected one remote trash row, got %d", got)
 	}
 }
 
@@ -1456,7 +1949,7 @@ func TestCreateJiraCloudPullPlanResolvesIssueIDOnlySearchResults(t *testing.T) {
 	}
 }
 
-func TestReconcileJiraDataPushPlanReturnsAlreadyInSyncNoPlan(t *testing.T) {
+func TestReconcileJiraDataPushPlanReturnsExactMatchNoPlan(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
 	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
@@ -1475,7 +1968,7 @@ func TestReconcileJiraDataPushPlanReturnsAlreadyInSyncNoPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReconcileJiraDataPushPlan failed: %v", err)
 	}
-	if result.Plan != nil || result.NoPlan == nil || result.NoPlan.Reason != "already_in_sync" {
+	if result.Plan != nil || result.NoPlan == nil || result.NoPlan.Reason != "exact_match" {
 		t.Fatalf("unexpected reconcile result %#v", result)
 	}
 	if result.NoPlan.MatchedScopeCount != 1 || result.NoPlan.ActionableScopeCount != 0 {
@@ -1537,47 +2030,11 @@ func TestReconcileJiraDataPushPlanAggregatesSharedReportingTargets(t *testing.T)
 	if err != nil {
 		t.Fatalf("second ReconcileJiraDataPushPlan failed: %v", err)
 	}
-	if second.Plan != nil || second.NoPlan == nil || second.NoPlan.Reason != "already_in_sync" {
-		t.Fatalf("expected already_in_sync no-plan, got %#v", second)
+	if second.Plan != nil || second.NoPlan == nil || second.NoPlan.Reason != "exact_match" {
+		t.Fatalf("expected exact_match no-plan, got %#v", second)
 	}
 	if second.NoPlan.MatchedScopeCount != 1 || second.NoPlan.ActionableScopeCount != 0 {
 		t.Fatalf("unexpected second no-plan summary %#v", second.NoPlan)
-	}
-}
-
-func TestCreateJiraDataPushPlanAggregatesMixedReportingActiveAndTombstoneState(t *testing.T) {
-	store := newTestStore(t)
-	defer store.Close()
-	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
-	seedTombstoneRow(t, store, "row-2", "BAPP-1", "2026-05-01T10:00:00Z", 1800, "2026-05-02T08:00:00Z")
-
-	service := NewService(store)
-	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
-		return &fakeJiraDataClient{
-			user: jiradatacenter.User{AccountID: "u1"},
-			worklogsByIssue: map[string][]jiradatacenter.Worklog{
-				"REPORT-1": {
-					{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "AAPP-1 | Build feature", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
-					{ID: "w2", Started: "2026-05-01T10:00:00.000+0000", TimeSpentSeconds: 1800, Comment: "BAPP-1 | Old row", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
-				},
-			},
-		}
-	}
-
-	plan, err := service.CreateJiraDataPushPlan(context.Background(), testAggregatedJiraDataConfig(), "reporting", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
-	if err != nil {
-		t.Fatalf("CreateJiraDataPushPlan failed: %v", err)
-	}
-	if len(plan.Items) != 1 {
-		t.Fatalf("expected one aggregated reporting item, got %#v", plan.Items)
-	}
-	item := plan.Items[0]
-	assertPlanItem(t, item, "ready", "replace")
-	if item.IssueKey != "REPORT-1" || len(item.InspectionSummary.SourceIssueKeys) != 2 {
-		t.Fatalf("unexpected aggregated item %#v", item)
-	}
-	if item.InspectionSummary.PerSourceTotals["AAPP-1"] != 3600 || item.InspectionSummary.PerSourceTotals["BAPP-1"] != 0 {
-		t.Fatalf("unexpected mixed-state per-source totals %#v", item.InspectionSummary.PerSourceTotals)
 	}
 }
 
@@ -1615,7 +2072,7 @@ func TestCreateJiraDataPushPlanTreatsZeroNormalizedRemoteRowsAsMissing(t *testin
 	}
 }
 
-func TestReconcileJiraCloudPushPlanReturnsNoMatchingRoutesNoPlan(t *testing.T) {
+func TestReconcileJiraCloudPushPlanReturnsBlockedPlanWhenRoutesDoNotMatch(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
 	seedWorklogRow(t, store, "row-1", "ZAPP-1", "2026-05-01T08:00:00Z", 3600, "Unmapped")
@@ -1632,11 +2089,11 @@ func TestReconcileJiraCloudPushPlanReturnsNoMatchingRoutesNoPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReconcileJiraCloudPushPlan failed: %v", err)
 	}
-	if result.Plan != nil || result.NoPlan == nil || result.NoPlan.Reason != "no_matching_routes" {
+	if result.Plan == nil || result.NoPlan != nil {
 		t.Fatalf("unexpected reconcile result %#v", result)
 	}
-	if result.NoPlan.MatchedScopeCount != 0 || result.NoPlan.ActionableScopeCount != 0 {
-		t.Fatalf("unexpected no-plan summary %#v", result.NoPlan)
+	if result.Plan.AggregateStatus != "blocked" || len(result.Plan.Items) != 2 {
+		t.Fatalf("expected blocked reporting plan with preserved target scope, got %#v", result.Plan)
 	}
 }
 
@@ -1687,8 +2144,8 @@ func TestReconcileJiraCloudPushPlanAggregatesSharedReportingTargets(t *testing.T
 	if err != nil {
 		t.Fatalf("second ReconcileJiraCloudPushPlan failed: %v", err)
 	}
-	if second.Plan != nil || second.NoPlan == nil || second.NoPlan.Reason != "already_in_sync" {
-		t.Fatalf("expected already_in_sync no-plan, got %#v", second)
+	if second.Plan != nil || second.NoPlan == nil || second.NoPlan.Reason != "exact_match" {
+		t.Fatalf("expected exact_match no-plan, got %#v", second)
 	}
 	if second.NoPlan.MatchedScopeCount != 1 || second.NoPlan.ActionableScopeCount != 0 {
 		t.Fatalf("unexpected second no-plan summary %#v", second.NoPlan)
@@ -2139,8 +2596,8 @@ func TestReconcileMultiPushPlanBuildsSinglePlanAcrossAdapters(t *testing.T) {
 	if result.Plan == nil || result.NoPlan != nil {
 		t.Fatalf("expected saved plan, got %#v", result)
 	}
-	if len(result.Plan.Items) != 4 {
-		t.Fatalf("expected four plan items, got %#v", result.Plan.Items)
+	if len(result.Plan.Items) != 2 {
+		t.Fatalf("expected two plan items, got %#v", result.Plan.Items)
 	}
 	if result.Plan.AdapterFamily != "multiple" {
 		t.Fatalf("expected multiple adapter summary, got %#v", result.Plan)
@@ -2150,6 +2607,15 @@ func TestReconcileMultiPushPlanBuildsSinglePlanAcrossAdapters(t *testing.T) {
 	}
 	if got := strings.Join(result.Plan.TargetInstances, ","); got != "ito_jira,maxima_lt_jira" {
 		t.Fatalf("unexpected target instances %q", got)
+	}
+	if len(result.ProfileSummaries) != 2 {
+		t.Fatalf("expected two profile summaries, got %#v", result.ProfileSummaries)
+	}
+	if got := strings.Join(result.ProfileSummaries[0].ResolvedTargetInstances, ","); got != "maxima_lt_jira" {
+		t.Fatalf("unexpected jira-cloud summary target instances %q", got)
+	}
+	if got := strings.Join(result.ProfileSummaries[1].ResolvedTargetInstances, ","); got != "ito_jira" {
+		t.Fatalf("unexpected jira-data-center summary target instances %q", got)
 	}
 	ready := 0
 	for _, item := range result.Plan.Items {
@@ -2165,6 +2631,381 @@ func TestReconcileMultiPushPlanBuildsSinglePlanAcrossAdapters(t *testing.T) {
 		t.Fatalf("ListPlans failed: %v", err)
 	} else if len(plans) != 1 {
 		t.Fatalf("expected one saved plan, got %d", len(plans))
+	}
+}
+
+func TestReconcileMultiPushPlanAutoIncludesReportingProfiles(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			user:            jiracloud.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiracloud.Worklog{"AAPP-1": {}, "REPORT-1": {}},
+		}
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		testJiraCloudConfig(),
+		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || result.NoPlan != nil {
+		t.Fatalf("expected saved plan, got %#v", result)
+	}
+	if len(result.Plan.Items) != 2 {
+		t.Fatalf("expected default and reporting items, got %#v", result.Plan.Items)
+	}
+	if len(result.ProfileSummaries) != 2 {
+		t.Fatalf("expected two profile summaries, got %#v", result.ProfileSummaries)
+	}
+	if result.ProfileSummaries[0].RouteProfile != "default" || result.ProfileSummaries[1].RouteProfile != "reporting" {
+		t.Fatalf("unexpected profile order %#v", result.ProfileSummaries)
+	}
+	if result.ProfileSummaries[0].PlanCreated != true || result.ProfileSummaries[1].PlanCreated != true {
+		t.Fatalf("expected plan-created summaries, got %#v", result.ProfileSummaries)
+	}
+	if got := strings.Join(result.ProfileSummaries[0].ResolvedTargetInstances, ","); got != "product" {
+		t.Fatalf("unexpected default summary target instances %q", got)
+	}
+	if got := strings.Join(result.ProfileSummaries[1].ResolvedTargetInstances, ","); got != "product" {
+		t.Fatalf("unexpected reporting summary target instances %q", got)
+	}
+	if result.Plan.Items[0].RouteProfile != "default" || result.Plan.Items[1].RouteProfile != "reporting" {
+		t.Fatalf("expected persisted route profiles, got %#v", result.Plan.Items)
+	}
+}
+
+func TestReconcileMultiPushPlanAutoPersistsExactMatchReportingProfilesJiraCloud(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			user: jiracloud.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiracloud.Worklog{
+				"AAPP-1": {
+					{ID: "w-default", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "Build feature", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+				},
+				"REPORT-1": {
+					{ID: "w-reporting", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "AAPP-1 | Build feature", Author: jiracloud.WorklogUser{AccountID: "u1"}},
+				},
+			},
+		}
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		testJiraCloudConfig(),
+		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || result.NoPlan != nil {
+		t.Fatalf("expected saved plan, got %#v", result)
+	}
+	if len(result.Plan.Items) != 2 {
+		t.Fatalf("expected default and reporting exact-match items, got %#v", result.Plan.Items)
+	}
+	for _, item := range result.Plan.Items {
+		if item.PlanStatus != "skipped" || item.ReasonCode != "exact_match" {
+			t.Fatalf("expected exact-match skipped item, got %#v", item)
+		}
+	}
+	if result.ProfileSummaries[1].RouteProfile != "reporting" || !result.ProfileSummaries[1].PlanCreated || result.ProfileSummaries[1].Reason != "exact_match" {
+		t.Fatalf("expected persisted exact-match reporting summary, got %#v", result.ProfileSummaries)
+	}
+}
+
+func TestReconcileMultiPushPlanAutoPersistsExactMatchReportingProfilesJiraData(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
+		return &fakeJiraDataClient{
+			user: jiradatacenter.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiradatacenter.Worklog{
+				"AAPP-1": {
+					{ID: "w-default", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "Build feature", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
+				},
+				"REPORT-1": {
+					{ID: "w-reporting", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "AAPP-1 | Build feature", Author: jiradatacenter.WorklogUser{AccountID: "u1"}},
+				},
+			},
+		}
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		testJiraDataConfig(),
+		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || result.NoPlan != nil {
+		t.Fatalf("expected saved plan, got %#v", result)
+	}
+	if len(result.Plan.Items) != 2 {
+		t.Fatalf("expected default and reporting exact-match items, got %#v", result.Plan.Items)
+	}
+	for _, item := range result.Plan.Items {
+		if item.PlanStatus != "skipped" || item.ReasonCode != "exact_match" {
+			t.Fatalf("expected exact-match skipped item, got %#v", item)
+		}
+	}
+	if result.ProfileSummaries[1].RouteProfile != "reporting" || !result.ProfileSummaries[1].PlanCreated || result.ProfileSummaries[1].Reason != "exact_match" {
+		t.Fatalf("expected persisted exact-match reporting summary, got %#v", result.ProfileSummaries)
+	}
+}
+
+func TestReconcileMultiPushPlanAutoIgnoresSameNamedNonReportingProfileJiraCloud(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+	seedWorklogRow(t, store, "row-2", "OPS-1", "2026-05-01T10:00:00Z", 1800, "Ops work")
+
+	cfg := testJiraCloudConfig()
+	cfg.File.JiraCloud.Instances["ops"] = config.JiraCloudInstance{
+		BaseURL: "https://ops.atlassian.net",
+		Auth:    config.JiraCloudAuthBlock{Email: "user@example.com", Token: "t2"},
+		Routing: &config.JiraInstanceRoutes{
+			Profiles: map[string]config.JiraRouteProfile{
+				"default":   {IssuePrefixes: []string{"OPS"}},
+				"reporting": {IssuePrefixes: []string{"OPS"}},
+			},
+		},
+	}
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			user: jiracloud.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiracloud.Worklog{
+				"AAPP-1":   {},
+				"OPS-1":    {},
+				"REPORT-1": {},
+			},
+		}
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || result.NoPlan != nil {
+		t.Fatalf("expected saved plan, got %#v", result)
+	}
+	if len(result.Plan.Items) != 3 {
+		t.Fatalf("expected product default, product reporting, and ops default items, got %#v", result.Plan.Items)
+	}
+
+	reportingItems := 0
+	for _, item := range result.Plan.Items {
+		if item.RouteProfile != "reporting" {
+			continue
+		}
+		reportingItems++
+		if item.TargetAdapterInstance != "product" || item.TargetIssue != "REPORT-1" {
+			t.Fatalf("unexpected auto reporting item %#v", item)
+		}
+	}
+	if reportingItems != 1 {
+		t.Fatalf("expected one reporting item, got %#v", result.Plan.Items)
+	}
+}
+
+func TestReconcileMultiPushPlanAutoIgnoresSameNamedNonReportingProfileJiraData(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+	seedWorklogRow(t, store, "row-2", "OPS-1", "2026-05-01T10:00:00Z", 1800, "Ops work")
+
+	cfg := testJiraDataConfig()
+	cfg.File.JiraData.Instances["ops"] = config.JiraDataCenterInstance{
+		BaseURL: "https://jira.ops.example.com",
+		Auth:    config.JiraDataCenterAuthWrap{Bearer: config.JiraDataCenterBearer{Token: "t2"}},
+		Routing: &config.JiraInstanceRoutes{
+			Profiles: map[string]config.JiraRouteProfile{
+				"default":   {IssuePrefixes: []string{"OPS"}},
+				"reporting": {IssuePrefixes: []string{"OPS"}},
+			},
+		},
+	}
+
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
+		return &fakeJiraDataClient{
+			user: jiradatacenter.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiradatacenter.Worklog{
+				"AAPP-1":   {},
+				"OPS-1":    {},
+				"REPORT-1": {},
+			},
+		}
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || result.NoPlan != nil {
+		t.Fatalf("expected saved plan, got %#v", result)
+	}
+	if len(result.Plan.Items) != 3 {
+		t.Fatalf("expected internal default, internal reporting, and ops default items, got %#v", result.Plan.Items)
+	}
+
+	reportingItems := 0
+	for _, item := range result.Plan.Items {
+		if item.RouteProfile != "reporting" {
+			continue
+		}
+		reportingItems++
+		if item.TargetAdapterInstance != "internal" || item.TargetIssue != "REPORT-1" {
+			t.Fatalf("unexpected auto reporting item %#v", item)
+		}
+	}
+	if reportingItems != 1 {
+		t.Fatalf("expected one reporting item, got %#v", result.Plan.Items)
+	}
+}
+
+func TestReconcileMultiPushPlanExplicitRouteProfileKeepsNameScopedAcrossInstances(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+	seedWorklogRow(t, store, "row-2", "OPS-1", "2026-05-01T10:00:00Z", 1800, "Ops work")
+
+	cfg := testJiraCloudConfig()
+	cfg.File.JiraCloud.Instances["ops"] = config.JiraCloudInstance{
+		BaseURL: "https://ops.atlassian.net",
+		Auth:    config.JiraCloudAuthBlock{Email: "user@example.com", Token: "t2"},
+		Routing: &config.JiraInstanceRoutes{
+			Profiles: map[string]config.JiraRouteProfile{
+				"default":   {IssuePrefixes: []string{"OPS"}},
+				"reporting": {IssuePrefixes: []string{"OPS"}},
+			},
+		},
+	}
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			user: jiracloud.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiracloud.Worklog{
+				"OPS-1":    {},
+				"REPORT-1": {},
+			},
+		}
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		"reporting",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || result.NoPlan != nil {
+		t.Fatalf("expected saved plan, got %#v", result)
+	}
+	if len(result.Plan.Items) != 2 {
+		t.Fatalf("expected both selected reporting-name routes, got %#v", result.Plan.Items)
+	}
+
+	targets := map[string]string{}
+	for _, item := range result.Plan.Items {
+		if item.RouteProfile != "reporting" {
+			t.Fatalf("expected explicit route profile to persist, got %#v", item)
+		}
+		targets[item.TargetAdapterInstance] = item.TargetIssue
+	}
+	if targets["product"] != "REPORT-1" || targets["ops"] != "OPS-1" {
+		t.Fatalf("unexpected explicit route-profile targets %#v", targets)
+	}
+}
+
+func TestReconcileMultiPushPlanRejectsAmbiguousAutomaticReportingProfiles(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	cfg := testJiraCloudConfig()
+	cfg.File.JiraCloud.Instances["product"] = config.JiraCloudInstance{
+		BaseURL: "https://example.atlassian.net",
+		Auth:    config.JiraCloudAuthBlock{Email: "user@example.com", Token: "t1"},
+		Routing: &config.JiraInstanceRoutes{
+			Profiles: map[string]config.JiraRouteProfile{
+				"default":     {IssuePrefixes: []string{"AAPP"}},
+				"reporting-a": {ReportingTargets: map[string]string{"AAPP": "REPORT-1"}},
+				"reporting-b": {ReportingTargets: map[string]string{"AAPP": "REPORT-2"}},
+			},
+		},
+	}
+
+	service := NewService(store)
+	_, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err == nil {
+		t.Fatal("expected ambiguous automatic reporting error")
+	}
+	var validationErr ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "--route-profile <name>") {
+		t.Fatalf("expected rerun guidance, got %v", err)
 	}
 }
 
@@ -2261,6 +3102,387 @@ func TestReconcileMultiPushPlanSkipsClockifyWhenAllowlistExcludesIt(t *testing.T
 	}
 }
 
+func TestReconcileMultiPushPlanIncludesClockifySummary(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	service := NewService(store)
+	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient {
+		return &fakeClockifyClient{
+			projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
+			tagsByID: map[string]clockify.Tag{},
+		}
+	}
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			user:            jiracloud.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiracloud.Worklog{"AAPP-1": {}},
+		}
+	}
+
+	cfg := config.EffectiveConfig{
+		SQLitePath:             filepath.Join(t.TempDir(), "worklogs.db"),
+		MinimumDurationSeconds: 900,
+		Location:               time.UTC,
+		File: config.FileConfig{
+			Clockify: testClockifyConfig(true).File.Clockify,
+			JiraCloud: &config.JiraCloudConfig{
+				Instances: map[string]config.JiraCloudInstance{
+					"maxima_lt_jira": {
+						BaseURL: "https://cloud.example.com",
+						Auth:    config.JiraCloudAuthBlock{Email: "user@example.com", Token: "t1"},
+						Routing: &config.JiraInstanceRoutes{Profiles: map[string]config.JiraRouteProfile{
+							"default": {IssuePrefixes: []string{"AAPP"}},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"clockify", "jira-cloud"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || result.NoPlan != nil {
+		t.Fatalf("expected saved plan, got %#v", result)
+	}
+	if len(result.ProfileSummaries) != 2 {
+		t.Fatalf("expected two profile summaries, got %#v", result.ProfileSummaries)
+	}
+	clockifySummary := result.ProfileSummaries[0]
+	if clockifySummary.AdapterFamily != "clockify" || clockifySummary.RouteProfile != "" {
+		t.Fatalf("unexpected clockify summary %#v", clockifySummary)
+	}
+	if got := strings.Join(clockifySummary.ResolvedTargetInstances, ","); got != config.ClockifyInstanceName {
+		t.Fatalf("unexpected clockify summary target instances %q", got)
+	}
+	if clockifySummary.ScopeCount != 1 || clockifySummary.ActionableScopeCount != 1 || !clockifySummary.PlanCreated {
+		t.Fatalf("unexpected clockify summary counts %#v", clockifySummary)
+	}
+	if clockifySummary.Reason != "" {
+		t.Fatalf("expected actionable clockify summary reason to stay empty, got %#v", clockifySummary)
+	}
+	jiraSummary := result.ProfileSummaries[1]
+	if jiraSummary.AdapterFamily != "jira-cloud" {
+		t.Fatalf("unexpected jira summary %#v", jiraSummary)
+	}
+	if jiraSummary.Reason != "" {
+		t.Fatalf("expected actionable jira summary reason to stay empty, got %#v", jiraSummary)
+	}
+}
+
+func TestReconcileMultiPushPlanPersistsPartialPlanWhenJiraCloudSearchFails(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	service := NewService(store)
+	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient {
+		return &fakeClockifyClient{
+			projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
+			tagsByID: map[string]clockify.Tag{},
+		}
+	}
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			searchIssuesErr: &jiracloud.RequestError{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized"},
+		}
+	}
+
+	cfg := config.EffectiveConfig{
+		SQLitePath:             filepath.Join(t.TempDir(), "worklogs.db"),
+		MinimumDurationSeconds: 900,
+		Location:               time.UTC,
+		File: config.FileConfig{
+			Clockify: testClockifyConfig(true).File.Clockify,
+			JiraCloud: &config.JiraCloudConfig{
+				Instances: map[string]config.JiraCloudInstance{
+					"product": {
+						BaseURL: "https://cloud.example.com",
+						Auth:    config.JiraCloudAuthBlock{Email: "user@example.com", Token: "t1"},
+						Routing: &config.JiraInstanceRoutes{Profiles: map[string]config.JiraRouteProfile{
+							"default": {IssuePrefixes: []string{"AAPP"}},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"clockify", "jira-cloud"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || result.NoPlan != nil {
+		t.Fatalf("expected saved partial plan, got %#v", result)
+	}
+	if result.Plan.AggregateStatus != "check_failed" {
+		t.Fatalf("expected check_failed aggregate status, got %#v", result.Plan)
+	}
+
+	foundClockify := false
+	foundJiraFailure := false
+	for _, item := range result.Plan.Items {
+		switch item.TargetAdapterFamily {
+		case "clockify":
+			foundClockify = true
+			if item.PlanStatus != "ready" {
+				t.Fatalf("expected ready clockify item, got %#v", item)
+			}
+		case "jira-cloud":
+			foundJiraFailure = true
+			if item.PlanStatus != "check_failed" || item.ReasonCode != "auth_error" || item.TargetAdapterInstance != "product" {
+				t.Fatalf("unexpected jira-cloud failed item %#v", item)
+			}
+		}
+	}
+	if !foundClockify || !foundJiraFailure {
+		t.Fatalf("expected both clockify and jira-cloud items, got %#v", result.Plan.Items)
+	}
+	if len(result.ProfileSummaries) != 2 {
+		t.Fatalf("expected two profile summaries, got %#v", result.ProfileSummaries)
+	}
+	jiraSummary := result.ProfileSummaries[1]
+	if jiraSummary.AdapterFamily != "jira-cloud" || jiraSummary.ActionableScopeCount != 0 || jiraSummary.Reason != "auth_error" {
+		t.Fatalf("expected jira-cloud auth failure summary, got %#v", jiraSummary)
+	}
+}
+
+func TestSummarizePlanProfileReportsMixedCheckFailedReasons(t *testing.T) {
+	plan := Plan{
+		TargetInstances: []string{"product"},
+		Items: []PlanItem{
+			{PlanStatus: "check_failed", ReasonCode: "auth_error"},
+			{PlanStatus: "check_failed", ReasonCode: "remote_error"},
+			{PlanStatus: "skipped", ReasonCode: "exact_match"},
+		},
+	}
+
+	summary := summarizePlanProfile("jira-cloud", "default", plan)
+	if summary.ActionableScopeCount != 0 || !summary.PlanCreated || summary.Reason != "mixed" {
+		t.Fatalf("expected mixed check-failed summary, got %#v", summary)
+	}
+}
+
+func TestReconcileMultiPushPlanAutoSkipsUnreachableJiraCloudInstanceWithoutMatchingRoutes(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		switch cfg.BaseURL {
+		case "https://lt.example.atlassian.net":
+			return &fakeJiraCloudClient{
+				user:            jiracloud.User{AccountID: "u1"},
+				worklogsByIssue: map[string][]jiracloud.Worklog{"AAPP-1": {}},
+			}
+		case "https://ee.example.atlassian.net":
+			return &fakeJiraCloudClient{
+				currentUserErr: errors.New("dial tcp: no route to host"),
+			}
+		default:
+			t.Fatalf("unexpected base url %s", cfg.BaseURL)
+			return nil
+		}
+	}
+
+	cfg := config.EffectiveConfig{
+		SQLitePath:             filepath.Join(t.TempDir(), "worklogs.db"),
+		MinimumDurationSeconds: 900,
+		Location:               time.UTC,
+		File: config.FileConfig{
+			JiraCloud: &config.JiraCloudConfig{
+				Instances: map[string]config.JiraCloudInstance{
+					"maxima_lt_jira": {
+						BaseURL: "https://lt.example.atlassian.net",
+						Auth:    config.JiraCloudAuthBlock{Email: "user@example.com", Token: "t1"},
+						Routing: &config.JiraInstanceRoutes{Profiles: map[string]config.JiraRouteProfile{
+							"default": {IssuePrefixes: []string{"AAPP"}},
+						}},
+					},
+					"maxima_ee_jira": {
+						BaseURL: "https://ee.example.atlassian.net",
+						Auth:    config.JiraCloudAuthBlock{Email: "user@example.com", Token: "t2"},
+						Routing: &config.JiraInstanceRoutes{Profiles: map[string]config.JiraRouteProfile{
+							"default": {IssuePrefixes: []string{"EAPP"}},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.NoPlan != nil || result.Plan == nil {
+		t.Fatalf("expected saved jira-cloud plan, got %#v", result)
+	}
+	if result.Plan.AggregateStatus != "ready" || len(result.Plan.Items) != 1 {
+		t.Fatalf("expected only matched reachable scope, got %#v", result.Plan)
+	}
+	if len(result.ProfileSummaries) != 2 {
+		t.Fatalf("expected two profile summaries, got %#v", result.ProfileSummaries)
+	}
+	if result.ProfileSummaries[0].ResolvedTargetInstances[0] != "maxima_ee_jira" || result.ProfileSummaries[0].ScopeCount != 0 || result.ProfileSummaries[0].PlanCreated || result.ProfileSummaries[0].Reason != "no_matching_routes" {
+		t.Fatalf("unexpected ee summary %#v", result.ProfileSummaries[0])
+	}
+	if result.ProfileSummaries[1].ResolvedTargetInstances[0] != "maxima_lt_jira" || result.ProfileSummaries[1].ScopeCount != 1 || !result.ProfileSummaries[1].PlanCreated {
+		t.Fatalf("unexpected lt summary %#v", result.ProfileSummaries[1])
+	}
+}
+
+func TestReconcileMultiPushPlanAutoSkipsUnreachableJiraDataInstanceWithoutMatchingRoutes(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
+		switch cfg.BaseURL {
+		case "https://lt.example.com":
+			return &fakeJiraDataClient{
+				user:            jiradatacenter.User{AccountID: "u1"},
+				worklogsByIssue: map[string][]jiradatacenter.Worklog{"AAPP-1": {}},
+			}
+		case "https://ee.example.com":
+			return &fakeJiraDataClient{
+				currentUserErr: errors.New("dial tcp: no route to host"),
+			}
+		default:
+			t.Fatalf("unexpected base url %s", cfg.BaseURL)
+			return nil
+		}
+	}
+
+	cfg := config.EffectiveConfig{
+		SQLitePath:             filepath.Join(t.TempDir(), "worklogs.db"),
+		MinimumDurationSeconds: 900,
+		Location:               time.UTC,
+		File: config.FileConfig{
+			JiraData: &config.JiraDataCenterConfig{
+				Instances: map[string]config.JiraDataCenterInstance{
+					"ito_jira": {
+						BaseURL: "https://lt.example.com",
+						Auth:    config.JiraDataCenterAuthWrap{Bearer: config.JiraDataCenterBearer{Token: "t1"}},
+						Routing: &config.JiraInstanceRoutes{Profiles: map[string]config.JiraRouteProfile{
+							"default": {IssuePrefixes: []string{"AAPP"}},
+						}},
+					},
+					"vpn_only_jira": {
+						BaseURL: "https://ee.example.com",
+						Auth:    config.JiraDataCenterAuthWrap{Bearer: config.JiraDataCenterBearer{Token: "t2"}},
+						Routing: &config.JiraInstanceRoutes{Profiles: map[string]config.JiraRouteProfile{
+							"default": {IssuePrefixes: []string{"EAPP"}},
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.NoPlan != nil || result.Plan == nil {
+		t.Fatalf("expected saved jira-data-center plan, got %#v", result)
+	}
+	if result.Plan.AggregateStatus != "ready" || len(result.Plan.Items) != 1 {
+		t.Fatalf("expected only matched reachable scope, got %#v", result.Plan)
+	}
+	if len(result.ProfileSummaries) != 2 {
+		t.Fatalf("expected two profile summaries, got %#v", result.ProfileSummaries)
+	}
+	if result.ProfileSummaries[0].ResolvedTargetInstances[0] != "ito_jira" || result.ProfileSummaries[0].ScopeCount != 1 || !result.ProfileSummaries[0].PlanCreated {
+		t.Fatalf("unexpected reachable summary %#v", result.ProfileSummaries[0])
+	}
+	if result.ProfileSummaries[1].ResolvedTargetInstances[0] != "vpn_only_jira" || result.ProfileSummaries[1].ScopeCount != 0 || result.ProfileSummaries[1].PlanCreated || result.ProfileSummaries[1].Reason != "no_matching_routes" {
+		t.Fatalf("unexpected vpn-only summary %#v", result.ProfileSummaries[1])
+	}
+}
+
+func TestReconcileMultiPushPlanClockifyOnlyEmptyPlanStillIncludesSummary(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	service := NewService(store)
+	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient {
+		return &fakeClockifyClient{
+			projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
+			tagsByID: map[string]clockify.Tag{},
+		}
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		testClockifyConfig(true),
+		ReconcileScope{AdapterFamilies: []string{"clockify"}},
+		"",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || result.NoPlan != nil {
+		t.Fatalf("expected saved plan, got %#v", result)
+	}
+	if got := strings.Join(result.Plan.TargetInstances, ","); got != config.ClockifyInstanceName {
+		t.Fatalf("unexpected clockify target instances %q", got)
+	}
+	if len(result.ProfileSummaries) != 1 {
+		t.Fatalf("expected one clockify summary, got %#v", result.ProfileSummaries)
+	}
+	summary := result.ProfileSummaries[0]
+	if summary.AdapterFamily != "clockify" || summary.RouteProfile != "" {
+		t.Fatalf("unexpected clockify summary %#v", summary)
+	}
+	if got := strings.Join(summary.ResolvedTargetInstances, ","); got != config.ClockifyInstanceName {
+		t.Fatalf("unexpected clockify summary target instances %q", got)
+	}
+	if summary.ScopeCount != 0 || summary.ActionableScopeCount != 0 || !summary.PlanCreated {
+		t.Fatalf("unexpected empty clockify summary %#v", summary)
+	}
+}
+
 func TestReconcileJiraCloudPushPlanRejectsReportingTargetOwnedByOtherFamily(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
@@ -2326,6 +3548,7 @@ type blockingClockifyClient struct {
 type fakeJiraDataClient struct {
 	user            jiradatacenter.User
 	searchIssues    []jiradatacenter.IssueBrief
+	searchIssuesErr error
 	worklogsByIssue map[string][]jiradatacenter.Worklog
 	currentUserErr  error
 	worklogErrByKey map[string]error
@@ -2334,6 +3557,7 @@ type fakeJiraDataClient struct {
 type fakeJiraCloudClient struct {
 	user            jiracloud.User
 	searchIssues    []jiracloud.IssueBrief
+	searchIssuesErr error
 	worklogsByIssue map[string][]jiracloud.Worklog
 	issuesByRef     map[string]jiracloud.IssueBrief
 	currentUserErr  error
@@ -2348,6 +3572,9 @@ func (f *fakeJiraDataClient) CurrentUser(ctx context.Context) (jiradatacenter.Us
 }
 
 func (f *fakeJiraDataClient) SearchIssues(ctx context.Context, jql string, fields []string) ([]jiradatacenter.IssueBrief, error) {
+	if f.searchIssuesErr != nil {
+		return nil, f.searchIssuesErr
+	}
 	return append([]jiradatacenter.IssueBrief(nil), f.searchIssues...), nil
 }
 
@@ -2388,6 +3615,9 @@ func (f *fakeJiraCloudClient) CurrentUser(ctx context.Context) (jiracloud.User, 
 }
 
 func (f *fakeJiraCloudClient) SearchIssues(ctx context.Context, jql string, fields []string) ([]jiracloud.IssueBrief, error) {
+	if f.searchIssuesErr != nil {
+		return nil, f.searchIssuesErr
+	}
 	return append([]jiracloud.IssueBrief(nil), f.searchIssues...), nil
 }
 
@@ -2508,16 +3738,6 @@ func seedWorklogRow(t *testing.T, store *sqlitestore.Store, id, issueKey, starte
 	}
 }
 
-func seedTombstoneRow(t *testing.T, store *sqlitestore.Store, id, issueKey, startedAt string, durationSeconds int, deletedAt string) {
-	t.Helper()
-	if _, err := store.DB().Exec(
-		`INSERT INTO worklog_tombstones(worklog_id, issue_key, started_at_utc, duration_seconds, deleted_at) VALUES(?, ?, ?, ?, ?)`,
-		id, issueKey, startedAt, durationSeconds, deletedAt,
-	); err != nil {
-		t.Fatalf("seed tombstone: %v", err)
-	}
-}
-
 func seedDeliveryAttempt(t *testing.T, store *sqlitestore.Store, planID, planItemID, state, message, createdAt string) {
 	t.Helper()
 	if _, err := store.DB().Exec(
@@ -2526,15 +3746,6 @@ func seedDeliveryAttempt(t *testing.T, store *sqlitestore.Store, planID, planIte
 	); err != nil {
 		t.Fatalf("seed delivery attempt: %v", err)
 	}
-}
-
-func countTombstones(t *testing.T, store *sqlitestore.Store) int {
-	t.Helper()
-	var count int
-	if err := store.DB().QueryRow(`SELECT COUNT(1) FROM worklog_tombstones`).Scan(&count); err != nil {
-		t.Fatalf("count tombstones: %v", err)
-	}
-	return count
 }
 
 func countTrashRecords(t *testing.T, store *sqlitestore.Store) int {

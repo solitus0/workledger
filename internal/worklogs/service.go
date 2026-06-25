@@ -52,23 +52,7 @@ type LocalWorklog struct {
 	Description     string
 }
 
-type Tombstone struct {
-	ID              string
-	IssueKey        string
-	StartedAtUTC    time.Time
-	DurationSeconds int
-	Description     string
-	DeletedAt       time.Time
-}
-
 type DeleteResult struct {
-	ID         string
-	IssueKey   string
-	DeletedAt  time.Time
-	HardDelete bool
-}
-
-type DeleteTombstoneResult struct {
 	ID        string
 	IssueKey  string
 	DeletedAt time.Time
@@ -94,7 +78,6 @@ type ListFilters struct {
 	To            string
 	WeekOffset    int
 	WeekOffsetSet bool
-	OnlyDeleted   bool
 	Fields        []string
 }
 
@@ -109,7 +92,6 @@ type EffectiveFilters struct {
 	From        *time.Time
 	To          *time.Time
 	Timezone    string
-	OnlyDeleted bool
 	Fields      []string
 }
 
@@ -165,31 +147,10 @@ type PatchInput struct {
 }
 
 type DeleteBatchResult struct {
-	Filters    EffectiveFilters
-	Items      []LocalWorklog
-	Deleted    []string
-	DryRun     bool
-	HardDelete bool
-}
-
-type DeleteTombstoneBatchResult struct {
 	Filters EffectiveFilters
-	Items   []Tombstone
+	Items   []LocalWorklog
 	Deleted []string
 	DryRun  bool
-}
-
-type RestorePreviewItem struct {
-	Tombstone Tombstone
-	Record    LocalWorklog
-}
-
-type RestoreBatchResult struct {
-	Filters  EffectiveFilters
-	Items    []RestorePreviewItem
-	Restored []string
-	DryRun   bool
-	Force    bool
 }
 
 type ConflictDetail struct {
@@ -247,43 +208,33 @@ func NewService(store *sqlitestore.Store) *Service {
 	}
 }
 
-func (s *Service) List(cfg config.EffectiveConfig, filters ListFilters) ([]LocalWorklog, []Tombstone, EffectiveFilters, error) {
+func (s *Service) List(cfg config.EffectiveConfig, filters ListFilters) ([]LocalWorklog, EffectiveFilters, error) {
 	if !hasListTimeSelector(filters) {
-		return nil, nil, EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: "worklogs list requires at least one time selector"}}}
+		return nil, EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: "worklogs list requires at least one time selector"}}}
 	}
 
-	effective, err := normalizeListFiltersAt(cfg, filters, filters.OnlyDeleted, s.now)
+	effective, err := normalizeListFiltersAt(cfg, filters, false, s.now)
 	if err != nil {
-		return nil, nil, EffectiveFilters{}, err
-	}
-
-	if filters.OnlyDeleted {
-		items, err := s.listDeleted(effective)
-		return nil, items, effective, err
+		return nil, EffectiveFilters{}, err
 	}
 
 	items, err := s.listActive(effective)
-	return items, nil, effective, err
+	return items, effective, err
 }
 
-func (s *Service) Search(cfg config.EffectiveConfig, input SearchInput) ([]LocalWorklog, []Tombstone, EffectiveFilters, string, error) {
-	effective, err := normalizeListFiltersAt(cfg, input.ListFilters, input.OnlyDeleted, s.now)
+func (s *Service) Search(cfg config.EffectiveConfig, input SearchInput) ([]LocalWorklog, EffectiveFilters, string, error) {
+	effective, err := normalizeListFiltersAt(cfg, input.ListFilters, false, s.now)
 	if err != nil {
-		return nil, nil, EffectiveFilters{}, "", err
+		return nil, EffectiveFilters{}, "", err
 	}
 
 	query, err := normalizeSearchQuery(input.Query)
 	if err != nil {
-		return nil, nil, EffectiveFilters{}, "", err
-	}
-
-	if input.OnlyDeleted {
-		items, err := s.searchDeleted(effective, query)
-		return nil, items, effective, query, err
+		return nil, EffectiveFilters{}, "", err
 	}
 
 	items, err := s.searchActive(effective, query)
-	return items, nil, effective, query, err
+	return items, effective, query, err
 }
 
 func (s *Service) Show(id string) (LocalWorklog, error) {
@@ -490,52 +441,17 @@ func (s *Service) Update(cfg config.EffectiveConfig, id string, patch PatchInput
 		return LocalWorklog{}, err
 	}
 
-	if candidate.IssueKey != current.IssueKey {
-		now := s.now().UTC()
-		tx, err := s.store.DB().BeginTx(context.Background(), nil)
-		if err != nil {
-			return LocalWorklog{}, err
-		}
-		if _, err := tx.Exec(
-			`UPDATE worklogs SET issue_key = ?, started_at_utc = ?, duration_seconds = ?, description = ?, updated_at = ? WHERE id = ?`,
-			candidate.IssueKey,
-			sqlitestore.RFC3339UTC(candidate.StartedAtUTC),
-			candidate.DurationSeconds,
-			candidate.Description,
-			sqlitestore.RFC3339UTC(now),
-			id,
-		); err != nil {
-			_ = tx.Rollback()
-			return LocalWorklog{}, err
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO worklog_tombstones(worklog_id, issue_key, started_at_utc, duration_seconds, description, deleted_at) VALUES(?, ?, ?, ?, ?, ?)`,
-			uuid.NewString(),
-			current.IssueKey,
-			sqlitestore.RFC3339UTC(current.StartedAtUTC),
-			current.DurationSeconds,
-			current.Description,
-			sqlitestore.RFC3339UTC(now),
-		); err != nil {
-			_ = tx.Rollback()
-			return LocalWorklog{}, err
-		}
-		if err := tx.Commit(); err != nil {
-			return LocalWorklog{}, err
-		}
-	} else {
-		_, err = s.store.DB().Exec(
-			`UPDATE worklogs SET issue_key = ?, started_at_utc = ?, duration_seconds = ?, description = ?, updated_at = ? WHERE id = ?`,
-			candidate.IssueKey,
-			sqlitestore.RFC3339UTC(candidate.StartedAtUTC),
-			candidate.DurationSeconds,
-			candidate.Description,
-			sqlitestore.RFC3339UTC(s.now().UTC()),
-			id,
-		)
-		if err != nil {
-			return LocalWorklog{}, err
-		}
+	_, err = s.store.DB().Exec(
+		`UPDATE worklogs SET issue_key = ?, started_at_utc = ?, duration_seconds = ?, description = ?, updated_at = ? WHERE id = ?`,
+		candidate.IssueKey,
+		sqlitestore.RFC3339UTC(candidate.StartedAtUTC),
+		candidate.DurationSeconds,
+		candidate.Description,
+		sqlitestore.RFC3339UTC(s.now().UTC()),
+		id,
+	)
+	if err != nil {
+		return LocalWorklog{}, err
 	}
 
 	current.IssueKey = candidate.IssueKey
@@ -546,7 +462,7 @@ func (s *Service) Update(cfg config.EffectiveConfig, id string, patch PatchInput
 	return current, nil
 }
 
-func (s *Service) Delete(id string, hardDelete bool) (DeleteResult, error) {
+func (s *Service) Delete(id string) (DeleteResult, error) {
 	current, err := s.Show(id)
 	if err != nil {
 		return DeleteResult{}, err
@@ -562,37 +478,18 @@ func (s *Service) Delete(id string, hardDelete bool) (DeleteResult, error) {
 		_ = tx.Rollback()
 		return DeleteResult{}, err
 	}
-	if !hardDelete {
-		if _, err := tx.Exec(
-			`INSERT INTO worklog_tombstones(worklog_id, issue_key, started_at_utc, duration_seconds, description, deleted_at) VALUES(?, ?, ?, ?, ?, ?)`,
-			current.ID,
-			current.IssueKey,
-			sqlitestore.RFC3339UTC(current.StartedAtUTC),
-			current.DurationSeconds,
-			current.Description,
-			sqlitestore.RFC3339UTC(deletedAt),
-		); err != nil {
-			_ = tx.Rollback()
-			return DeleteResult{}, err
-		}
-	}
 	if err := tx.Commit(); err != nil {
 		return DeleteResult{}, err
 	}
 
 	return DeleteResult{
-		ID:         current.ID,
-		IssueKey:   current.IssueKey,
-		DeletedAt:  deletedAt,
-		HardDelete: hardDelete,
+		ID:        current.ID,
+		IssueKey:  current.IssueKey,
+		DeletedAt: deletedAt,
 	}, nil
 }
 
-func (s *Service) DeleteBatch(cfg config.EffectiveConfig, filters ListFilters, dryRun bool, hardDelete bool) (DeleteBatchResult, error) {
-	if filters.OnlyDeleted {
-		return DeleteBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "only_deleted", Message: "is not valid for batch delete"}}}
-	}
-
+func (s *Service) DeleteBatch(cfg config.EffectiveConfig, filters ListFilters, dryRun bool) (DeleteBatchResult, error) {
 	effective, err := normalizeListFiltersAt(cfg, filters, false, s.now)
 	if err != nil {
 		return DeleteBatchResult{}, err
@@ -607,10 +504,9 @@ func (s *Service) DeleteBatch(cfg config.EffectiveConfig, filters ListFilters, d
 	}
 
 	result := DeleteBatchResult{
-		Filters:    effective,
-		Items:      items,
-		DryRun:     dryRun,
-		HardDelete: hardDelete,
+		Filters: effective,
+		Items:   items,
+		DryRun:  dryRun,
 	}
 	if dryRun || len(items) == 0 {
 		return result, nil
@@ -621,116 +517,17 @@ func (s *Service) DeleteBatch(cfg config.EffectiveConfig, filters ListFilters, d
 		return DeleteBatchResult{}, err
 	}
 
-	deletedAt := sqlitestore.RFC3339UTC(s.now().UTC())
 	result.Deleted = make([]string, 0, len(items))
 	for _, item := range items {
 		if _, err := tx.Exec(`DELETE FROM worklogs WHERE id = ?`, item.ID); err != nil {
 			_ = tx.Rollback()
 			return DeleteBatchResult{}, err
 		}
-		if !hardDelete {
-			if _, err := tx.Exec(
-				`INSERT INTO worklog_tombstones(worklog_id, issue_key, started_at_utc, duration_seconds, description, deleted_at) VALUES(?, ?, ?, ?, ?, ?)`,
-				item.ID,
-				item.IssueKey,
-				sqlitestore.RFC3339UTC(item.StartedAtUTC),
-				item.DurationSeconds,
-				item.Description,
-				deletedAt,
-			); err != nil {
-				_ = tx.Rollback()
-				return DeleteBatchResult{}, err
-			}
-		}
 		result.Deleted = append(result.Deleted, item.ID)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return DeleteBatchResult{}, err
-	}
-
-	return result, nil
-}
-
-func (s *Service) RestoreBatch(cfg config.EffectiveConfig, filters ListFilters, dryRun bool, force bool) (RestoreBatchResult, error) {
-	if filters.OnlyDeleted {
-		return RestoreBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "only_deleted", Message: "is not valid for restore"}}}
-	}
-	if !hasListTimeSelector(filters) {
-		return RestoreBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: "worklogs restore requires at least one time selector"}}}
-	}
-
-	effective, err := normalizeListFiltersAt(cfg, filters, false, s.now)
-	if err != nil {
-		return RestoreBatchResult{}, err
-	}
-
-	tombstones, err := s.listDeleted(effective)
-	if err != nil {
-		return RestoreBatchResult{}, err
-	}
-
-	previewItems := make([]RestorePreviewItem, 0, len(tombstones))
-	restoreRows := make([]LocalWorklog, 0, len(tombstones))
-	for _, item := range tombstones {
-		record := LocalWorklog{
-			ID:              item.ID,
-			IssueKey:        item.IssueKey,
-			StartedAtUTC:    item.StartedAtUTC,
-			DurationSeconds: item.DurationSeconds,
-			Description:     item.Description,
-		}
-		restoreRows = append(restoreRows, record)
-		previewItems = append(previewItems, RestorePreviewItem{
-			Tombstone: item,
-			Record:    record,
-		})
-	}
-
-	result := RestoreBatchResult{
-		Filters: effective,
-		Items:   previewItems,
-		DryRun:  dryRun,
-		Force:   force,
-	}
-	if dryRun || len(restoreRows) == 0 {
-		return result, nil
-	}
-
-	if err := s.validateRestoreConflicts(cfg, restoreRows, force); err != nil {
-		return RestoreBatchResult{}, err
-	}
-
-	tx, err := s.store.DB().BeginTx(context.Background(), nil)
-	if err != nil {
-		return RestoreBatchResult{}, err
-	}
-
-	result.Restored = make([]string, 0, len(restoreRows))
-	now := sqlitestore.RFC3339UTC(s.now().UTC())
-	for _, item := range restoreRows {
-		if _, err := tx.Exec(
-			`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-			item.ID,
-			item.IssueKey,
-			sqlitestore.RFC3339UTC(item.StartedAtUTC),
-			item.DurationSeconds,
-			item.Description,
-			now,
-			now,
-		); err != nil {
-			_ = tx.Rollback()
-			return RestoreBatchResult{}, err
-		}
-		if _, err := tx.Exec(`DELETE FROM worklog_tombstones WHERE worklog_id = ?`, item.ID); err != nil {
-			_ = tx.Rollback()
-			return RestoreBatchResult{}, err
-		}
-		result.Restored = append(result.Restored, item.ID)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return RestoreBatchResult{}, err
 	}
 
 	return result, nil
@@ -948,55 +745,6 @@ func (s *Service) validateAddConflicts(cfg config.EffectiveConfig, candidates []
 	return nil
 }
 
-func (s *Service) validateRestoreConflicts(cfg config.EffectiveConfig, candidates []LocalWorklog, force bool) error {
-	if force || len(candidates) == 0 {
-		return nil
-	}
-
-	existing, err := s.listActive(EffectiveFilters{})
-	if err != nil {
-		return err
-	}
-
-	restoreSet := make([]LocalWorklog, 0, len(existing)+len(candidates))
-	restoreSet = append(restoreSet, existing...)
-	for index, candidate := range candidates {
-		conflictingIDs := make([]string, 0)
-		conflictingWindows := make([][2]string, 0)
-		reason := ""
-		for _, item := range restoreSet {
-			if isDuplicate(candidate, item) {
-				reason = "duplicate"
-				conflictingIDs = append(conflictingIDs, item.ID)
-				continue
-			}
-			if overlaps(candidate, item) {
-				if reason == "" {
-					reason = "overlap"
-				}
-				conflictingIDs = append(conflictingIDs, item.ID)
-				conflictingWindows = append(conflictingWindows, [2]string{
-					sqlitestore.RFC3339UTC(item.StartedAtUTC),
-					sqlitestore.RFC3339UTC(item.StartedAtUTC.Add(time.Duration(item.DurationSeconds) * time.Second)),
-				})
-			}
-		}
-		if len(conflictingIDs) > 0 {
-			return ValidationError{
-				Conflict: &ConflictDetail{
-					Reason:             reason,
-					Attempted:          ToRecordView(candidate, cfg.Location),
-					ConflictingIDs:     conflictingIDs,
-					ConflictingWindows: conflictingWindows,
-				},
-			}
-		}
-		restoreSet = append(restoreSet, candidates[index])
-	}
-
-	return nil
-}
-
 func (s *Service) listActive(filters EffectiveFilters) ([]LocalWorklog, error) {
 	query := `SELECT id, issue_key, started_at_utc, duration_seconds, description FROM worklogs`
 	args := make([]any, 0)
@@ -1012,102 +760,6 @@ func (s *Service) listActive(filters EffectiveFilters) ([]LocalWorklog, error) {
 	items := make([]LocalWorklog, 0)
 	for rows.Next() {
 		item, err := scanWorklog(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-
-	return items, rows.Err()
-}
-
-func (s *Service) showTombstone(id string) (Tombstone, error) {
-	row := s.store.DB().QueryRow(
-		`SELECT worklog_id, issue_key, started_at_utc, duration_seconds, description, deleted_at FROM worklog_tombstones WHERE worklog_id = ?`, id)
-	item, err := scanTombstone(row)
-	if err == nil {
-		return item, nil
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return Tombstone{}, ErrNotFound
-	}
-	return Tombstone{}, err
-}
-
-func (s *Service) DeleteTombstone(id string) (DeleteTombstoneResult, error) {
-	current, err := s.showTombstone(id)
-	if err != nil {
-		return DeleteTombstoneResult{}, err
-	}
-	if _, err := s.store.DB().Exec(`DELETE FROM worklog_tombstones WHERE worklog_id = ?`, id); err != nil {
-		return DeleteTombstoneResult{}, err
-	}
-	return DeleteTombstoneResult{
-		ID:        current.ID,
-		IssueKey:  current.IssueKey,
-		DeletedAt: current.DeletedAt,
-	}, nil
-}
-
-func (s *Service) DeleteTombstoneBatch(cfg config.EffectiveConfig, filters ListFilters, dryRun bool) (DeleteTombstoneBatchResult, error) {
-	effective, err := normalizeListFiltersAt(cfg, filters, true, s.now)
-	if err != nil {
-		return DeleteTombstoneBatchResult{}, err
-	}
-	if effective.IssueKey == nil && effective.From == nil && effective.To == nil {
-		return DeleteTombstoneBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "delete", Message: "batch delete requires at least one selector"}}}
-	}
-
-	items, err := s.listDeleted(effective)
-	if err != nil {
-		return DeleteTombstoneBatchResult{}, err
-	}
-
-	result := DeleteTombstoneBatchResult{
-		Filters: effective,
-		Items:   items,
-		DryRun:  dryRun,
-	}
-	if dryRun || len(items) == 0 {
-		return result, nil
-	}
-
-	tx, err := s.store.DB().BeginTx(context.Background(), nil)
-	if err != nil {
-		return DeleteTombstoneBatchResult{}, err
-	}
-
-	result.Deleted = make([]string, 0, len(items))
-	for _, item := range items {
-		if _, err := tx.Exec(`DELETE FROM worklog_tombstones WHERE worklog_id = ?`, item.ID); err != nil {
-			_ = tx.Rollback()
-			return DeleteTombstoneBatchResult{}, err
-		}
-		result.Deleted = append(result.Deleted, item.ID)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return DeleteTombstoneBatchResult{}, err
-	}
-
-	return result, nil
-}
-
-func (s *Service) listDeleted(filters EffectiveFilters) ([]Tombstone, error) {
-	query := `SELECT worklog_id, issue_key, started_at_utc, duration_seconds, description, deleted_at FROM worklog_tombstones`
-	args := make([]any, 0)
-	where := buildWhereClause(filters, true, &args)
-	query += where + ` ORDER BY started_at_utc ASC, worklog_id ASC`
-
-	rows, err := s.store.DB().Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	items := make([]Tombstone, 0)
-	for rows.Next() {
-		item, err := scanTombstone(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -1137,35 +789,6 @@ func (s *Service) searchActive(filters EffectiveFilters, query string) ([]LocalW
 	items := make([]LocalWorklog, 0)
 	for rows.Next() {
 		item, err := scanWorklog(rows)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-
-	return items, rows.Err()
-}
-
-func (s *Service) searchDeleted(filters EffectiveFilters, query string) ([]Tombstone, error) {
-	args := make([]any, 0)
-	where := buildWhereClause(filters, true, &args)
-	if where == "" {
-		where = " WHERE "
-	} else {
-		where += " AND "
-	}
-	args = append(args, literalSubstringPattern(query))
-	statement := `SELECT worklog_id, issue_key, started_at_utc, duration_seconds, description, deleted_at FROM worklog_tombstones` + where + `description LIKE ? ESCAPE '\' COLLATE NOCASE ORDER BY started_at_utc DESC, worklog_id ASC`
-
-	rows, err := s.store.DB().Query(statement, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	items := make([]Tombstone, 0)
-	for rows.Next() {
-		item, err := scanTombstone(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -1209,8 +832,7 @@ func normalizeListFiltersAt(cfg config.EffectiveConfig, filters ListFilters, all
 	}
 
 	effective := EffectiveFilters{
-		OnlyDeleted: filters.OnlyDeleted,
-		Fields:      fields,
+		Fields: fields,
 	}
 
 	if cfg.LocalTimezoneConfig != nil {
@@ -1622,28 +1244,6 @@ func scanWorklog(scanner interface{ Scan(dest ...any) error }) (LocalWorklog, er
 	worklog.StartedAtUTC = parsed.UTC()
 
 	return worklog, nil
-}
-
-func scanTombstone(scanner interface{ Scan(dest ...any) error }) (Tombstone, error) {
-	var item Tombstone
-	var startedAt string
-	var deletedAt string
-	if err := scanner.Scan(&item.ID, &item.IssueKey, &startedAt, &item.DurationSeconds, &item.Description, &deletedAt); err != nil {
-		return Tombstone{}, err
-	}
-
-	parsedStart, err := time.Parse(time.RFC3339, startedAt)
-	if err != nil {
-		return Tombstone{}, err
-	}
-	parsedDeletedAt, err := time.Parse(time.RFC3339, deletedAt)
-	if err != nil {
-		return Tombstone{}, err
-	}
-
-	item.StartedAtUTC = parsedStart.UTC()
-	item.DeletedAt = parsedDeletedAt.UTC()
-	return item, nil
 }
 
 func buildWhereClause(filters EffectiveFilters, deleted bool, args *[]any) string {

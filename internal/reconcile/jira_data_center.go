@@ -164,13 +164,7 @@ func (s *Service) buildJiraDataPullPlan(ctx context.Context, cfg config.Effectiv
 			ResolvedTargetIssue:    issueKey,
 		}
 		applyInspectionRowDiffSummary(&item, remoteRows, localPayload)
-		if tombstoneProtected(remoteRows, s.store.DB()) {
-			item.PlanStatus = "invalid"
-			item.PlannedAction = "none"
-			item.ComparisonStatus = "not_checked"
-			item.ReasonCode = "tombstone_protected"
-			item.ReasonDetail = "Saved payload would recreate a tombstoned local allocation"
-		} else if rowsEqual(remoteRows, localPayload) {
+		if rowsEqual(remoteRows, localPayload) {
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
 			item.ComparisonStatus = "match"
@@ -205,6 +199,7 @@ func (s *Service) ReconcileJiraDataPushPlan(ctx context.Context, cfg config.Effe
 }
 
 func (s *Service) reconcileJiraDataPushPlanInMemory(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) (ReconcileResult, error) {
+	opts := resolvePlanOptions(options)
 	routes, err := resolveJiraDataRouteProfile(cfg, routeProfile)
 	if err != nil {
 		return ReconcileResult{}, err
@@ -220,6 +215,9 @@ func (s *Service) reconcileJiraDataPushPlanInMemory(ctx context.Context, cfg con
 
 	result := summarizeReportingNoPlan("jira-data-center", routeProfile, windowFrom, windowTo, plan.Items)
 	if result != nil {
+		if opts.PreserveNonActionableReportingPlan && result.Reason == "exact_match" {
+			return ReconcileResult{Plan: &plan, NoPlan: result, PreserveNonActionableReportingPlan: true}, nil
+		}
 		return ReconcileResult{NoPlan: result}, nil
 	}
 	return ReconcileResult{Plan: &plan}, nil
@@ -250,14 +248,8 @@ func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.Effectiv
 	if err != nil {
 		return Plan{}, err
 	}
-	tombstones, err := s.listTombstoneScope(windowFrom, windowTo)
-	if err != nil {
-		return Plan{}, err
-	}
 
 	activeRows := worklogsToRows(localRows)
-	tombstoneRows := tombstonesToRows(tombstones)
-	issueKeys := unionKeys(activeRows, tombstoneRows)
 	plan := Plan{
 		ID:                uuid.NewString(),
 		Direction:         "push",
@@ -269,31 +261,33 @@ func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.Effectiv
 		AggregateStatus:   "ready",
 	}
 	if routes.isReportingOnly() {
-		return s.buildJiraDataReportingPushPlan(ctx, cfg, routeProfile, windowFrom, windowTo, onlyDeleted, plan, routes, activeRows, tombstoneRows, opts)
+		return s.buildJiraDataReportingPushPlan(ctx, cfg, routeProfile, windowFrom, windowTo, onlyDeleted, plan, routes, activeRows, opts)
 	}
 	opts.Reporter.Start(progress.Event{Phase: "fetching", Message: "plan reconcile jira-data-center push"})
 	defer func() {
 		opts.Reporter.Finish(progress.Event{Phase: "finalizing", Message: "plan reconcile jira-data-center push complete"})
 	}()
+	remoteOwnedIssues, failedInstances, err := s.fetchJiraDataRemoteOwnedIssues(ctx, cfg, routes, windowFrom, windowTo, opts.ExcludedRemoteOwnedIssueKeys)
+	if err != nil {
+		return Plan{}, err
+	}
+	issueKeys := unionKeys(activeRows, remoteOwnedIssues)
 	planned := make([]jiraDataPlannedScope, 0, len(issueKeys))
 	items := make([]PlanItem, 0, len(issueKeys))
+	failedScopeInstances := map[string]struct{}{}
 	for _, issueKey := range issueKeys {
 		activePayload := sortRows(activeRows[issueKey])
 		localPayload := activePayload
-		deletePayload := sortRows(tombstoneRows[issueKey])
-		isDeleteOnly := len(localPayload) == 0 && len(deletePayload) > 0
-		if onlyDeleted && !isDeleteOnly {
-			continue
-		}
-		if isDeleteOnly {
-			localPayload = deletePayload
-		}
 		route, ok, err := routes.resolve(issueKey)
 		if err != nil {
 			return Plan{}, err
 		}
 		if !ok {
-			item := newPlanItem(plan, issueKey, localPayload)
+			if opts.SuppressMissingRoutes {
+				continue
+			}
+			item := newPlanItem(plan, issueKey, activePayload)
+			item.RouteProfile = routeProfile
 			applyActiveLocalMetrics(&item, activePayload)
 			item.PlanStatus = "blocked"
 			item.PlannedAction = "none"
@@ -309,13 +303,34 @@ func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.Effectiv
 				return Plan{}, err
 			}
 		}
+		if failure, ok := failedInstances[route.targetInstance]; ok {
+			item := newPlanItem(plan, issueKey, localPayload)
+			item.RouteProfile = routeProfile
+			item.TargetAdapterFamily = "jira-data-center"
+			item.TargetAdapterInstance = route.targetInstance
+			item.TargetIssue = route.targetIssue
+			item.InspectionSummary = InspectionSummary{
+				LocalRowCount:          len(activePayload),
+				LocalTotalSeconds:      sumRows(activePayload),
+				SourceIssueKeys:        []string{issueKey},
+				PerSourceTotals:        map[string]int{issueKey: sumRows(activePayload)},
+				ResolvedTargetInstance: route.targetInstance,
+				ResolvedTargetIssue:    route.targetIssue,
+			}
+			applyActiveLocalMetrics(&item, activePayload)
+			applyJiraDataCheckFailed(&item, failure)
+			item.DeliveryKey = buildDeliveryKey(item)
+			items = append(items, item)
+			failedScopeInstances[route.targetInstance] = struct{}{}
+			continue
+		}
 		if route.reporting {
 			for i := range localPayload {
 				localPayload[i].IssueKey = route.targetIssue
 				localPayload[i].Description = jiradatacenter.ReportingDescription(issueKey, localPayload[i].Description)
 			}
 		}
-		planned = append(planned, jiraDataPlannedScope{issueKey: issueKey, activePayload: activePayload, localPayload: localPayload, isDeleteOnly: isDeleteOnly, route: route})
+		planned = append(planned, jiraDataPlannedScope{issueKey: issueKey, activePayload: activePayload, localPayload: localPayload, route: route})
 	}
 	fetchedScopes, err := s.fetchJiraDataPushScopes(ctx, cfg, planned, windowFrom, windowTo)
 	if err != nil {
@@ -346,26 +361,6 @@ func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.Effectiv
 		switch {
 		case fetched.failure != nil:
 			applyJiraDataCheckFailed(&item, *fetched.failure)
-		case scope.isDeleteOnly && len(fetched.remoteScope) == 0:
-			item.PlanStatus = "skipped"
-			item.PlannedAction = "none"
-			item.ComparisonStatus = "match"
-			item.ReasonCode = "exact_match"
-			item.ReasonDetail = "Jira Data Center scope already matches the local empty state"
-			applyInspectionRowDiffCounts(&item, rowDiffCounts{})
-		case scope.isDeleteOnly && fetched.foreignPresent:
-			item.PlanStatus = "blocked"
-			item.PlannedAction = "none"
-			item.ComparisonStatus = "remote_present"
-			item.ReasonCode = "foreign_authored_rows_present"
-			item.ReasonDetail = "Cleanup scope contains foreign-authored Jira worklogs"
-		case scope.isDeleteOnly:
-			item.PlanStatus = "ready"
-			item.PlannedAction = "delete"
-			item.ComparisonStatus = "remote_present"
-			item.ReasonCode = "remote_present"
-			item.ReasonDetail = "Jira Data Center scope contains rows that should be deleted"
-			applyInspectionRowDiffSummary(&item, nil, fetched.targetRows)
 		case rowsEqual(scope.localPayload, fetched.targetRows):
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
@@ -391,6 +386,23 @@ func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.Effectiv
 		item.DeliveryKey = buildDeliveryKey(item)
 		items = append(items, item)
 	}
+	for instanceName, failure := range failedInstances {
+		if _, ok := failedScopeInstances[instanceName]; ok {
+			continue
+		}
+		item := newPlanItem(plan, instanceName, nil)
+		item.RouteProfile = routeProfile
+		item.TargetAdapterFamily = "jira-data-center"
+		item.TargetAdapterInstance = instanceName
+		item.TargetIssue = instanceName
+		item.InspectionSummary = InspectionSummary{
+			ResolvedTargetInstance: instanceName,
+			ResolvedTargetIssue:    instanceName,
+		}
+		applyJiraDataCheckFailed(&item, failure)
+		item.DeliveryKey = buildDeliveryKey(item)
+		items = append(items, item)
+	}
 
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].TargetIssue != items[j].TargetIssue {
@@ -400,39 +412,42 @@ func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.Effectiv
 	})
 	plan.Items = items
 	plan.AggregateStatus = deriveAggregateStatus(items, nil)
+	normalizePlanSummary(&plan)
 	opts.Reporter.Event(progress.Event{Phase: "finalizing", ScopeDone: len(items), ScopeTotal: len(items), Message: "saved jira-data-center push plan"})
 	return plan, nil
 }
 
-func (s *Service) buildJiraDataReportingPushPlan(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, plan Plan, routes jiraRouteProfile, activeRows map[string][]model.Row, tombstoneRows map[string][]model.Row, opts PlanOptions) (Plan, error) {
+func (s *Service) buildJiraDataReportingPushPlan(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, plan Plan, routes jiraRouteProfile, activeRows map[string][]model.Row, opts PlanOptions) (Plan, error) {
 	opts.Reporter.Start(progress.Event{Phase: "fetching", Message: "plan reconcile jira-data-center push"})
 	defer func() {
 		opts.Reporter.Finish(progress.Event{Phase: "finalizing", Message: "plan reconcile jira-data-center push complete"})
 	}()
-	issueKeys := unionKeys(activeRows, tombstoneRows)
+	issueKeys := sortedKeys(activeRows)
 	items := make([]PlanItem, 0, len(issueKeys))
 	groupOrder := make([]string, 0)
 	groups := map[string]*reportingScopeGroup{}
 
-	for _, issueKey := range issueKeys {
-		activePayload := sortRows(activeRows[issueKey])
-		deletePayload := sortRows(tombstoneRows[issueKey])
-		isDeleteOnly := len(activePayload) == 0 && len(deletePayload) > 0
-		if onlyDeleted && !isDeleteOnly {
+	for _, route := range routes.uniqueReportingTargets() {
+		groupKey := "jira-data-center\x00" + route.targetInstance + "\x00" + route.targetIssue
+		if _, ok := groups[groupKey]; ok {
 			continue
 		}
+		groups[groupKey] = newReportingScopeGroup("jira-data-center", route.targetInstance, route.targetIssue)
+		groupOrder = append(groupOrder, groupKey)
+	}
 
-		localPayload := activePayload
-		if isDeleteOnly {
-			localPayload = deletePayload
-		}
-
+	for _, issueKey := range issueKeys {
+		activePayload := sortRows(activeRows[issueKey])
 		route, ok, err := routes.resolve(issueKey)
 		if err != nil {
 			return Plan{}, err
 		}
 		if !ok {
-			item := newPlanItem(plan, issueKey, localPayload)
+			if opts.SuppressMissingRoutes {
+				continue
+			}
+			item := newPlanItem(plan, issueKey, activePayload)
+			item.RouteProfile = routeProfile
 			applyActiveLocalMetrics(&item, activePayload)
 			item.PlanStatus = "blocked"
 			item.PlannedAction = "none"
@@ -448,13 +463,8 @@ func (s *Service) buildJiraDataReportingPushPlan(ctx context.Context, cfg config
 		}
 
 		groupKey := "jira-data-center\x00" + route.targetInstance + "\x00" + route.targetIssue
-		group, ok := groups[groupKey]
-		if !ok {
-			group = newReportingScopeGroup("jira-data-center", route.targetInstance, route.targetIssue)
-			groups[groupKey] = group
-			groupOrder = append(groupOrder, groupKey)
-		}
-		group.addSource(issueKey, activePayload, deletePayload, jiradatacenter.ReportingDescription)
+		group := groups[groupKey]
+		group.addSource(issueKey, activePayload, jiradatacenter.ReportingDescription)
 	}
 
 	fetchedGroups, err := s.fetchJiraDataReportingGroups(ctx, cfg, groups, windowFrom, windowTo)
@@ -466,23 +476,24 @@ func (s *Service) buildJiraDataReportingPushPlan(ctx context.Context, cfg config
 		group := groups[groupKey]
 		fetched := fetchedGroups[groupKey]
 		desiredRows := sortRows(group.DesiredRows)
-		isDeleteOnly := len(desiredRows) == 0 && group.HasTombstones
+		cleanupRows := normalizeDeletedJiraDataRows(group.TargetIssue, fetched.remoteScope)
 
 		item := newPlanItem(plan, group.TargetIssue, desiredRows)
-		if isDeleteOnly {
-			item.Payload = sortRows(group.TombstoneRows)
-		}
 		item.RouteProfile = routeProfile
 		item.TargetAdapterFamily = group.TargetAdapterFamily
 		item.TargetAdapterInstance = group.TargetAdapterInstance
 		item.TargetIssue = group.TargetIssue
-		item.RemoteRowCount = len(fetched.targetRows)
-		item.RemoteTotal = sumRows(fetched.targetRows)
+		remoteRows := fetched.targetRows
+		if len(desiredRows) == 0 && len(cleanupRows) > 0 {
+			remoteRows = cleanupRows
+		}
+		item.RemoteRowCount = len(remoteRows)
+		item.RemoteTotal = sumRows(remoteRows)
 		item.InspectionSummary = InspectionSummary{
 			LocalRowCount:          len(desiredRows),
 			LocalTotalSeconds:      sumRows(desiredRows),
-			RemoteRowCount:         len(fetched.targetRows),
-			RemoteTotalSeconds:     sumRows(fetched.targetRows),
+			RemoteRowCount:         len(remoteRows),
+			RemoteTotalSeconds:     sumRows(remoteRows),
 			SourceIssueKeys:        group.sortedSourceIssueKeys(),
 			PerSourceTotals:        clonePerSourceTotals(group.PerSourceTotals),
 			ResolvedTargetInstance: group.TargetAdapterInstance,
@@ -493,26 +504,20 @@ func (s *Service) buildJiraDataReportingPushPlan(ctx context.Context, cfg config
 		switch {
 		case fetched.failure != nil:
 			applyJiraDataCheckFailed(&item, *fetched.failure)
-		case isDeleteOnly && len(fetched.remoteScope) == 0:
+		case len(desiredRows) == 0 && len(fetched.remoteScope) == 0:
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
 			item.ComparisonStatus = "match"
 			item.ReasonCode = "exact_match"
 			item.ReasonDetail = "Jira Data Center scope already matches the local empty state"
 			applyInspectionRowDiffCounts(&item, rowDiffCounts{})
-		case isDeleteOnly && fetched.foreignPresent:
-			item.PlanStatus = "blocked"
-			item.PlannedAction = "none"
-			item.ComparisonStatus = "remote_present"
-			item.ReasonCode = "foreign_authored_rows_present"
-			item.ReasonDetail = "Cleanup scope contains foreign-authored Jira worklogs"
-		case isDeleteOnly:
+		case len(desiredRows) == 0:
 			item.PlanStatus = "ready"
 			item.PlannedAction = "delete"
 			item.ComparisonStatus = "remote_present"
 			item.ReasonCode = "remote_present"
 			item.ReasonDetail = "Jira Data Center scope contains rows that should be deleted"
-			applyInspectionRowDiffSummary(&item, nil, fetched.targetRows)
+			applyInspectionRowDiffSummary(&item, nil, remoteRows)
 		case rowsEqual(desiredRows, fetched.targetRows):
 			item.PlanStatus = "skipped"
 			item.PlannedAction = "none"
@@ -548,6 +553,7 @@ func (s *Service) buildJiraDataReportingPushPlan(ctx context.Context, cfg config
 	})
 	plan.Items = items
 	plan.AggregateStatus = deriveAggregateStatus(items, nil)
+	normalizePlanSummary(&plan)
 	opts.Reporter.Event(progress.Event{Phase: "finalizing", ScopeDone: len(items), ScopeTotal: len(items), Message: "saved jira-data-center push plan"})
 	return plan, nil
 }
@@ -556,7 +562,6 @@ type jiraDataPlannedScope struct {
 	issueKey      string
 	activePayload []model.Row
 	localPayload  []model.Row
-	isDeleteOnly  bool
 	route         jiraResolvedRoute
 }
 
@@ -570,6 +575,40 @@ type jiraDataFetchedScope struct {
 type jiraDataFetchFailure struct {
 	reasonCode   string
 	reasonDetail string
+}
+
+func (s *Service) fetchJiraDataRemoteOwnedIssues(ctx context.Context, cfg config.EffectiveConfig, routes jiraRouteProfile, windowFrom, windowTo time.Time, excludedIssueKeys []string) (map[string]bool, map[string]jiraDataFetchFailure, error) {
+	owned := make(map[string]bool)
+	failed := make(map[string]jiraDataFetchFailure)
+	excluded := stringSet(excludedIssueKeys)
+	grouped := routes.groupedTargetInstances()
+	for instanceName := range grouped {
+		instance, err := requireJiraDataInstance(cfg, instanceName)
+		if err != nil {
+			return nil, nil, err
+		}
+		client := s.newJiraDataClient(instance)
+		jql := fmt.Sprintf("worklogAuthor = currentUser() AND worklogDate >= \"%s\" AND worklogDate <= \"%s\"", windowFrom.Format("2006-01-02"), windowTo.Format("2006-01-02"))
+		issues, err := client.SearchIssues(ctx, jql, nil)
+		if err != nil {
+			failed[instanceName] = classifyJiraDataFetchFailure(err)
+			continue
+		}
+		for _, issue := range issues {
+			if _, ok := excluded[issue.Key]; ok {
+				continue
+			}
+			route, ok, err := routes.resolve(issue.Key)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !ok || route.reporting || route.targetInstance != instanceName {
+				continue
+			}
+			owned[issue.Key] = true
+		}
+	}
+	return owned, failed, nil
 }
 
 func classifyJiraDataFetchFailure(err error) jiraDataFetchFailure {
@@ -815,6 +854,79 @@ func resolveJiraDataRouteProfile(cfg config.EffectiveConfig, name string) (jiraR
 	return jiraRouteProfile{routes: routes}, nil
 }
 
+func resolveAutoJiraDataPushRouteProfiles(cfg config.EffectiveConfig) ([]autoRouteProfileSelection, error) {
+	if cfg.File.JiraData == nil || len(cfg.File.JiraData.Instances) == 0 {
+		return nil, ValidationError{Message: "jira_data_center routing is required for push"}
+	}
+
+	selections := make([]autoRouteProfileSelection, 0)
+	prefixOwners := map[string][]string{}
+	hasRouting := false
+
+	instanceNames := sortedJiraDataInstanceNames(cfg.File.JiraData.Instances)
+	for _, instanceName := range instanceNames {
+		instance := cfg.File.JiraData.Instances[instanceName]
+		if instance.Routing == nil {
+			continue
+		}
+		hasRouting = true
+		if _, ok := instance.Routing.Profiles["default"]; ok {
+			selections = append(selections, autoRouteProfileSelection{
+				AdapterFamily: "jira-data-center",
+				Instance:      instanceName,
+				Profile:       "default",
+				Reporting:     false,
+			})
+		}
+		reportingProfiles := make([]string, 0)
+		for profileName, profile := range instance.Routing.Profiles {
+			if profileName == "default" || len(profile.ReportingTargets) == 0 {
+				continue
+			}
+			reportingProfiles = append(reportingProfiles, profileName)
+			for prefix := range profile.ReportingTargets {
+				prefix = strings.TrimSpace(prefix)
+				if prefix == "" {
+					continue
+				}
+				prefixOwners[prefix] = append(prefixOwners[prefix], instanceName+"/"+profileName)
+			}
+		}
+		sort.Strings(reportingProfiles)
+		for _, profileName := range reportingProfiles {
+			selections = append(selections, autoRouteProfileSelection{
+				AdapterFamily: "jira-data-center",
+				Instance:      instanceName,
+				Profile:       profileName,
+				Reporting:     true,
+			})
+		}
+	}
+
+	if !hasRouting {
+		return nil, ValidationError{Message: "jira_data_center routing is required for push"}
+	}
+
+	ambiguous := make([]string, 0)
+	for prefix, owners := range prefixOwners {
+		uniqueOwners := map[string]struct{}{}
+		for _, owner := range owners {
+			uniqueOwners[owner] = struct{}{}
+		}
+		if len(uniqueOwners) <= 1 {
+			continue
+		}
+		ownerList := sortedSetKeys(uniqueOwners)
+		ambiguous = append(ambiguous, fmt.Sprintf("%s (%s)", prefix, strings.Join(ownerList, ", ")))
+	}
+	if len(ambiguous) > 0 {
+		sort.Strings(ambiguous)
+		return nil, ValidationError{Message: "automatic jira-data-center reporting reconcile is ambiguous for prefixes " + strings.Join(ambiguous, "; ") + "; rerun with --route-profile <name>"}
+	}
+
+	return selections, nil
+}
+
 func (p jiraRouteProfile) resolve(issueKey string) (jiraResolvedRoute, bool, error) {
 	matches := make([]jiraResolvedRoute, 0, 1)
 	for _, route := range p.routes {
@@ -851,7 +963,7 @@ func filterJiraWorklogsByUserAndWindow(items []jiradatacenter.Worklog, user jira
 		if startedAt.Before(from.UTC()) || startedAt.After(to.UTC()) {
 			continue
 		}
-		if item.Author.AccountID == user.AccountID || (user.AccountID == "" && (item.Author.Key == user.Key || item.Author.Name == user.Name)) {
+		if jiraWorklogAuthorMatchesUser(item.Author, user) {
 			filtered = append(filtered, item)
 		}
 	}
@@ -868,7 +980,7 @@ func hasForeignJiraWorklogs(items []jiradatacenter.Worklog, user jiradatacenter.
 		if startedAt.Before(from.UTC()) || startedAt.After(to.UTC()) {
 			continue
 		}
-		if !(item.Author.AccountID == user.AccountID || (user.AccountID == "" && (item.Author.Key == user.Key || item.Author.Name == user.Name))) {
+		if !jiraWorklogAuthorMatchesUser(item.Author, user) {
 			return true
 		}
 	}

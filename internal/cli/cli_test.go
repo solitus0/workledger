@@ -5474,7 +5474,7 @@ func TestPlanReconcileRejectsOnlyDeletedWithPull(t *testing.T) {
 	}
 }
 
-func TestAddUpdateDeleteAndTombstoneFlow(t *testing.T) {
+func TestAddUpdateAndPermanentDeleteFlow(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTC(t)
 
@@ -5523,22 +5523,9 @@ func TestAddUpdateDeleteAndTombstoneFlow(t *testing.T) {
 	if len(afterDeleteItems) != 0 {
 		t.Fatalf("expected no active worklogs after delete, got %#v", afterDeletePayload["items"])
 	}
-
-	deleted := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
-	if deleted.code != 0 {
-		t.Fatalf("deleted list failed: code=%d stdout=%s stderr=%s", deleted.code, deleted.stdout, deleted.stderr)
-	}
-	payload := decodeJSONMap(t, []byte(deleted.stdout))
-	deletedItems := payload["items"].([]any)
-	if len(deletedItems) != 1 {
-		t.Fatalf("expected one deleted tombstone, got %#v", payload["items"])
-	}
-	if got := readSingleTombstoneDescription(t); got != "Investigated bug" {
-		t.Fatalf("expected tombstone description to be preserved, got %q", got)
-	}
 }
 
-func TestHardDeleteSkipsTombstone(t *testing.T) {
+func TestWorklogsDeleteRejectsHardFlag(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTC(t)
 
@@ -5554,32 +5541,11 @@ func TestHardDeleteSkipsTombstone(t *testing.T) {
 	id := decodeJSONMap(t, []byte(add.stdout))["id"].(string)
 
 	del := runCLI(t, "worklogs", "delete", id, "--hard", "--output", "json")
-	if del.code != 0 {
-		t.Fatalf("hard delete failed: code=%d stdout=%s stderr=%s", del.code, del.stdout, del.stderr)
+	if del.code != 1 {
+		t.Fatalf("expected unknown-flag failure, got code=%d stdout=%s stderr=%s", del.code, del.stdout, del.stderr)
 	}
-	deletedPayload := decodeJSONMap(t, []byte(del.stdout))
-	if deletedPayload["hard_delete"] != true {
-		t.Fatalf("expected hard_delete=true, got %#v", deletedPayload["hard_delete"])
-	}
-
-	afterDelete := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--fields", "id", "--output", "json")
-	if afterDelete.code != 0 {
-		t.Fatalf("list after hard delete failed: code=%d stdout=%s stderr=%s", afterDelete.code, afterDelete.stdout, afterDelete.stderr)
-	}
-	afterDeletePayload := decodeJSONMap(t, []byte(afterDelete.stdout))
-	afterDeleteItems := afterDeletePayload["items"].([]any)
-	if len(afterDeleteItems) != 0 {
-		t.Fatalf("expected no active worklogs after hard delete, got %#v", afterDeletePayload["items"])
-	}
-
-	deleted := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
-	if deleted.code != 0 {
-		t.Fatalf("deleted list failed: code=%d stdout=%s stderr=%s", deleted.code, deleted.stdout, deleted.stderr)
-	}
-	payload := decodeJSONMap(t, []byte(deleted.stdout))
-	items := payload["items"].([]any)
-	if len(items) != 0 {
-		t.Fatalf("expected no deleted tombstones after hard delete, got %#v", payload["items"])
+	if !strings.Contains(del.stderr, "unknown flag: --hard") {
+		t.Fatalf("expected unknown flag error, got stdout=%s stderr=%s", del.stdout, del.stderr)
 	}
 }
 
@@ -5620,12 +5586,9 @@ func TestOverlapConflictAndBatchDelete(t *testing.T) {
 	if payload["total"].(float64) != 0 {
 		t.Fatalf("expected zero active rows, got %#v", payload["total"])
 	}
-	if got := readSingleTombstoneDescription(t); got != "Investigated bug" {
-		t.Fatalf("expected batch tombstone description to be preserved, got %q", got)
-	}
 }
 
-func TestBatchHardDeleteSkipsTombstones(t *testing.T) {
+func TestWorklogsBatchDeleteRejectsHardFlag(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTC(t)
 
@@ -5640,271 +5603,22 @@ func TestBatchHardDeleteSkipsTombstones(t *testing.T) {
 	}
 
 	dry := runCLI(t, "worklogs", "delete", "--issue", "ABC-123", "--dry", "--hard", "--output", "json")
-	if dry.code != 0 {
-		t.Fatalf("dry batch hard delete failed: code=%d stdout=%s stderr=%s", dry.code, dry.stdout, dry.stderr)
+	if dry.code != 1 {
+		t.Fatalf("expected unknown-flag failure, got code=%d stdout=%s stderr=%s", dry.code, dry.stdout, dry.stderr)
 	}
-	dryPayload := decodeJSONMap(t, []byte(dry.stdout))
-	if dryPayload["hard_delete"] != true {
-		t.Fatalf("expected dry hard_delete=true, got %#v", dryPayload["hard_delete"])
-	}
-
-	exec := runCLI(t, "worklogs", "delete", "--issue", "ABC-123", "--yes", "--hard", "--output", "json")
-	if exec.code != 0 {
-		t.Fatalf("batch hard delete failed: code=%d stdout=%s stderr=%s", exec.code, exec.stdout, exec.stderr)
-	}
-	execPayload := decodeJSONMap(t, []byte(exec.stdout))
-	if execPayload["hard_delete"] != true {
-		t.Fatalf("expected exec hard_delete=true, got %#v", execPayload["hard_delete"])
-	}
-
-	deleted := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
-	if deleted.code != 0 {
-		t.Fatalf("deleted list failed: code=%d stdout=%s stderr=%s", deleted.code, deleted.stdout, deleted.stderr)
-	}
-	payload := decodeJSONMap(t, []byte(deleted.stdout))
-	items := payload["items"].([]any)
-	if len(items) != 0 {
-		t.Fatalf("expected no tombstones after batch hard delete, got %#v", payload["items"])
+	if !strings.Contains(dry.stderr, "unknown flag: --hard") {
+		t.Fatalf("expected unknown flag error, got stdout=%s stderr=%s", dry.stdout, dry.stderr)
 	}
 }
 
-func TestWorklogsRestoreDryRunAndExecute(t *testing.T) {
+func TestTombstonesCommandIsUnknown(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	writeConfigWithUTC(t)
-
-	result := runCLI(t, "init", "--output", "json")
-	if result.code != 0 {
-		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	result := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
+	if result.code != 1 {
+		t.Fatalf("expected unknown-command failure, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
-
-	add := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:00:00Z", "--duration", "1h", "--description", "Restorable item", "--output", "json")
-	if add.code != 0 {
-		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
-	}
-	id := decodeJSONMap(t, []byte(add.stdout))["id"].(string)
-
-	del := runCLI(t, "worklogs", "delete", id, "--output", "json")
-	if del.code != 0 {
-		t.Fatalf("delete failed: code=%d stdout=%s stderr=%s", del.code, del.stdout, del.stderr)
-	}
-
-	dry := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--output", "json")
-	if dry.code != 0 {
-		t.Fatalf("restore dry-run failed: code=%d stdout=%s stderr=%s", dry.code, dry.stdout, dry.stderr)
-	}
-	dryPayload := decodeJSONMap(t, []byte(dry.stdout))
-	if dryPayload["dry_run"] != true {
-		t.Fatalf("expected dry_run=true, got %#v", dryPayload["dry_run"])
-	}
-	if dryPayload["matched"].(float64) != 1 {
-		t.Fatalf("expected matched=1, got %#v", dryPayload["matched"])
-	}
-	dryItems := dryPayload["items"].([]any)
-	preview := dryItems[0].(map[string]any)
-	if preview["restore_preview"] != true {
-		t.Fatalf("expected restore_preview=true, got %#v", preview["restore_preview"])
-	}
-	if preview["description"].(string) != "Restorable item" {
-		t.Fatalf("expected preserved description, got %#v", preview["description"])
-	}
-
-	before := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
-	if decodeJSONMap(t, []byte(before.stdout))["total"].(float64) != 0 {
-		t.Fatalf("restore dry-run should not recreate active rows")
-	}
-
-	exec := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
-	if exec.code != 0 {
-		t.Fatalf("restore execute failed: code=%d stdout=%s stderr=%s", exec.code, exec.stdout, exec.stderr)
-	}
-	execPayload := decodeJSONMap(t, []byte(exec.stdout))
-	if execPayload["dry_run"] != false {
-		t.Fatalf("expected dry_run=false, got %#v", execPayload["dry_run"])
-	}
-	if execPayload["restored"].(float64) != 1 {
-		t.Fatalf("expected restored=1, got %#v", execPayload["restored"])
-	}
-	if execPayload["items"].([]any)[0].(map[string]any)["id"].(string) != id {
-		t.Fatalf("expected restored id %s, got %#v", id, execPayload["items"])
-	}
-
-	active := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
-	activePayload := decodeJSONMap(t, []byte(active.stdout))
-	if activePayload["total"].(float64) != 1 {
-		t.Fatalf("expected one restored active row, got %s", active.stdout)
-	}
-	record := activePayload["items"].([]any)[0].(map[string]any)
-	if record["id"].(string) != id || record["description"].(string) != "Restorable item" {
-		t.Fatalf("expected original record values restored, got %#v", record)
-	}
-
-	deleted := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
-	if decodeJSONMap(t, []byte(deleted.stdout))["total"].(float64) != 0 {
-		t.Fatalf("expected restore to consume tombstone, got %s", deleted.stdout)
-	}
-}
-
-func TestWorklogsRestoreDryRunWithIssueAndZeroMatch(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	writeConfigWithUTC(t)
-
-	result := runCLI(t, "init", "--output", "json")
-	if result.code != 0 {
-		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
-	}
-
-	add := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:00:00Z", "--duration", "1h", "--description", "Restorable item", "--output", "json")
-	id := decodeJSONMap(t, []byte(add.stdout))["id"].(string)
-	del := runCLI(t, "worklogs", "delete", id, "--output", "json")
-	if del.code != 0 {
-		t.Fatalf("delete failed: code=%d stdout=%s stderr=%s", del.code, del.stdout, del.stderr)
-	}
-
-	dry := runCLI(t, "tombstones", "restore", "--issue", "ABC-123", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--output", "json")
-	if dry.code != 0 {
-		t.Fatalf("restore dry-run with issue failed: code=%d stdout=%s stderr=%s", dry.code, dry.stdout, dry.stderr)
-	}
-	if decodeJSONMap(t, []byte(dry.stdout))["matched"].(float64) != 1 {
-		t.Fatalf("expected one issue-filtered match, got %s", dry.stdout)
-	}
-
-	zero := runCLI(t, "tombstones", "restore", "--issue", "ABC-999", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
-	if zero.code != 0 {
-		t.Fatalf("zero-match restore failed: code=%d stdout=%s stderr=%s", zero.code, zero.stdout, zero.stderr)
-	}
-	zeroPayload := decodeJSONMap(t, []byte(zero.stdout))
-	if zeroPayload["restored"].(float64) != 0 {
-		t.Fatalf("expected restored=0, got %#v", zeroPayload["restored"])
-	}
-}
-
-func TestWorklogsRestoreRejectsConflictsUnlessForced(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	writeConfigWithUTC(t)
-
-	result := runCLI(t, "init", "--output", "json")
-	if result.code != 0 {
-		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
-	}
-
-	first := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:00:00Z", "--duration", "1h", "--description", "To delete", "--output", "json")
-	if first.code != 0 {
-		t.Fatalf("first add failed: code=%d stdout=%s stderr=%s", first.code, first.stdout, first.stderr)
-	}
-	firstID := decodeJSONMap(t, []byte(first.stdout))["id"].(string)
-
-	del := runCLI(t, "worklogs", "delete", firstID, "--output", "json")
-	if del.code != 0 {
-		t.Fatalf("delete failed: code=%d stdout=%s stderr=%s", del.code, del.stdout, del.stderr)
-	}
-
-	second := runCLI(t, "worklogs", "add", "--issue", "ABC-124", "--started-utc", "2026-05-03T06:30:00Z", "--duration", "1h", "--description", "Conflicting active", "--output", "json")
-	if second.code != 0 {
-		t.Fatalf("second add failed: code=%d stdout=%s stderr=%s", second.code, second.stdout, second.stderr)
-	}
-
-	conflict := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
-	if conflict.code != 2 {
-		t.Fatalf("expected restore conflict exit 2, got %d stdout=%s stderr=%s", conflict.code, conflict.stdout, conflict.stderr)
-	}
-
-	active := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
-	activePayload := decodeJSONMap(t, []byte(active.stdout))
-	if activePayload["total"].(float64) != 1 {
-		t.Fatalf("conflicting restore should be atomic, got %s", active.stdout)
-	}
-	if activePayload["items"].([]any)[0].(map[string]any)["id"].(string) == firstID {
-		t.Fatalf("conflicting restore should not recreate deleted row, got %s", active.stdout)
-	}
-	deleted := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
-	if decodeJSONMap(t, []byte(deleted.stdout))["total"].(float64) != 1 {
-		t.Fatalf("conflicting restore should keep tombstone, got %s", deleted.stdout)
-	}
-
-	forced := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--force", "--output", "json")
-	if forced.code != 0 {
-		t.Fatalf("forced restore failed: code=%d stdout=%s stderr=%s", forced.code, forced.stdout, forced.stderr)
-	}
-	forcedActive := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
-	if decodeJSONMap(t, []byte(forcedActive.stdout))["total"].(float64) != 2 {
-		t.Fatalf("forced restore should recreate deleted row, got %s", forcedActive.stdout)
-	}
-}
-
-func TestWorklogsRestoreRejectsConflictsWithinRestoreSetUnlessForced(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	writeConfigWithUTC(t)
-
-	result := runCLI(t, "init", "--output", "json")
-	if result.code != 0 {
-		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
-	}
-
-	first := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:00:00Z", "--duration", "1h", "--description", "First", "--output", "json")
-	if first.code != 0 {
-		t.Fatalf("first add failed: code=%d stdout=%s stderr=%s", first.code, first.stdout, first.stderr)
-	}
-	second := runCLI(t, "worklogs", "add", "--issue", "ABC-124", "--started-utc", "2026-05-03T06:30:00Z", "--duration", "1h", "--description", "Second", "--force", "--output", "json")
-	if second.code != 0 {
-		t.Fatalf("second add failed: code=%d stdout=%s stderr=%s", second.code, second.stdout, second.stderr)
-	}
-
-	for _, id := range []string{
-		decodeJSONMap(t, []byte(first.stdout))["id"].(string),
-		decodeJSONMap(t, []byte(second.stdout))["id"].(string),
-	} {
-		deleted := runCLI(t, "worklogs", "delete", id, "--output", "json")
-		if deleted.code != 0 {
-			t.Fatalf("delete failed: code=%d stdout=%s stderr=%s", deleted.code, deleted.stdout, deleted.stderr)
-		}
-	}
-
-	conflict := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
-	if conflict.code != 2 {
-		t.Fatalf("expected restore-set conflict exit 2, got %d stdout=%s stderr=%s", conflict.code, conflict.stdout, conflict.stderr)
-	}
-
-	active := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
-	if decodeJSONMap(t, []byte(active.stdout))["total"].(float64) != 0 {
-		t.Fatalf("restore-set conflict should be atomic, got %s", active.stdout)
-	}
-
-	forced := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--force", "--output", "json")
-	if forced.code != 0 {
-		t.Fatalf("forced restore-set execution failed: code=%d stdout=%s stderr=%s", forced.code, forced.stdout, forced.stderr)
-	}
-	if decodeJSONMap(t, []byte(forced.stdout))["restored"].(float64) != 2 {
-		t.Fatalf("expected restored=2, got %s", forced.stdout)
-	}
-}
-
-func TestWorklogsRestoreValidationErrors(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	writeConfigWithUTC(t)
-
-	result := runCLI(t, "init", "--output", "json")
-	if result.code != 0 {
-		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
-	}
-
-	noSelector := runCLI(t, "tombstones", "restore", "--yes", "--output", "json")
-	if noSelector.code != 2 {
-		t.Fatalf("expected no-selector validation error, got %d stdout=%s stderr=%s", noSelector.code, noSelector.stdout, noSelector.stderr)
-	}
-
-	both := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--yes", "--output", "json")
-	if both.code != 2 {
-		t.Fatalf("expected dry/yes validation error, got %d stdout=%s stderr=%s", both.code, both.stdout, both.stderr)
-	}
-
-	issue := runCLI(t, "tombstones", "restore", "--issue", "bad", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--output", "json")
-	if issue.code != 2 {
-		t.Fatalf("expected issue validation error, got %d stdout=%s stderr=%s", issue.code, issue.stdout, issue.stderr)
-	}
-
-	onlyDeleted := runCLI(t, "tombstones", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--only-deleted", "--output", "json")
-	if onlyDeleted.code != 1 {
-		t.Fatalf("expected unknown-flag failure for --only-deleted, got %d stdout=%s stderr=%s", onlyDeleted.code, onlyDeleted.stdout, onlyDeleted.stderr)
+	if !strings.Contains(result.stderr, "unknown command \"tombstones\"") {
+		t.Fatalf("expected unknown tombstones command error, got stdout=%s stderr=%s", result.stdout, result.stderr)
 	}
 }
 
@@ -6312,7 +6026,7 @@ func TestWorklogsSearchWithoutDateSelectorFindsAcrossDays(t *testing.T) {
 	}
 }
 
-func TestWorklogsSearchValidationZeroMatchLiteralAndDeletedMode(t *testing.T) {
+func TestWorklogsSearchValidationZeroMatchAndLiteralAfterDelete(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTC(t)
 
@@ -6360,25 +6074,6 @@ func TestWorklogsSearchValidationZeroMatchLiteralAndDeletedMode(t *testing.T) {
 	if decodeJSONMap(t, []byte(activeAfterDelete.stdout))["total"].(float64) != 0 {
 		t.Fatalf("expected no active matches after delete, got %s", activeAfterDelete.stdout)
 	}
-
-	deleted := runCLI(t, "tombstones", "search", "%_done", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
-	if deleted.code != 0 {
-		t.Fatalf("deleted search failed: code=%d stdout=%s stderr=%s", deleted.code, deleted.stdout, deleted.stderr)
-	}
-	deletedPayload := decodeJSONMap(t, []byte(deleted.stdout))
-	if deletedPayload["total"].(float64) != 1 {
-		t.Fatalf("expected one tombstone match, got %s", deleted.stdout)
-	}
-	deletedFilters := deletedPayload["filters"].(map[string]any)
-	if deletedFilters["raw"].(map[string]any)["query"].(string) != "%_done" {
-		t.Fatalf("expected raw literal query, got %#v", deletedFilters)
-	}
-	record := deletedPayload["items"].([]any)[0].(map[string]any)
-	for _, key := range []string{"id", "issue_key", "started_at", "started_at_utc", "duration_seconds", "description", "deleted_at"} {
-		if _, ok := record[key]; !ok {
-			t.Fatalf("expected tombstone item to have %q, got %#v", key, record)
-		}
-	}
 }
 
 func TestWorklogsListTableFooterIgnoresSelectedFields(t *testing.T) {
@@ -6407,35 +6102,6 @@ func TestWorklogsListTableFooterIgnoresSelectedFields(t *testing.T) {
 	}
 	if !strings.Contains(list.stdout, "Totals: 1 worklogs, 1h") {
 		t.Fatalf("expected totals footer independent of fields, stdout=%q", list.stdout)
-	}
-}
-
-func TestWorklogsListDeletedTableFooterIncludesCountAndHumanDuration(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	writeConfigWithUTC(t)
-
-	result := runCLI(t, "init", "--output", "json")
-	if result.code != 0 {
-		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
-	}
-
-	add := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started", "2026-05-03T09:00", "--duration", "45m", "--description", "Deleted item", "--output", "json")
-	if add.code != 0 {
-		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
-	}
-	id := decodeJSONMap(t, []byte(add.stdout))["id"].(string)
-
-	del := runCLI(t, "worklogs", "delete", id, "--output", "json")
-	if del.code != 0 {
-		t.Fatalf("delete failed: code=%d stdout=%s stderr=%s", del.code, del.stdout, del.stderr)
-	}
-
-	list := runCLI(t, "tombstones", "list", "--from", "2026-05-03", "--to", "2026-05-03")
-	if list.code != 0 {
-		t.Fatalf("deleted list failed: code=%d stdout=%s stderr=%s", list.code, list.stdout, list.stderr)
-	}
-	if !strings.Contains(list.stdout, "Totals: 1 tombstones, 45m") {
-		t.Fatalf("expected deleted totals footer, stdout=%q", list.stdout)
 	}
 }
 
@@ -7627,19 +7293,6 @@ func assertIssueMetadataTableExists(t *testing.T) {
 	if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='issue_metadata'`).Scan(&name); err != nil {
 		t.Fatalf("issue_metadata table missing: %v", err)
 	}
-}
-
-func readSingleTombstoneDescription(t *testing.T) string {
-	t.Helper()
-
-	db := openTestDB(t)
-	defer db.Close()
-
-	var description string
-	if err := db.QueryRow(`SELECT description FROM worklog_tombstones LIMIT 1`).Scan(&description); err != nil {
-		t.Fatalf("read tombstone description: %v", err)
-	}
-	return description
 }
 
 func seedIssueMetadata(t *testing.T, issueKey string, maxEstimateSeconds *int64) {

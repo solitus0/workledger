@@ -14,17 +14,14 @@ Placement rule:
 - [ ] NFR-001: YAML shall be the source of truth for operator-managed configuration.
 - [ ] NFR-002: SQLite shall be the source of truth for canonical local worklogs.
 - [ ] NFR-003: SQLite shall persist active local worklogs.
-- [ ] NFR-004: SQLite shall persist tombstones for deleted local worklogs.
+- [ ] NFR-004: SQLite shall not persist a separate deleted-worklog marker model.
 - [ ] NFR-005: Saved plans, delivery attempts, audit events, issue metadata, and adapter runtime state shall be stored only in the additive storage model.
 - [ ] NFR-006: Persisted table and column names shall use `snake_case`.
 - [ ] NFR-007: The local `worklogs` table shall include `id`, `issue_key`, `started_at_utc`, `duration_seconds`, `description`, `created_at`, and `updated_at`.
-- [ ] NFR-008: The local `worklog_tombstones` table shall include `worklog_id`, `issue_key`, `started_at_utc`, `duration_seconds`, `description`, and `deleted_at`.
+- [ ] NFR-008: Bootstrap or schema repair shall drop any legacy deleted-worklog marker table when it exists.
 - [ ] NFR-009: The SQLite schema shall define a unique index on `worklogs(id)`.
 - [ ] NFR-010: The SQLite schema shall define an index on `worklogs(issue_key, started_at_utc)`.
 - [ ] NFR-011: The SQLite schema shall define an index on `worklogs(started_at_utc)`.
-- [ ] NFR-012: The SQLite schema shall define a unique index on `worklog_tombstones(worklog_id)`.
-- [ ] NFR-013: The SQLite schema shall define an index on `worklog_tombstones(issue_key, started_at_utc)`.
-- [ ] NFR-014: The SQLite schema shall define an index on `worklog_tombstones(deleted_at)`.
 - [ ] NFR-014a: SQLite shall persist trashed worklogs in a `trashed_worklogs` table.
 - [ ] NFR-014b: The `trashed_worklogs` table shall use a dedicated archive `id` as its CLI identity.
 - [ ] NFR-014c: The `trashed_worklogs` table shall retain `storage_scope`, nullable `source_worklog_id`, canonical worklog fields, `trashed_at`, reason fields, `plan_direction`, nullable plan lineage, and nullable adapter lineage.
@@ -59,7 +56,7 @@ Placement rule:
 - [ ] NFR-040: The CLI shall not expose SQLite row IDs.
 - [ ] NFR-041: The CLI shall not depend on SQLite row IDs.
 - [ ] NFR-042: `worklogs.id` shall be the canonical local worklog identity for active rows.
-- [ ] NFR-043: `worklog_tombstones.worklog_id` shall preserve the deleted local worklog identity.
+- [ ] NFR-043: Local deletion shall not introduce a second persisted identity for removed worklogs.
 - [ ] NFR-044: Remote worklog identifiers shall not be persisted as canonical local identity.
 - [ ] NFR-045: Remote worklog identifiers observed during adapter reads shall be transient execution handles only.
 - [ ] NFR-046: Remote segmentation shall not define local worklog identity when the same issue/window allocation is observed again.
@@ -215,7 +212,6 @@ Placement rule:
 - [ ] NFR-175: A payload row shall not include both `started_at` and `started_at_utc`.
 - [ ] NFR-176: `--fields` shall fail validation on duplicate field names.
 - [ ] NFR-177: `--fields` shall allow `id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description` for active worklogs.
-- [ ] NFR-178: `--fields` shall allow `id`, `issue_key`, and `deleted_at` for deleted tombstones.
 - [ ] NFR-179: `--fields` shall fail validation when a requested field is invalid for the selected record class.
 - [ ] NFR-180: `worklogs context --day-start` shall be earlier than `--day-end`.
 - [ ] NFR-181: `worklogs context --lunch` and `--no-lunch` shall be mutually exclusive.
@@ -227,8 +223,8 @@ Placement rule:
 ## Conflict Validation
 - [ ] NFR-184: Duplicate detection shall evaluate active local worklogs before insert.
 - [ ] NFR-185: Overlap detection shall evaluate active local worklogs before insert.
-- [ ] NFR-186: Duplicate detection shall ignore tombstones.
-- [ ] NFR-187: Overlap detection shall ignore tombstones.
+- [ ] NFR-186: Duplicate detection shall evaluate active local worklogs only.
+- [ ] NFR-187: Overlap detection shall evaluate active local worklogs only.
 - [ ] NFR-188: Overlap detection shall apply across all active local worklogs.
 - [ ] NFR-189: Overlap detection shall not be limited to rows with the same issue key.
 - [ ] NFR-190: Two worklogs shall overlap when their canonical UTC time intervals intersect.
@@ -245,31 +241,16 @@ Placement rule:
 - [ ] NFR-201: `worklogs shift` overlap validation shall evaluate selected and non-selected active worklogs using final shifted timestamps.
 - [ ] NFR-202: `worklogs apply` duplicate and overlap validation shall evaluate the final resulting active worklog set.
 - [ ] NFR-203: `worklogs apply` duplicate and overlap validation shall include conflicts introduced between add operations inside the same payload.
-- [ ] NFR-204: `worklogs restore` shall validate the full restore set against active rows unless `--force` is set.
-- [ ] NFR-205: `worklogs restore` shall validate conflicts inside the restore set unless `--force` is set.
-- [ ] NFR-206: Duplicate and overlap enforcement shall apply to `add`, `update`, `apply`, and `restore` only.
+- [ ] NFR-204: Duplicate and overlap enforcement shall apply to `add`, `update`, `apply`, and `shift` only.
+- [ ] NFR-205: Delete paths shall not bypass duplicate or overlap validation because they remove active rows instead of creating them.
+- [ ] NFR-206: Duplicate and overlap enforcement shall not introduce a restore-only validation path.
 - [ ] NFR-207: Duplicate and overlap enforcement shall not apply to `delete`.
 
-## Tombstones
-- [ ] NFR-208: Default delete shall remove a worklog from the active `worklogs` set and write a tombstone record.
-- [ ] NFR-209: Hard delete shall remove a worklog from the active `worklogs` set without writing a tombstone record.
-- [ ] NFR-210: A tombstone shall retain original local `worklog_id`.
-- [ ] NFR-211: A tombstone shall retain original `issue_key`.
-- [ ] NFR-212: A tombstone shall retain original `started_at_utc`.
-- [ ] NFR-213: A tombstone shall retain original `duration_seconds`.
-- [ ] NFR-214: A tombstone shall retain original `description`.
-- [ ] NFR-215: A tombstone shall retain deletion timestamp.
-- [ ] NFR-216: Tombstones shall retain enough data for `tombstones list`.
-- [ ] NFR-217: Tombstones shall retain enough data for delete-only reconcile scopes.
-- [ ] NFR-218: Tombstones shall retain enough data for pull protection for the same issue and reconcile-window allocation.
-- [ ] NFR-219: Tombstones shall not require a resolved target adapter family at delete time.
-- [ ] NFR-220: Tombstones shall not require a resolved target adapter instance at delete time.
-- [ ] NFR-221: Tombstones shall not persist a resolved target adapter family at delete time.
-- [ ] NFR-222: Tombstones shall not persist a resolved target adapter instance at delete time.
-- [ ] NFR-223: Tombstones shall not retain remote worklog identifiers as part of local identity.
-- [ ] NFR-224: Hard deletes shall produce no tombstone row.
-- [ ] NFR-225: Hard deletes shall produce no durable local delete intent.
-- [ ] NFR-226: A later pull for the same issue and reconcile-window allocation shall not recreate a deleted canonical row automatically.
+## Delete Semantics
+- [ ] NFR-208: Default delete shall remove a worklog from the active `worklogs` set without persisting delete intent.
+- [ ] NFR-209: Local delete shall not provide a built-in restore or undo model.
+- [ ] NFR-210: `worklogs update <id> --issue <new-key>` shall not persist delete intent for the previous issue allocation.
+- [ ] NFR-211: A later pull may re-import a remotely existing row that was previously deleted locally.
 
 ## Output Contracts
 - [ ] NFR-227: User-facing command output shall go to stdout.
@@ -280,7 +261,7 @@ Placement rule:
 - [ ] NFR-232: Unless a command-specific contract says otherwise, a JSON success payload shall be one object with exactly documented keys.
 - [ ] NFR-233: All timestamps in JSON shall use RFC3339.
 - [ ] NFR-234: The default active-worklog JSON record shape shall include `id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description`.
-- [ ] NFR-235: The tombstone JSON record shape (used by `tombstones list`, `tombstones search`, and `tombstones delete`) shall include `id`, `issue_key`, and `deleted_at`.
+- [ ] NFR-235: No deleted-only JSON record shape shall exist.
 - [ ] NFR-235a: The trash JSON record shape shall include `id`, `storage_scope`, `source_worklog_id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, `description`, `trashed_at`, `reason_code`, `reason_detail`, and `origin`.
 - [ ] NFR-235b: Trash JSON `origin` shall include `plan_direction`, `plan_id`, `plan_item_id`, `adapter_family`, and `adapter_instance`.
 - [ ] NFR-236: `workledger version --output json` shall return an object with `version`.
@@ -305,13 +286,13 @@ Placement rule:
 - [ ] NFR-250c: `worklogs add --snap --output json --dry` shall return `dry_run`, `records`, and optional `warnings`.
 - [ ] NFR-250d: `worklogs add --snap --output json` executed success shall return `records` and optional `warnings`.
 - [ ] NFR-251: `worklogs list` active table columns shall be `ID`, `ISSUE`, `WINDOW`, `DURATION`, and `DESCRIPTION`.
-- [ ] NFR-252: `tombstones list` table columns shall be `ID`, `ISSUE`, and `DELETED`.
+- [ ] NFR-252: No deleted-only table view shall exist.
 - [ ] NFR-252a: `trash list` and `trash search` table columns shall be `ID`, `SCOPE`, `ISSUE`, `WINDOW`, `DURATION`, `DESCRIPTION`, `REASON`, and `TRASHED`.
 - [ ] NFR-253: Empty table results shall render selected table headers with zero data rows.
 - [ ] NFR-254: Human-facing table output shall render aligned columns rather than raw tab-delimited cells.
 - [ ] NFR-255: Human-facing list and search output shall append a blank line and a totals footer.
 - [ ] NFR-256: Active list and search footers shall use `Totals: <N> worklogs, <duration>`.
-- [ ] NFR-257: `tombstones list` and `tombstones search` footers shall use `Totals: <N> tombstones, <duration>`.
+- [ ] NFR-257: No deleted-only list or search footer shall exist.
 - [ ] NFR-257a: `trash list` and `trash search` footers shall use `Totals: <N> trashed worklogs, <duration>`.
 - [ ] NFR-258: The totals footer shall be derived from the full matched result set.
 - [ ] NFR-259: The totals footer shall be unaffected by `--fields`.
@@ -325,11 +306,9 @@ Placement rule:
 - [ ] NFR-267: `worklogs apply --output json` shall return `dry_run`, `summary`, and `items`.
 - [ ] NFR-268: `worklogs apply --output json` `summary.add_count` shall equal the number of add operations in the effective payload.
 - [ ] NFR-269: `worklogs apply --output json` each `items[*].index` shall identify the zero-based payload row.
-- [ ] NFR-270: Single-delete JSON output shall use `id`, `issue_key`, `deleted_at`, and `hard_delete`.
-- [ ] NFR-271: Filtered batch delete dry-run JSON output shall use `filters`, `dry_run`, `hard_delete`, `matched`, and `items`.
-- [ ] NFR-272: Executed filtered batch delete JSON output shall use `filters`, `dry_run`, `hard_delete`, `deleted`, and `items`.
-- [ ] NFR-273: Restore dry-run JSON output shall use `filters`, `dry_run`, `matched`, and `items`.
-- [ ] NFR-274: Restore executed JSON output shall use `filters`, `dry_run`, `restored`, and `items`.
+- [ ] NFR-270: Single-delete JSON output shall use `id`, `issue_key`, and `deleted_at`.
+- [ ] NFR-271: Filtered batch delete dry-run JSON output shall use `filters`, `dry_run`, `matched`, and `items`.
+- [ ] NFR-272: Executed filtered batch delete JSON output shall use `filters`, `dry_run`, `deleted`, and `items`.
 - [ ] NFR-275: `workledger status --output json` shall use `{"items":[...]}` for bare and filtered status.
 - [ ] NFR-276: Each status `items[]` entry shall include `adapter`, `instance`, `status`, `base_url`, `workspace_id`, `user_id`, and `user`.
 - [ ] NFR-276a: Clockify status rows shall report the implicit runtime instance name `clockify` in `instance`.
@@ -375,13 +354,12 @@ Placement rule:
 - [ ] NFR-309: SQLite worklog mutations shall use explicit SQLite write transactions.
 - [ ] NFR-310: `worklogs add` atomic scope shall insert one active worklog for explicit `--started` or `--started-utc` placement and one-or-more active worklogs for a snapped add.
 - [ ] NFR-311: `worklogs update` atomic scope shall validate and update one active worklog.
-- [ ] NFR-312: `worklogs delete <id>` atomic scope shall remove one active worklog and insert one tombstone unless `--hard` is set.
-- [ ] NFR-313: Filtered batch delete atomic scope shall remove all matched active worklogs and insert one tombstone per deleted row unless `--hard` is set.
-- [ ] NFR-314: `worklogs restore` atomic scope shall insert original active rows from matched tombstones and delete those tombstones.
+- [ ] NFR-312: `worklogs delete <id>` atomic scope shall remove one active worklog.
+- [ ] NFR-313: Filtered batch delete atomic scope shall remove all matched active worklogs.
 - [ ] NFR-315: `worklogs apply` shall validate the entire payload before any write.
 - [ ] NFR-316: `worklogs apply` shall execute all writes atomically when validation succeeds and `--dry` is not set.
 - [ ] NFR-317: `worklogs shift` shall validate the full resulting active-worklog set atomically before writing.
-- [ ] NFR-318: `worklogs restore` shall delete matching tombstones in the same transaction as active-row insertion.
+- [ ] NFR-318: Delete paths shall not add secondary persistence work beyond removing active rows.
 - [ ] NFR-319: Validation failures shall not produce partial writes.
 - [ ] NFR-320: Per-item plan apply or retry execution shall use explicit transaction boundaries for SQLite writes.
 - [ ] NFR-320a: Pull-apply trash inserts, removed active-row deletes, and new active-row inserts shall commit in one SQLite transaction per saved pull scope.
@@ -395,7 +373,7 @@ Placement rule:
 - [ ] NFR-323: `worklogs search` sorting shall be fixed by `started_at desc`, then stable local `id`.
 - [ ] NFR-324: `worklogs list` shall not expose sort-selection flags.
 - [ ] NFR-325: `worklogs search` shall not expose sort-selection flags.
-- [ ] NFR-326: Deleted-only ordering shall use `started_at asc`, then stable local `id`.
+- [ ] NFR-326: No deleted-only ordering contract shall exist for local worklogs.
 - [ ] NFR-327: `worklogs context` free-slot order shall be ascending by local start time.
 - [ ] NFR-328: `planning.slot_order` shall indicate free slots are ordered by ascending local day and ascending slot start.
 - [ ] NFR-329: `worklogs shift` shall preserve relative spacing between selected worklogs.
@@ -447,7 +425,7 @@ Placement rule:
 - [ ] NFR-368: `cmd/workledger` shall be used for process startup and dependency wiring only.
 - [ ] NFR-369: `internal/cli` shall own flag parsing helpers, rendering, confirmation, and exit code mapping.
 - [ ] NFR-370: `internal/config` shall own YAML loading, path resolution, normalization, and validation.
-- [ ] NFR-371: `internal/worklogs` shall own local CRUD rules, duplicate and overlap checks, tombstones, and selectors.
+- [ ] NFR-371: `internal/worklogs` shall own local CRUD rules, duplicate and overlap checks, and selectors.
 - [ ] NFR-372: `internal/issues` shall own local issue-metadata refresh, joins, and issue-scoped advisory rules.
 - [ ] NFR-373: `internal/plans` shall own saved-plan creation, scope grouping, classification, review loading, apply, and retry orchestration.
 - [ ] NFR-374: `internal/adapter` shall own shared adapter capability contracts and family-specific planning or apply helpers.
@@ -597,7 +575,7 @@ Placement rule:
 
 ## Totals Comparison
 - [ ] NFR-504: Totals shall read local totals from active canonical SQLite worklogs only.
-- [ ] NFR-505: Totals shall exclude deleted tombstones from local totals.
+- [ ] NFR-505: Totals shall exclude trashed archive rows from local totals.
 - [ ] NFR-506: Bare totals shall inspect only configured adapter families and every configured instance owned by each family.
 - [ ] NFR-507: Bare totals shall contribute at most one Clockify row.
 - [ ] NFR-507a: The single Clockify bare totals row shall use instance name `clockify`.

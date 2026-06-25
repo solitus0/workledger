@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -277,7 +276,6 @@ func (a *app) newRootCommand() *cobra.Command {
 	root.AddCommand(a.newConfigCommand())
 	root.AddCommand(a.newSetupCommand())
 	root.AddCommand(a.newWorklogsCommand())
-	root.AddCommand(a.newTombstonesCommand())
 	root.AddCommand(a.newTrashCommand())
 	root.AddCommand(a.newTotalsCommand())
 	root.AddCommand(a.newStatusCommand())
@@ -551,13 +549,13 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 				WeekOffsetSet: weekOffsetSet,
 				Fields:        fieldList,
 			}
-			active, _, effectiveFilters, err := service.List(effective, raw)
+			active, effectiveFilters, err := service.List(effective, raw)
 			if err != nil {
 				return a.handleWorklogError(mode, effective, err)
 			}
 
 			if mode == "json" {
-				return a.renderListJSON(effective, raw, effectiveFilters, active, nil)
+				return a.renderListJSON(effective, raw, effectiveFilters, active)
 			}
 
 			columns := []string{"id", "issue_key", "started_at", "duration_seconds", "description"}
@@ -653,7 +651,7 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 				WeekOffsetSet: weekOffsetSet,
 				Fields:        fieldList,
 			}
-			active, _, effectiveFilters, normalizedQuery, err := service.Search(effective, worklogs.SearchInput{
+			active, effectiveFilters, normalizedQuery, err := service.Search(effective, worklogs.SearchInput{
 				Query:       args[0],
 				ListFilters: rawFilters,
 			})
@@ -662,7 +660,7 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 			}
 
 			if mode == "json" {
-				return a.renderSearchJSON(effective, args[0], rawFilters, effectiveFilters, normalizedQuery, active, nil)
+				return a.renderSearchJSON(effective, args[0], rawFilters, effectiveFilters, normalizedQuery, active)
 			}
 
 			columns := []string{"id", "issue_key", "started_at", "duration_seconds", "description"}
@@ -1229,7 +1227,6 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	var weekOffset int
 	var dry bool
 	var yes bool
-	var hardDelete bool
 
 	cmd := &cobra.Command{
 		Use:     "delete [id]",
@@ -1249,19 +1246,18 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 				if dry || yes || issue != "" || issuePrefix != "" || today || yesterday || monday || tuesday || wednesday || thursday || friday || saturday || sunday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != "" || weekOffsetSet {
 					return a.fail(mode, 2, "validation_error", "single delete cannot be combined with batch delete flags", nil)
 				}
-				record, err := service.Delete(args[0], hardDelete)
+				record, err := service.Delete(args[0])
 				if err != nil {
 					return a.handleWorklogError(mode, effective, err)
 				}
 				if mode == "json" {
 					return a.writeJSON(map[string]any{
-						"id":          record.ID,
-						"issue_key":   record.IssueKey,
-						"deleted_at":  record.DeletedAt.Format(time.RFC3339),
-						"hard_delete": record.HardDelete,
+						"id":         record.ID,
+						"issue_key":  record.IssueKey,
+						"deleted_at": record.DeletedAt.Format(time.RFC3339),
 					})
 				}
-				return renderTable(a.stdout, []string{"ID", "ISSUE", "DELETED", "HARD"}, deleteResultRows([]worklogs.DeleteResult{record}))
+				return renderTable(a.stdout, []string{"ID", "ISSUE", "DELETED"}, deleteResultRows([]worklogs.DeleteResult{record}))
 			}
 
 			if dry && yes {
@@ -1291,7 +1287,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 				To:            to,
 				WeekOffset:    weekOffset,
 				WeekOffsetSet: weekOffsetSet,
-			}, dry, hardDelete)
+			}, dry)
 			if err != nil {
 				return a.handleWorklogError(mode, effective, err)
 			}
@@ -1322,456 +1318,6 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 
 			if dry {
 				return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows(result.Items, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
-			}
-			rows := make([][]string, 0, len(result.Deleted))
-			for _, id := range result.Deleted {
-				rows = append(rows, []string{id, strconv.FormatBool(result.HardDelete)})
-			}
-			return renderTable(a.stdout, []string{"ID", "HARD"}, rows)
-		},
-	}
-
-	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
-	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Issue prefix")
-	addDateWindowFlags(cmd, dateWindowFlagValues{
-		Today:        &today,
-		Yesterday:    &yesterday,
-		Monday:       &monday,
-		Tuesday:      &tuesday,
-		Wednesday:    &wednesday,
-		Thursday:     &thursday,
-		Friday:       &friday,
-		Saturday:     &saturday,
-		Sunday:       &sunday,
-		CurrentWeek:  &currentWeek,
-		LastWeek:     &lastWeek,
-		CurrentMonth: &currentMonth,
-		LastMonth:    &lastMonth,
-		From:         &from,
-		To:           &to,
-		WeekOffset:   &weekOffset,
-	}, filterDateWindowHelp)
-	cmd.Flags().BoolVar(&dry, "dry", false, "Preview matching deletes")
-	cmd.Flags().BoolVar(&yes, "yes", false, "Execute filtered batch delete")
-	cmd.Flags().BoolVar(&hardDelete, "hard", false, "Delete without creating tombstones")
-	return cmd
-}
-
-func (a *app) newWorklogsRestoreCommand() *cobra.Command {
-	var issue string
-	var issuePrefix string
-	var today bool
-	var yesterday bool
-	var monday bool
-	var tuesday bool
-	var wednesday bool
-	var thursday bool
-	var friday bool
-	var saturday bool
-	var sunday bool
-	var currentWeek bool
-	var lastWeek bool
-	var currentMonth bool
-	var lastMonth bool
-	var from string
-	var to string
-	var weekOffset int
-	var dry bool
-	var yes bool
-	var force bool
-
-	cmd := &cobra.Command{
-		Use:     "restore",
-		Short:   "Restore deleted local worklogs",
-		Args:    cobra.NoArgs,
-		Example: "  workledger worklogs restore --from 2026-05-14 --to 2026-05-16 --dry\n  workledger worklogs restore --today --yes",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs restore")
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			if dry && yes {
-				return a.fail(mode, 2, "validation_error", "--dry and --yes are mutually exclusive", nil)
-			}
-			if !dry && !yes {
-				return a.fail(mode, 2, "validation_error", "worklogs restore requires --yes or --dry", nil)
-			}
-
-			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			raw := worklogs.ListFilters{
-				Issue:         issue,
-				IssuePrefix:   issuePrefix,
-				Today:         today,
-				Yesterday:     yesterday,
-				Monday:        monday,
-				Tuesday:       tuesday,
-				Wednesday:     wednesday,
-				Thursday:      thursday,
-				Friday:        friday,
-				Saturday:      saturday,
-				Sunday:        sunday,
-				CurrentWeek:   currentWeek,
-				LastWeek:      lastWeek,
-				CurrentMonth:  currentMonth,
-				LastMonth:     lastMonth,
-				From:          from,
-				To:            to,
-				WeekOffset:    weekOffset,
-				WeekOffsetSet: weekOffsetSet,
-			}
-			result, err := service.RestoreBatch(effective, raw, dry, force)
-			if err != nil {
-				return a.handleWorklogError(mode, effective, err)
-			}
-
-			if mode == "json" {
-				return a.renderRestoreBatchJSON(raw, result, effective.Location)
-			}
-
-			if dry {
-				return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION", "DELETED"}, restorePreviewRows(result.Items, effective.Location))
-			}
-			rows := make([][]string, 0, len(result.Restored))
-			for _, item := range result.Items {
-				rows = append(rows, []string{item.Record.ID, item.Record.IssueKey})
-			}
-			return renderTable(a.stdout, []string{"ID", "ISSUE"}, rows)
-		},
-	}
-
-	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
-	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Issue prefix")
-	addDateWindowFlags(cmd, dateWindowFlagValues{
-		Today:        &today,
-		Yesterday:    &yesterday,
-		Monday:       &monday,
-		Tuesday:      &tuesday,
-		Wednesday:    &wednesday,
-		Thursday:     &thursday,
-		Friday:       &friday,
-		Saturday:     &saturday,
-		Sunday:       &sunday,
-		CurrentWeek:  &currentWeek,
-		LastWeek:     &lastWeek,
-		CurrentMonth: &currentMonth,
-		LastMonth:    &lastMonth,
-		From:         &from,
-		To:           &to,
-		WeekOffset:   &weekOffset,
-	}, filterDateWindowHelp)
-	cmd.Flags().BoolVar(&dry, "dry", false, "Preview matching restores")
-	cmd.Flags().BoolVar(&yes, "yes", false, "Execute filtered batch restore")
-	cmd.Flags().BoolVar(&force, "force", false, "Restore even when duplicate or overlap conflicts exist")
-	return cmd
-}
-
-func (a *app) newTombstonesCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "tombstones",
-		Short: "Manage deleted worklog tombstones",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
-		},
-	}
-	cmd.AddCommand(a.newTombstonesListCommand())
-	cmd.AddCommand(a.newTombstonesSearchCommand())
-	cmd.AddCommand(a.newTombstonesDeleteCommand())
-	cmd.AddCommand(a.newTombstonesRestoreCommand())
-	return cmd
-}
-
-func (a *app) newTombstonesListCommand() *cobra.Command {
-	var issue string
-	var issuePrefix string
-	var today bool
-	var yesterday bool
-	var monday bool
-	var tuesday bool
-	var wednesday bool
-	var thursday bool
-	var friday bool
-	var saturday bool
-	var sunday bool
-	var currentWeek bool
-	var lastWeek bool
-	var currentMonth bool
-	var lastMonth bool
-	var from string
-	var to string
-	var weekOffset int
-
-	cmd := &cobra.Command{
-		Use:     "list",
-		Short:   "List deleted worklog tombstones",
-		Example: "  workledger tombstones list --today\n  workledger tombstones list --from 2026-05-14 --to 2026-05-16",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode, false, "")
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			raw := worklogs.ListFilters{
-				Issue:         issue,
-				IssuePrefix:   issuePrefix,
-				Today:         today,
-				Yesterday:     yesterday,
-				Monday:        monday,
-				Tuesday:       tuesday,
-				Wednesday:     wednesday,
-				Thursday:      thursday,
-				Friday:        friday,
-				Saturday:      saturday,
-				Sunday:        sunday,
-				CurrentWeek:   currentWeek,
-				LastWeek:      lastWeek,
-				CurrentMonth:  currentMonth,
-				LastMonth:     lastMonth,
-				From:          from,
-				To:            to,
-				WeekOffset:    weekOffset,
-				WeekOffsetSet: weekOffsetSet,
-				OnlyDeleted:   true,
-			}
-			_, tombstones, effectiveFilters, err := service.List(effective, raw)
-			if err != nil {
-				return a.handleWorklogError(mode, effective, err)
-			}
-
-			if mode == "json" {
-				return a.renderTombstonesListJSON(effective, raw, effectiveFilters, tombstones)
-			}
-
-			if err := renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION", "DELETED"}, tombstoneFullRows(tombstones, effective.Location)); err != nil {
-				return err
-			}
-			return renderListTotalsFooter(a.stdout, len(tombstones), sumDeletedDurationSeconds(tombstones), "tombstones")
-		},
-	}
-
-	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
-	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
-	addDateWindowFlags(cmd, dateWindowFlagValues{
-		Today:        &today,
-		Yesterday:    &yesterday,
-		Monday:       &monday,
-		Tuesday:      &tuesday,
-		Wednesday:    &wednesday,
-		Thursday:     &thursday,
-		Friday:       &friday,
-		Saturday:     &saturday,
-		Sunday:       &sunday,
-		CurrentWeek:  &currentWeek,
-		LastWeek:     &lastWeek,
-		CurrentMonth: &currentMonth,
-		LastMonth:    &lastMonth,
-		From:         &from,
-		To:           &to,
-		WeekOffset:   &weekOffset,
-	}, filterDateWindowHelp)
-	return cmd
-}
-
-func (a *app) newTombstonesSearchCommand() *cobra.Command {
-	var issue string
-	var issuePrefix string
-	var today bool
-	var yesterday bool
-	var monday bool
-	var tuesday bool
-	var wednesday bool
-	var thursday bool
-	var friday bool
-	var saturday bool
-	var sunday bool
-	var currentWeek bool
-	var lastWeek bool
-	var currentMonth bool
-	var lastMonth bool
-	var from string
-	var to string
-	var weekOffset int
-
-	cmd := &cobra.Command{
-		Use:     "search <query>",
-		Short:   "Search deleted worklog tombstones by description",
-		Args:    cobra.ExactArgs(1),
-		Example: "  workledger tombstones search review --today\n  workledger tombstones search docs --from 2026-05-14 --to 2026-05-16",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode, false, "")
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			rawFilters := worklogs.ListFilters{
-				Issue:         issue,
-				IssuePrefix:   issuePrefix,
-				Today:         today,
-				Yesterday:     yesterday,
-				Monday:        monday,
-				Tuesday:       tuesday,
-				Wednesday:     wednesday,
-				Thursday:      thursday,
-				Friday:        friday,
-				Saturday:      saturday,
-				Sunday:        sunday,
-				CurrentWeek:   currentWeek,
-				LastWeek:      lastWeek,
-				CurrentMonth:  currentMonth,
-				LastMonth:     lastMonth,
-				From:          from,
-				To:            to,
-				WeekOffset:    weekOffset,
-				WeekOffsetSet: weekOffsetSet,
-				OnlyDeleted:   true,
-			}
-			_, tombstones, effectiveFilters, normalizedQuery, err := service.Search(effective, worklogs.SearchInput{
-				Query:       args[0],
-				ListFilters: rawFilters,
-			})
-			if err != nil {
-				return a.handleWorklogError(mode, effective, err)
-			}
-
-			if mode == "json" {
-				return a.renderTombstonesSearchJSON(effective, args[0], rawFilters, effectiveFilters, normalizedQuery, tombstones)
-			}
-
-			if err := renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION", "DELETED"}, tombstoneFullRows(tombstones, effective.Location)); err != nil {
-				return err
-			}
-			return renderListTotalsFooter(a.stdout, len(tombstones), sumDeletedDurationSeconds(tombstones), "tombstones")
-		},
-	}
-
-	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
-	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
-	addDateWindowFlags(cmd, dateWindowFlagValues{
-		Today:        &today,
-		Yesterday:    &yesterday,
-		Monday:       &monday,
-		Tuesday:      &tuesday,
-		Wednesday:    &wednesday,
-		Thursday:     &thursday,
-		Friday:       &friday,
-		Saturday:     &saturday,
-		Sunday:       &sunday,
-		CurrentWeek:  &currentWeek,
-		LastWeek:     &lastWeek,
-		CurrentMonth: &currentMonth,
-		LastMonth:    &lastMonth,
-		From:         &from,
-		To:           &to,
-		WeekOffset:   &weekOffset,
-	}, filterDateWindowHelp)
-	return cmd
-}
-
-func (a *app) newTombstonesDeleteCommand() *cobra.Command {
-	var issue string
-	var issuePrefix string
-	var today bool
-	var yesterday bool
-	var monday bool
-	var tuesday bool
-	var wednesday bool
-	var thursday bool
-	var friday bool
-	var saturday bool
-	var sunday bool
-	var currentWeek bool
-	var lastWeek bool
-	var currentMonth bool
-	var lastMonth bool
-	var from string
-	var to string
-	var weekOffset int
-	var dry bool
-	var yes bool
-
-	cmd := &cobra.Command{
-		Use:     "delete [id]",
-		Short:   "Permanently delete tombstones",
-		Args:    cobra.MaximumNArgs(1),
-		Example: "  workledger tombstones delete <id>\n  workledger tombstones delete --from 2026-05-14 --to 2026-05-16 --dry\n  workledger tombstones delete --today --yes",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode, true, "tombstones delete")
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			if len(args) == 1 {
-				if dry || yes || issue != "" || issuePrefix != "" || today || yesterday || monday || tuesday || wednesday || thursday || friday || saturday || sunday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != "" || weekOffsetSet {
-					return a.fail(mode, 2, "validation_error", "single delete cannot be combined with batch delete flags", nil)
-				}
-				record, err := service.DeleteTombstone(args[0])
-				if err != nil {
-					return a.handleWorklogError(mode, effective, err)
-				}
-				if mode == "json" {
-					return a.writeJSON(map[string]any{
-						"id":         record.ID,
-						"issue_key":  record.IssueKey,
-						"deleted_at": record.DeletedAt.UTC().Format(time.RFC3339),
-					})
-				}
-				return renderTable(a.stdout, []string{"ID", "ISSUE", "DELETED"}, deletedRows([]worklogs.Tombstone{{
-					ID:        record.ID,
-					IssueKey:  record.IssueKey,
-					DeletedAt: record.DeletedAt,
-				}}))
-			}
-
-			if dry && yes {
-				return a.fail(mode, 2, "validation_error", "--dry and --yes are mutually exclusive", nil)
-			}
-			if !dry && !yes {
-				return a.fail(mode, 2, "validation_error", "filtered batch delete requires --yes or --dry", nil)
-			}
-
-			raw := worklogs.ListFilters{
-				Issue:         issue,
-				IssuePrefix:   issuePrefix,
-				Today:         today,
-				Yesterday:     yesterday,
-				Monday:        monday,
-				Tuesday:       tuesday,
-				Wednesday:     wednesday,
-				Thursday:      thursday,
-				Friday:        friday,
-				Saturday:      saturday,
-				Sunday:        sunday,
-				CurrentWeek:   currentWeek,
-				LastWeek:      lastWeek,
-				CurrentMonth:  currentMonth,
-				LastMonth:     lastMonth,
-				From:          from,
-				To:            to,
-				WeekOffset:    weekOffset,
-				WeekOffsetSet: weekOffsetSet,
-			}
-			result, err := service.DeleteTombstoneBatch(effective, raw, dry)
-			if err != nil {
-				return a.handleWorklogError(mode, effective, err)
-			}
-
-			if mode == "json" {
-				return a.renderDeleteTombstoneBatchJSON(raw, result, effective.Location)
-			}
-
-			if dry {
-				return renderTable(a.stdout, []string{"ID", "ISSUE", "DELETED"}, deletedRows(result.Items))
 			}
 			rows := make([][]string, 0, len(result.Deleted))
 			for _, id := range result.Deleted {
@@ -1806,116 +1352,6 @@ func (a *app) newTombstonesDeleteCommand() *cobra.Command {
 	return cmd
 }
 
-func (a *app) newTombstonesRestoreCommand() *cobra.Command {
-	var issue string
-	var issuePrefix string
-	var today bool
-	var yesterday bool
-	var monday bool
-	var tuesday bool
-	var wednesday bool
-	var thursday bool
-	var friday bool
-	var saturday bool
-	var sunday bool
-	var currentWeek bool
-	var lastWeek bool
-	var currentMonth bool
-	var lastMonth bool
-	var from string
-	var to string
-	var weekOffset int
-	var dry bool
-	var yes bool
-	var force bool
-
-	cmd := &cobra.Command{
-		Use:     "restore",
-		Short:   "Restore deleted local worklogs",
-		Args:    cobra.NoArgs,
-		Example: "  workledger tombstones restore --from 2026-05-14 --to 2026-05-16 --dry\n  workledger tombstones restore --today --yes",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode, !dry, "tombstones restore")
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			if dry && yes {
-				return a.fail(mode, 2, "validation_error", "--dry and --yes are mutually exclusive", nil)
-			}
-			if !dry && !yes {
-				return a.fail(mode, 2, "validation_error", "tombstones restore requires --yes or --dry", nil)
-			}
-
-			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			raw := worklogs.ListFilters{
-				Issue:         issue,
-				IssuePrefix:   issuePrefix,
-				Today:         today,
-				Yesterday:     yesterday,
-				Monday:        monday,
-				Tuesday:       tuesday,
-				Wednesday:     wednesday,
-				Thursday:      thursday,
-				Friday:        friday,
-				Saturday:      saturday,
-				Sunday:        sunday,
-				CurrentWeek:   currentWeek,
-				LastWeek:      lastWeek,
-				CurrentMonth:  currentMonth,
-				LastMonth:     lastMonth,
-				From:          from,
-				To:            to,
-				WeekOffset:    weekOffset,
-				WeekOffsetSet: weekOffsetSet,
-			}
-			result, err := service.RestoreBatch(effective, raw, dry, force)
-			if err != nil {
-				return a.handleWorklogError(mode, effective, err)
-			}
-
-			if mode == "json" {
-				return a.renderRestoreBatchJSON(raw, result, effective.Location)
-			}
-
-			if dry {
-				return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION", "DELETED"}, restorePreviewRows(result.Items, effective.Location))
-			}
-			rows := make([][]string, 0, len(result.Restored))
-			for _, item := range result.Items {
-				rows = append(rows, []string{item.Record.ID, item.Record.IssueKey})
-			}
-			return renderTable(a.stdout, []string{"ID", "ISSUE"}, rows)
-		},
-	}
-
-	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
-	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Issue prefix")
-	addDateWindowFlags(cmd, dateWindowFlagValues{
-		Today:        &today,
-		Yesterday:    &yesterday,
-		Monday:       &monday,
-		Tuesday:      &tuesday,
-		Wednesday:    &wednesday,
-		Thursday:     &thursday,
-		Friday:       &friday,
-		Saturday:     &saturday,
-		Sunday:       &sunday,
-		CurrentWeek:  &currentWeek,
-		LastWeek:     &lastWeek,
-		CurrentMonth: &currentMonth,
-		LastMonth:    &lastMonth,
-		From:         &from,
-		To:           &to,
-		WeekOffset:   &weekOffset,
-	}, filterDateWindowHelp)
-	cmd.Flags().BoolVar(&dry, "dry", false, "Preview matching restores")
-	cmd.Flags().BoolVar(&yes, "yes", false, "Execute filtered batch restore")
-	cmd.Flags().BoolVar(&force, "force", false, "Restore even when duplicate or overlap conflicts exist")
-	return cmd
-}
 
 func (a *app) newStatusCommand() *cobra.Command {
 	var adapter string
@@ -2514,7 +1950,7 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 				}
 				items = []worklogs.IssueMetadata{item}
 			} else {
-				active, _, effectiveFilters, err := service.List(effective, raw)
+				active, effectiveFilters, err := service.List(effective, raw)
 				if err != nil {
 					return a.handleWorklogError(mode, effective, err)
 				}
@@ -2594,7 +2030,7 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 			defer cleanup()
 
 			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			items, _, _, err := service.List(effective, worklogs.ListFilters{
+			items, _, err := service.List(effective, worklogs.ListFilters{
 				Issue:         issue,
 				IssuePrefix:   issuePrefix,
 				Today:         today,
@@ -4333,7 +3769,7 @@ func (a *app) renderIssueMetadataListJSON(raw worklogs.ListFilters, effective wo
 	return a.writeJSON(payload)
 }
 
-func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilters, effective worklogs.EffectiveFilters, active []worklogs.LocalWorklog, deleted []worklogs.Tombstone) error {
+func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilters, effective worklogs.EffectiveFilters, active []worklogs.LocalWorklog) error {
 	payload := map[string]any{
 		"filters": map[string]any{
 			"raw": map[string]any{
@@ -4355,13 +3791,11 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 				"from":          emptyToNil(raw.From),
 				"to":            emptyToNil(raw.To),
 				"week_offset":   rawWeekOffsetJSON(raw.WeekOffset, raw.WeekOffsetSet),
-				"only_deleted":  raw.OnlyDeleted,
 				"fields":        raw.Fields,
 			},
 			"effective": map[string]any{
-				"only_deleted": effective.OnlyDeleted,
-				"fields":       nilIfEmpty(effective.Fields),
-				"timezone":     effective.Timezone,
+				"fields":   nilIfEmpty(effective.Fields),
+				"timezone": effective.Timezone,
 			},
 		},
 	}
@@ -4377,15 +3811,6 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 	if effective.To != nil {
 		payload["filters"].(map[string]any)["effective"].(map[string]any)["to"] = effective.To.In(cfg.Location).Format(time.RFC3339)
 	}
-	if raw.OnlyDeleted {
-		items := make([]map[string]any, 0, len(deleted))
-		for _, item := range deleted {
-			items = append(items, tombstoneRecordJSON(item, cfg.Location))
-		}
-		payload["items"] = items
-		payload["total"] = len(items)
-		return a.writeJSON(payload)
-	}
 
 	items := make([]map[string]any, 0, len(active))
 	for _, item := range active {
@@ -4400,7 +3825,7 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 	return a.writeJSON(payload)
 }
 
-func (a *app) renderSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw worklogs.ListFilters, effective worklogs.EffectiveFilters, normalizedQuery string, active []worklogs.LocalWorklog, deleted []worklogs.Tombstone) error {
+func (a *app) renderSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw worklogs.ListFilters, effective worklogs.EffectiveFilters, normalizedQuery string, active []worklogs.LocalWorklog) error {
 	payload := map[string]any{
 		"filters": map[string]any{
 			"raw": map[string]any{
@@ -4423,14 +3848,12 @@ func (a *app) renderSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw 
 				"from":          emptyToNil(raw.From),
 				"to":            emptyToNil(raw.To),
 				"week_offset":   rawWeekOffsetJSON(raw.WeekOffset, raw.WeekOffsetSet),
-				"only_deleted":  raw.OnlyDeleted,
 				"fields":        raw.Fields,
 			},
 			"effective": map[string]any{
-				"query":        normalizedQuery,
-				"only_deleted": effective.OnlyDeleted,
-				"fields":       nilIfEmpty(effective.Fields),
-				"timezone":     effective.Timezone,
+				"query":    normalizedQuery,
+				"fields":   nilIfEmpty(effective.Fields),
+				"timezone": effective.Timezone,
 			},
 		},
 	}
@@ -4445,15 +3868,6 @@ func (a *app) renderSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw 
 	}
 	if effective.To != nil {
 		payload["filters"].(map[string]any)["effective"].(map[string]any)["to"] = effective.To.In(cfg.Location).Format(time.RFC3339)
-	}
-	if raw.OnlyDeleted {
-		items := make([]map[string]any, 0, len(deleted))
-		for _, item := range deleted {
-			items = append(items, tombstoneRecordJSON(item, cfg.Location))
-		}
-		payload["items"] = items
-		payload["total"] = len(items)
-		return a.writeJSON(payload)
 	}
 
 	items := make([]map[string]any, 0, len(active))
@@ -4590,38 +4004,6 @@ func (a *app) renderDeleteBatchJSON(raw worklogs.ListFilters, result worklogs.De
 			items = append(items, record)
 		}
 		return a.writeJSON(map[string]any{
-			"filters":     filters,
-			"dry_run":     true,
-			"hard_delete": result.HardDelete,
-			"matched":     len(items),
-			"items":       items,
-		})
-	}
-
-	items := make([]map[string]any, 0, len(result.Deleted))
-	for _, id := range result.Deleted {
-		items = append(items, map[string]any{"id": id})
-	}
-	return a.writeJSON(map[string]any{
-		"filters":     filters,
-		"dry_run":     false,
-		"hard_delete": result.HardDelete,
-		"deleted":     len(result.Deleted),
-		"items":       items,
-	})
-}
-
-func (a *app) renderRestoreBatchJSON(raw worklogs.ListFilters, result worklogs.RestoreBatchResult, location *time.Location) error {
-	filters := selectorFiltersJSON(raw, result.Filters, location)
-	if result.DryRun {
-		items := make([]map[string]any, 0, len(result.Items))
-		for _, item := range result.Items {
-			record := worklogRecordJSON(item.Record, location)
-			record["deleted_at"] = item.Tombstone.DeletedAt.UTC().Format(time.RFC3339)
-			record["restore_preview"] = true
-			items = append(items, record)
-		}
-		return a.writeJSON(map[string]any{
 			"filters": filters,
 			"dry_run": true,
 			"matched": len(items),
@@ -4629,61 +4011,6 @@ func (a *app) renderRestoreBatchJSON(raw worklogs.ListFilters, result worklogs.R
 		})
 	}
 
-	items := make([]map[string]any, 0, len(result.Restored))
-	for _, id := range result.Restored {
-		items = append(items, map[string]any{"id": id})
-	}
-	return a.writeJSON(map[string]any{
-		"filters":  filters,
-		"dry_run":  false,
-		"restored": len(result.Restored),
-		"items":    items,
-	})
-}
-
-func (a *app) renderTombstonesListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilters, effective worklogs.EffectiveFilters, items []worklogs.Tombstone) error {
-	records := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		records = append(records, tombstoneRecordJSON(item, cfg.Location))
-	}
-	return a.writeJSON(map[string]any{
-		"filters": selectorFiltersJSON(raw, effective, cfg.Location),
-		"items":   records,
-		"total":   len(records),
-	})
-}
-
-func (a *app) renderTombstonesSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw worklogs.ListFilters, effective worklogs.EffectiveFilters, normalizedQuery string, items []worklogs.Tombstone) error {
-	filters := selectorFiltersJSON(raw, effective, cfg.Location)
-	filters["raw"].(map[string]any)["query"] = rawQuery
-	filters["effective"].(map[string]any)["query"] = normalizedQuery
-	records := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		records = append(records, tombstoneRecordJSON(item, cfg.Location))
-	}
-	return a.writeJSON(map[string]any{
-		"filters": filters,
-		"items":   records,
-		"total":   len(records),
-	})
-}
-
-func (a *app) renderDeleteTombstoneBatchJSON(raw worklogs.ListFilters, result worklogs.DeleteTombstoneBatchResult, location *time.Location) error {
-	filters := selectorFiltersJSON(raw, result.Filters, location)
-	if result.DryRun {
-		items := make([]map[string]any, 0, len(result.Items))
-		for _, item := range result.Items {
-			record := tombstoneRecordJSON(item, location)
-			record["delete_preview"] = true
-			items = append(items, record)
-		}
-		return a.writeJSON(map[string]any{
-			"filters": filters,
-			"dry_run": true,
-			"matched": len(items),
-			"items":   items,
-		})
-	}
 	items := make([]map[string]any, 0, len(result.Deleted))
 	for _, id := range result.Deleted {
 		items = append(items, map[string]any{"id": id})
@@ -5071,18 +4398,6 @@ func writeAddWarnings(w io.Writer, warnings []worklogs.AddWarning) {
 	}
 }
 
-func tombstoneRecordJSON(item worklogs.Tombstone, location *time.Location) map[string]any {
-	return map[string]any{
-		"id":               item.ID,
-		"issue_key":        item.IssueKey,
-		"started_at":       item.StartedAtUTC.In(location).Format(time.RFC3339),
-		"started_at_utc":   item.StartedAtUTC.UTC().Format(time.RFC3339),
-		"duration_seconds": item.DurationSeconds,
-		"description":      item.Description,
-		"deleted_at":       item.DeletedAt.UTC().Format(time.RFC3339),
-	}
-}
-
 func filterRecord(record map[string]any, fields []string) map[string]any {
 	filtered := make(map[string]any, len(fields))
 	for _, field := range fields {
@@ -5142,29 +4457,6 @@ func shiftPreviewRows(items []worklogs.ShiftPreviewItem, location *time.Location
 	return rows
 }
 
-func deletedRows(items []worklogs.Tombstone) [][]string {
-	rows := make([][]string, 0, len(items))
-	for _, item := range items {
-		rows = append(rows, []string{item.ID, item.IssueKey, item.DeletedAt.UTC().Format(time.RFC3339)})
-	}
-	return rows
-}
-
-func tombstoneFullRows(items []worklogs.Tombstone, location *time.Location) [][]string {
-	rows := make([][]string, 0, len(items))
-	for _, item := range items {
-		rows = append(rows, []string{
-			item.ID,
-			item.IssueKey,
-			localizedWorklogWindow(item.StartedAtUTC, item.DurationSeconds, location),
-			tableDurationMinutes(item.DurationSeconds),
-			item.Description,
-			item.DeletedAt.UTC().Format(time.RFC3339),
-		})
-	}
-	return rows
-}
-
 func deleteResultRows(items []worklogs.DeleteResult) [][]string {
 	rows := make([][]string, 0, len(items))
 	for _, item := range items {
@@ -5172,23 +4464,6 @@ func deleteResultRows(items []worklogs.DeleteResult) [][]string {
 			item.ID,
 			item.IssueKey,
 			item.DeletedAt.UTC().Format(time.RFC3339),
-			strconv.FormatBool(item.HardDelete),
-		})
-	}
-	return rows
-}
-
-func restorePreviewRows(items []worklogs.RestorePreviewItem, location *time.Location) [][]string {
-	rows := make([][]string, 0, len(items))
-	for _, item := range items {
-		record := worklogTableRecord(item.Record, location)
-		rows = append(rows, []string{
-			record["id"].(string),
-			record["issue_key"].(string),
-			record["started_at"].(string),
-			record["duration_seconds"].(string),
-			record["description"].(string),
-			item.Tombstone.DeletedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	return rows
@@ -5232,14 +4507,6 @@ func renderListTotalsFooter(w io.Writer, count int, durationSeconds int, label s
 }
 
 func sumActiveDurationSeconds(items []worklogs.LocalWorklog) int {
-	total := 0
-	for _, item := range items {
-		total += item.DurationSeconds
-	}
-	return total
-}
-
-func sumDeletedDurationSeconds(items []worklogs.Tombstone) int {
 	total := 0
 	for _, item := range items {
 		total += item.DurationSeconds

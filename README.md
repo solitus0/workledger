@@ -9,7 +9,7 @@ It is built for operators and coding agents that need a reliable workflow for re
 Worklogs are easy to scatter across chats, commits, tickets, spreadsheets, and remote trackers. `workledger` keeps the authoritative ledger local, deterministic, and inspectable:
 
 - YAML owns operator-managed configuration.
-- SQLite owns canonical local worklogs, tombstones, trashed worklog archives, saved plans, issue metadata, and audit state.
+- SQLite owns canonical local worklogs, trashed worklog archives, saved plans, issue metadata, and audit state.
 - Remote adapters provide evidence, comparison data, and sync targets, but they do not replace the local ledger.
 - Reconcile operations are planned, saved, reviewed, and then applied.
 - `table` output is human-friendly; `json` output is stable enough for automation and coding agents.
@@ -150,7 +150,7 @@ workledger plan apply
 | Concept | Role |
 | --- | --- |
 | Config | `~/.config/workledger/config.yaml`; source of truth for operator-managed settings and adapter references. |
-| SQLite ledger | Canonical local store for active worklogs and deleted-worklog tombstones. |
+| SQLite ledger | Canonical local store for active worklogs. |
 | Local worklog | One canonical row with issue key, UTC start, duration, description, and generated local ID. |
 | Tombstone | Deleted local worklog record retained for restore, pull protection, and delete-only reconciliation. |
 | Trash row | Read-only archive row for worklogs removed during pull merge or remote cleanup execution. |
@@ -208,11 +208,11 @@ workledger worklogs shift --today --issue PROJ-123 --by 15m --dry
 workledger worklogs delete <id>
 workledger worklogs delete --today --issue PROJ-123 --dry
 workledger worklogs delete --today --issue PROJ-123 --yes
-workledger tombstones restore --today --issue PROJ-123 --dry
-workledger tombstones restore --today --issue PROJ-123 --yes
 ```
 
 `worklogs add --snap` reuses the same date-window and workday inputs as `worklogs context`, defaults to the current local day when no selector is provided, and may split one requested duration into two worklogs when lunch bisects the placement. A snapped add may warn when the final fragment extends past the effective `day_end`; table mode prints that warning to `stderr` and JSON mode returns it in top-level `warnings`.
+
+`worklogs delete` is destructive. It removes the selected active local rows immediately, and a later `plan reconcile --pull` may re-import rows that still exist remotely.
 
 Write operations validate issue keys, timestamps, minimum duration, duplicate rows, and overlaps. Use `--force` only when you deliberately want to bypass duplicate or overlap rejection on supported write paths.
 
@@ -355,11 +355,6 @@ workledger worklogs shift
 workledger worklogs apply
 workledger worklogs delete [<id>]
 workledger worklogs context
-
-workledger tombstones list
-workledger tombstones search <query>
-workledger tombstones delete [<id>]
-workledger tombstones restore
 workledger trash list
 workledger trash search <query>
 workledger trash show <id>
@@ -395,7 +390,7 @@ The implementation contract reserves these package responsibilities:
 - `cmd/workledger`: process startup and dependency wiring
 - `internal/cli`: flags, rendering, confirmation, and exit code mapping
 - `internal/config`: YAML loading, path resolution, normalization, and validation
-- `internal/worklogs`: local CRUD, selectors, tombstones, duplicate and overlap checks
+- `internal/worklogs`: local CRUD, selectors, duplicate and overlap checks
 - `internal/issues`: issue metadata refresh and advisory issue context
 - `internal/plans`: saved-plan creation, review, apply, retry, and orchestration
 - `internal/adapter`: shared adapter contracts and family-specific helpers

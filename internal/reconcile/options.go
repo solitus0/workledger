@@ -3,7 +3,10 @@ package reconcile
 import "github.com/solitus0/workledger/internal/progress"
 
 type PlanOptions struct {
-	Reporter progress.Reporter
+	Reporter                           progress.Reporter
+	SuppressMissingRoutes              bool
+	ExcludedRemoteOwnedIssueKeys       []string
+	PreserveNonActionableReportingPlan bool
 }
 
 type ApplyOptions struct {
