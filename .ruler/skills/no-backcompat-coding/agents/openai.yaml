@@ -1,0 +1,3 @@
+interface:
+  display_name: "No Backcompat Coding"
+  short_description: "Enforces clean-break refactors with no implicit backward compatibility."
