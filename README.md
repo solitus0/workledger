@@ -90,7 +90,7 @@ Bootstrap local configuration and SQLite storage:
 
 ```sh
 workledger init
-workledger config validate
+workledger config
 workledger doctor
 ```
 
@@ -182,15 +182,11 @@ Adapter secrets are referenced through environment variable names. Inline tokens
 Useful setup commands:
 
 ```sh
-workledger config validate
-workledger config env
-workledger config env --print-export-template
-workledger config env --dotenv-template
-workledger config summary
+workledger config
+workledger doctor
 workledger setup jira-cloud --instance main --base-url https://example.atlassian.net --email user@example.com --token-env JIRA_TOKEN --issue-prefix PROJ
 workledger setup jira-data-center --instance dc --base-url https://jira.example.com --token-env JIRA_DC_TOKEN --issue-prefix OPS
 workledger setup clockify --workspace-id <workspace-id> --user-id <user-id> --api-key-env CLOCKIFY_API_KEY --project-map PROJ=Engineering
-workledger doctor
 ```
 
 ## Local worklog workflow
@@ -336,9 +332,7 @@ workledger help
 workledger version
 workledger init
 
-workledger config validate
-workledger config env
-workledger config summary
+workledger config
 workledger doctor
 
 workledger setup jira-cloud

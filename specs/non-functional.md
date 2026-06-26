@@ -269,7 +269,7 @@ Placement rule:
 - [ ] NFR-238: `workledger init --output json` `config` shall be `created` or `reused`.
 - [ ] NFR-239: `workledger init --output json` `sqlite` shall be `created`, `reused`, or `repaired`.
 - [ ] NFR-240: `workledger init` table output shall include a config status line that distinguishes `created` from reused existing valid config, plus a Clockify status line that says whether `CLOCKIFY_API_KEY` was auto-configured during starter-config creation.
-- [ ] NFR-241: `workledger config validate --output json` shall return `valid`, `config_path`, and `effective` on success.
+- [ ] NFR-241: `workledger config --output json` shall return `config_path`, `default_output`, `sqlite_path`, `local_timezone`, `minimum_duration_seconds`, `daily_minimum_quota_seconds`, `day_start`, `day_end`, `daily_lunch`, `jira_instance_count`, `unique_env_var_count`, `missing_env_var_count`, `unique_routed_prefix_count`, `reporting_target_count`, and `clockify_mapping_count` on success.
 - [ ] NFR-242: `worklogs list --output json` shall return `filters`, `items`, and `total`.
 - [ ] NFR-243: `worklogs search --output json` shall return `filters`, `items`, and `total`.
 - [ ] NFR-244: `worklogs list` JSON `filters` shall expose raw operator inputs.

@@ -312,27 +312,25 @@ func TestInitValidateAndListEmptyForToday(t *testing.T) {
 		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
-	validate := runCLI(t, "config", "validate", "--output", "json")
-	if validate.code != 0 {
-		t.Fatalf("validate failed: code=%d stdout=%s stderr=%s", validate.code, validate.stdout, validate.stderr)
+	configResult := runCLI(t, "config", "--output", "json")
+	if configResult.code != 0 {
+		t.Fatalf("config failed: code=%d stdout=%s stderr=%s", configResult.code, configResult.stdout, configResult.stderr)
 	}
-	validatePayload := decodeJSONMap(t, []byte(validate.stdout))
-	effective := validatePayload["effective"].(map[string]any)
-	if effective["local_timezone"] != "Europe/Vilnius" {
-		t.Fatalf("expected effective local_timezone, got %#v", effective["local_timezone"])
+	configPayload := decodeJSONMap(t, []byte(configResult.stdout))
+	if configPayload["local_timezone"] != "Europe/Vilnius" {
+		t.Fatalf("expected effective local_timezone, got %#v", configPayload["local_timezone"])
 	}
-	worklogs := effective["worklogs"].(map[string]any)
-	if worklogs["daily_minimum_quota_seconds"] != float64(28800) {
-		t.Fatalf("expected effective daily minimum quota, got %#v", worklogs["daily_minimum_quota_seconds"])
+	if configPayload["daily_minimum_quota_seconds"] != float64(28800) {
+		t.Fatalf("expected effective daily minimum quota, got %#v", configPayload["daily_minimum_quota_seconds"])
 	}
-	if worklogs["day_start"] != "08:00" || worklogs["day_end"] != "17:00" {
-		t.Fatalf("expected effective workday defaults, got %#v", worklogs)
+	if configPayload["day_start"] != "08:00" || configPayload["day_end"] != "17:00" {
+		t.Fatalf("expected effective workday defaults, got %#v", configPayload)
 	}
-	if worklogs["daily_lunch"] != "12:00-12:45" {
-		t.Fatalf("expected effective daily lunch, got %#v", worklogs["daily_lunch"])
+	if configPayload["daily_lunch"] != "12:00-12:45" {
+		t.Fatalf("expected effective daily lunch, got %#v", configPayload["daily_lunch"])
 	}
-	if _, ok := effective["selection"]; ok {
-		t.Fatalf("expected no nested selection in effective payload, got %#v", effective["selection"])
+	if _, ok := configPayload["effective"]; ok {
+		t.Fatalf("expected summary payload without nested effective config, got %#v", configPayload["effective"])
 	}
 
 	list := runCLI(t, "worklogs", "list", "--today", "--output", "json")
@@ -356,7 +354,7 @@ func TestInitTableOutputShowsBootstrapPathsAndNextSteps(t *testing.T) {
 	}
 
 	expected := fmt.Sprintf(
-		"Local worklogs are ready.\n\nConfig:\n  Status: created new config\n  Path: %s\n\nClockify:\n  Status: not auto-configured from CLOCKIFY_API_KEY\n\nDatabase:\n  Path: %s\n\nNext:\n  workledger worklogs add\n\nOptional adapter setup:\n  workledger setup jira-cloud --instance <name>\n  workledger setup jira-data-center --instance <name>\n  workledger setup clockify\n\nValidate anytime:\n  workledger config validate\n",
+		"Local worklogs are ready.\n\nConfig:\n  Status: created new config\n  Path: %s\n\nClockify:\n  Status: not auto-configured from CLOCKIFY_API_KEY\n\nDatabase:\n  Path: %s\n\nNext:\n  workledger worklogs add\n\nOptional adapter setup:\n  workledger setup jira-cloud --instance <name>\n  workledger setup jira-data-center --instance <name>\n  workledger setup clockify\n\nInspect anytime:\n  workledger config\n",
 		filepath.Join(os.Getenv("HOME"), ".config", "workledger", "config.yaml"),
 		filepath.Join(os.Getenv("HOME"), ".local", "share", "workledger", "worklogs.db"),
 	)
@@ -437,9 +435,9 @@ func TestInitWithoutClockifyAPIKeyWritesCommentedTemplate(t *testing.T) {
 		}
 	}
 
-	validate := runCLI(t, "config", "validate", "--output", "json")
-	if validate.code != 0 {
-		t.Fatalf("validate failed: code=%d stdout=%s stderr=%s", validate.code, validate.stdout, validate.stderr)
+	configResult := runCLI(t, "config", "--output", "json")
+	if configResult.code != 0 {
+		t.Fatalf("config failed: code=%d stdout=%s stderr=%s", configResult.code, configResult.stdout, configResult.stderr)
 	}
 }
 
@@ -950,7 +948,7 @@ func TestSetupClockifyUsesCustomAPIKeyEnv(t *testing.T) {
 	}
 }
 
-func TestConfigEnvAndSummaryJSON(t *testing.T) {
+func TestConfigSummaryJSONAndTable(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	setClockifyTestEnv(t)
 	setJiraCloudTestEnv(t)
@@ -958,18 +956,9 @@ func TestConfigEnvAndSummaryJSON(t *testing.T) {
 	sqlitePath := filepath.Join(os.Getenv("HOME"), ".local", "share", "workledger", "worklogs.db")
 	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\nclockify:\n  workspace_id: ws-active\n  user_id: user-1\n  auth:\n    api_key_env: WORKLEDGER_TEST_CLOCKIFY_API_KEY\n  project_mapping:\n    issue_prefixes:\n      AAPP: App Project\n      ORPH: Old Project\njira_cloud:\n  instances:\n    product:\n      base_url: https://cloud.example\n      auth:\n        email: user@example.com\n        token_env: WORKLEDGER_TEST_JIRA_CLOUD_TOKEN\n      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n          reporting:\n            reporting_targets:\n              RAPP: AAPP-999\njira_data_center:\n  instances:\n    internal:\n      base_url: https://dc.example\n      auth:\n        bearer:\n          token_env: WORKLEDGER_TEST_JIRA_DATA_TOKEN\n      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - DAPP\n")
 
-	envResult := runCLI(t, "config", "env", "--output", "json")
-	if envResult.code != 0 {
-		t.Fatalf("config env failed: code=%d stdout=%s stderr=%s", envResult.code, envResult.stdout, envResult.stderr)
-	}
-	envItems := statusItems(t, envResult.stdout)
-	if len(envItems) != 3 {
-		t.Fatalf("expected 3 unique env vars, got %s", envResult.stdout)
-	}
-
-	summary := runCLI(t, "config", "summary", "--output", "json")
+	summary := runCLI(t, "config", "--output", "json")
 	if summary.code != 0 {
-		t.Fatalf("config summary failed: code=%d stdout=%s stderr=%s", summary.code, summary.stdout, summary.stderr)
+		t.Fatalf("config failed: code=%d stdout=%s stderr=%s", summary.code, summary.stdout, summary.stderr)
 	}
 	payload := decodeJSONMap(t, []byte(summary.stdout))
 	if payload["jira_instance_count"] != float64(2) || payload["unique_routed_prefix_count"] != float64(3) || payload["clockify_mapping_count"] != float64(2) {
@@ -983,6 +972,44 @@ func TestConfigEnvAndSummaryJSON(t *testing.T) {
 	}
 	if payload["daily_lunch"] != "12:00-12:45" {
 		t.Fatalf("expected default daily lunch in summary, got %s", summary.stdout)
+	}
+
+	table := runCLI(t, "config")
+	if table.code != 0 {
+		t.Fatalf("config table failed: code=%d stdout=%s stderr=%s", table.code, table.stdout, table.stderr)
+	}
+	if !strings.Contains(table.stdout, "FIELD") || !strings.Contains(table.stdout, "VALUE") || !strings.Contains(table.stdout, "config_path") {
+		t.Fatalf("expected config table, got %s", table.stdout)
+	}
+}
+
+func TestRemovedDebugCommandsAndFlagsAreRejected(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	help := runCLI(t, "config", "--help")
+	if help.code != 0 {
+		t.Fatalf("config help failed: code=%d stdout=%s stderr=%s", help.code, help.stdout, help.stderr)
+	}
+	for _, removed := range []string{"validate", "env"} {
+		if strings.Contains(help.stdout, removed) {
+			t.Fatalf("config help should not list removed command %q: %s", removed, help.stdout)
+		}
+	}
+
+	for _, args := range [][]string{
+		{"config", "validate"},
+		{"config", "env"},
+		{"config", "summary"},
+		{"doctor", "--all"},
+		{"doctor", "--local"},
+		{"doctor", "--env"},
+		{"doctor", "--routing"},
+		{"doctor", "--connectivity"},
+	} {
+		result := runCLI(t, args...)
+		if result.code == 0 {
+			t.Fatalf("expected removed surface %v to fail, got stdout=%s stderr=%s", args, result.stdout, result.stderr)
+		}
 	}
 }
 
@@ -1022,20 +1049,34 @@ func TestRoutingListAndRouteExplainJSON(t *testing.T) {
 	}
 }
 
-func TestDoctorDefaultSkipsConnectivityAndReportsMissingEnv(t *testing.T) {
+func TestDoctorDefaultRunsConnectivity(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	setClockifyTestEnv(t)
+	server := newClockifyTestServer(t)
+	defer server.Close()
+	originalBaseURL := clockifyadapter.BaseURL
+	clockifyadapter.BaseURL = server.URL
+	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
+
 	sqlitePath := filepath.Join(os.Getenv("HOME"), ".local", "share", "workledger", "worklogs.db")
-	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\nclockify:\n  workspace_id: ws-active\n  user_id: user-1\n  auth:\n    api_key_env: WORKLEDGER_TEST_CLOCKIFY_API_KEY_MISSING\n")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\nclockify:\n  workspace_id: ws-active\n  user_id: user-1\n  auth:\n    api_key_env: WORKLEDGER_TEST_CLOCKIFY_API_KEY\n")
 
 	result := runCLI(t, "doctor", "--output", "json")
-	if result.code != 2 {
-		t.Fatalf("expected doctor env failure, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	if result.code != 0 {
+		t.Fatalf("doctor failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 	items := statusItems(t, result.stdout)
+	found := false
 	for _, item := range items {
-		if item["category"] == "connectivity" {
-			t.Fatalf("did not expect connectivity item in bare doctor: %s", result.stdout)
+		if item["category"] == "connectivity" && item["target"] == "clockify:ws-active" {
+			found = true
+			if item["status"] != "ok" {
+				t.Fatalf("expected connectivity ok, got %v", item)
+			}
 		}
+	}
+	if !found {
+		t.Fatalf("expected connectivity item in bare doctor: %s", result.stdout)
 	}
 }
 
@@ -1576,9 +1617,9 @@ func TestConfigValidateAllowsUnsetOptionalAdapterSecretEnv(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	validate := runCLI(t, "config", "validate", "--output", "json")
-	if validate.code != 0 {
-		t.Fatalf("validate failed: code=%d stdout=%s stderr=%s", validate.code, validate.stdout, validate.stderr)
+	configResult := runCLI(t, "config", "--output", "json")
+	if configResult.code != 0 {
+		t.Fatalf("config failed: code=%d stdout=%s stderr=%s", configResult.code, configResult.stdout, configResult.stderr)
 	}
 
 	init := runCLI(t, "init", "--output", "json")

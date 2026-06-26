@@ -6,14 +6,11 @@ Use this reference for onboarding, configuration, and diagnostics only.
 
 ```text
 workledger init
-workledger config validate
-workledger config summary
-workledger config env
-workledger config env --print-export-template
-workledger config env --dotenv-template
+workledger config
+workledger doctor
 ```
 
-`config validate` checks structural config without requiring adapter connectivity. Use it before remote checks. `config env` shows required environment variables for configured adapters.
+`workledger config` validates the effective local config and reports the current configuration summary. `workledger doctor` runs config, local storage, env-var, routing, and adapter connectivity diagnostics.
 
 ## Configure adapters
 
@@ -51,31 +48,20 @@ export JIRA_DC_TOKEN=...
 export CLOCKIFY_API_KEY=...
 ```
 
-For user-facing setup instructions, use placeholders instead of real token values. For shell-specific output, prefer the CLI templates:
-
-```text
-workledger config env --print-export-template
-workledger config env --dotenv-template
-```
+For user-facing setup instructions, use placeholders instead of real token values. For shell-specific output, write explicit placeholder exports for the env var names configured through setup commands.
 
 ## Diagnostics
 
 ```text
 workledger doctor
-workledger doctor --local
-workledger doctor --env
-workledger doctor --routing
-workledger doctor --connectivity
-workledger doctor --all
 ```
 
-Use targeted checks first:
+`workledger doctor` is the single onboarding diagnostic command. It reports:
 
-- `--local`: local storage validation for `storage.sqlite_path`, DB-file writability, parent-directory writability, and SQLite sidecar creation viability.
-- `--env`: missing or malformed environment variables.
-- `--routing`: adapter routes, instance resolution, issue-prefix routing, and project mapping shape.
-- `--connectivity`: credential and remote reachability checks.
-- `--all`: broad investigation after targeted checks are insufficient.
+- local storage validation for `storage.sqlite_path`, DB-file writability, parent-directory writability, and SQLite sidecar creation viability.
+- missing or malformed environment variables.
+- adapter routes, instance resolution, issue-prefix routing, and project mapping shape.
+- credential and remote reachability checks.
 
 ## Routing inspection
 
@@ -91,12 +77,12 @@ Use routing commands when the target adapter, instance, route profile, issue pre
 
 | Symptom | Likely layer | First follow-up command |
 | --- | --- | --- |
-| Config file exists but setup seems ignored | config | `workledger config summary` |
-| Command complains about missing token | env | `workledger config env` |
+| Config file exists but setup seems ignored | config | `workledger config` |
+| Command complains about missing token | env | `workledger doctor` |
 | Issue prefix goes to wrong adapter | routing | `workledger route explain PROJ-123` |
 | Clockify project not selected | routing | `workledger clockify mappings validate` |
-| SQLite or local DB write failure | storage | `workledger doctor --local` |
-| Auth or remote API failure | connectivity | `workledger doctor --connectivity` |
+| SQLite or local DB write failure | storage | `workledger doctor` |
+| Auth or remote API failure | connectivity | `workledger doctor` |
 
 ## Boundaries
 

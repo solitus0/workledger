@@ -290,118 +290,12 @@ func (a *app) renderSetupResult(mode string, payload map[string]any) error {
 	return nil
 }
 
-func (a *app) newConfigEnvCommand() *cobra.Command {
-	var printExportTemplate bool
-	var dotenvTemplate bool
-	cmd := &cobra.Command{
-		Use:   "env",
-		Short: "List referenced env vars",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			mode := outputMode(cmd)
-			if printExportTemplate && dotenvTemplate {
-				return a.fail(mode, 2, "validation_error", "--print-export-template and --dotenv-template are mutually exclusive", nil)
-			}
-			effective, issues, err := config.ValidateExisting()
-			if err != nil {
-				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
-			}
-			if len(issues) > 0 {
-				return a.fail(mode, 2, "validation_error", "config validation failed", issues)
-			}
-			refs := config.EnvReferences(effective)
-			if printExportTemplate {
-				return a.renderEnvTemplate(mode, "export", refs)
-			}
-			if dotenvTemplate {
-				return a.renderEnvTemplate(mode, "dotenv", refs)
-			}
-			if mode == "json" {
-				items := make([]map[string]any, 0, len(refs))
-				for _, ref := range refs {
-					items = append(items, map[string]any{"name": ref.Name, "is_set": ref.IsSet})
-				}
-				return a.writeJSON(map[string]any{"items": items})
-			}
-			rows := make([][]string, 0, len(refs))
-			for _, ref := range refs {
-				rows = append(rows, []string{ref.Name, yesNo(ref.IsSet)})
-			}
-			return renderTable(a.stdout, []string{"NAME", "SET"}, rows)
-		},
-	}
-	cmd.Flags().BoolVar(&printExportTemplate, "print-export-template", false, "Print export shell template")
-	cmd.Flags().BoolVar(&dotenvTemplate, "dotenv-template", false, "Print dotenv template")
-	return cmd
-}
-
-func (a *app) newConfigSummaryCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "summary",
-		Short: "Show effective config summary",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			mode := outputMode(cmd)
-			effective, issues, err := config.ValidateExisting()
-			if err != nil {
-				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
-			}
-			if len(issues) > 0 {
-				return a.fail(mode, 2, "validation_error", "config validation failed", issues)
-			}
-			summary := config.Summary(effective)
-			if mode == "json" {
-				return a.writeJSON(map[string]any{
-					"config_path":                 summary.ConfigPath,
-					"default_output":              summary.DefaultOutput,
-					"sqlite_path":                 summary.SQLitePath,
-					"local_timezone":              emptyToNil(summary.LocalTimezone),
-					"minimum_duration_seconds":    summary.MinimumDurationSeconds,
-					"daily_minimum_quota_seconds": summary.DailyMinimumQuotaSeconds,
-					"day_start":                   summary.DayStart,
-					"day_end":                     summary.DayEnd,
-					"daily_lunch":                 summary.DailyLunch,
-					"jira_instance_count":         summary.JiraInstanceCount,
-					"unique_env_var_count":        summary.UniqueEnvVarCount,
-					"missing_env_var_count":       summary.MissingEnvVarCount,
-					"unique_routed_prefix_count":  summary.UniqueRoutedPrefixCount,
-					"reporting_target_count":      summary.ReportingTargetCount,
-					"clockify_mapping_count":      summary.ClockifyMappingCount,
-				})
-			}
-			rows := [][]string{
-				{"config_path", summary.ConfigPath},
-				{"default_output", summary.DefaultOutput},
-				{"sqlite_path", summary.SQLitePath},
-				{"local_timezone", displayOrDash(summary.LocalTimezone)},
-				{"minimum_duration_seconds", fmt.Sprint(summary.MinimumDurationSeconds)},
-				{"daily_minimum_quota_seconds", fmt.Sprint(summary.DailyMinimumQuotaSeconds)},
-				{"day_start", summary.DayStart},
-				{"day_end", summary.DayEnd},
-				{"daily_lunch", summary.DailyLunch},
-				{"jira_instance_count", fmt.Sprint(summary.JiraInstanceCount)},
-				{"unique_env_var_count", fmt.Sprint(summary.UniqueEnvVarCount)},
-				{"missing_env_var_count", fmt.Sprint(summary.MissingEnvVarCount)},
-				{"unique_routed_prefix_count", fmt.Sprint(summary.UniqueRoutedPrefixCount)},
-				{"reporting_target_count", fmt.Sprint(summary.ReportingTargetCount)},
-				{"clockify_mapping_count", fmt.Sprint(summary.ClockifyMappingCount)},
-			}
-			return renderTable(a.stdout, []string{"FIELD", "VALUE"}, rows)
-		},
-	}
-}
-
 func (a *app) newDoctorCommand() *cobra.Command {
-	var local, env, routing, connectivity, all bool
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "doctor",
 		Short: "Run local onboarding diagnostics",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			if all {
-				local, env, routing, connectivity = true, true, true, true
-			}
-			if !local && !env && !routing && !connectivity {
-				local, env, routing = true, true, true
-			}
 
 			items := make([]doctorItem, 0)
 			exitCode := 0
@@ -411,84 +305,76 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			}
 
 			configValid := len(issues) == 0
-			if local {
-				if configValid {
-					items = append(items, doctorItem{Category: "local", Target: "config", Status: "ok", Message: "config is valid"})
-					if err := checkLocalStorageWritable(effective.SQLitePath, "doctor"); err != nil {
-						items = append(items, doctorItem{Category: "local", Target: "storage", Status: "error", Message: err.Error()})
-						exitCode = firstStatusExitCode(exitCode, 1)
-					} else {
-						items = append(items, doctorItem{Category: "local", Target: "storage", Status: "ok", Message: "local SQLite storage is writable"})
-					}
+			if configValid {
+				items = append(items, doctorItem{Category: "local", Target: "config", Status: "ok", Message: "config is valid"})
+				if err := checkLocalStorageWritable(effective.SQLitePath, "doctor"); err != nil {
+					items = append(items, doctorItem{Category: "local", Target: "storage", Status: "error", Message: err.Error()})
+					exitCode = firstStatusExitCode(exitCode, 1)
 				} else {
-					items = append(items, doctorItem{Category: "local", Target: "config", Status: "error", Message: "config validation failed"})
+					items = append(items, doctorItem{Category: "local", Target: "storage", Status: "ok", Message: "local SQLite storage is writable"})
+				}
+			} else {
+				items = append(items, doctorItem{Category: "local", Target: "config", Status: "error", Message: "config validation failed"})
+				exitCode = 2
+			}
+
+			if !configValid {
+				items = append(items, doctorItem{Category: "env", Target: "config", Status: "skipped", Message: "config validation failed"})
+			} else {
+				refs := config.EnvReferences(effective)
+				missing := 0
+				for _, ref := range refs {
+					status := "ok"
+					message := "set"
+					if !ref.IsSet {
+						status = "error"
+						message = "missing"
+						missing++
+					}
+					items = append(items, doctorItem{Category: "env", Target: ref.Name, Status: status, Message: message})
+				}
+				if missing > 0 && exitCode == 0 {
 					exitCode = 2
 				}
 			}
 
-			if env {
-				if !configValid {
-					items = append(items, doctorItem{Category: "env", Target: "config", Status: "skipped", Message: "config validation failed"})
+			if !configValid {
+				items = append(items, doctorItem{Category: "routing", Target: "config", Status: "skipped", Message: "config validation failed"})
+			} else {
+				rules := config.RouteRules(effective)
+				if len(rules) == 0 {
+					items = append(items, doctorItem{Category: "routing", Target: "rules", Status: "ok", Message: "no routing rules configured"})
 				} else {
-					refs := config.EnvReferences(effective)
-					missing := 0
-					for _, ref := range refs {
-						status := "ok"
-						message := "set"
-						if !ref.IsSet {
-							status = "error"
-							message = "missing"
-							missing++
-						}
-						items = append(items, doctorItem{Category: "env", Target: ref.Name, Status: status, Message: message})
-					}
-					if missing > 0 && exitCode == 0 {
-						exitCode = 2
-					}
+					items = append(items, doctorItem{Category: "routing", Target: "rules", Status: "ok", Message: fmt.Sprintf("%d routing rules configured", len(rules))})
+				}
+				audit := config.AuditClockifyMappings(effective)
+				for _, prefix := range audit.MissingPrefixes {
+					items = append(items, doctorItem{Category: "routing", Target: prefix, Status: "warning", Message: "routed prefix has no Clockify project mapping"})
+				}
+				for _, prefix := range audit.OrphanedPrefixes {
+					items = append(items, doctorItem{Category: "routing", Target: prefix, Status: "warning", Message: "Clockify project mapping is not referenced by Jira routing"})
 				}
 			}
 
-			if routing {
-				if !configValid {
-					items = append(items, doctorItem{Category: "routing", Target: "config", Status: "skipped", Message: "config validation failed"})
-				} else {
-					rules := config.RouteRules(effective)
-					if len(rules) == 0 {
-						items = append(items, doctorItem{Category: "routing", Target: "rules", Status: "ok", Message: "no routing rules configured"})
-					} else {
-						items = append(items, doctorItem{Category: "routing", Target: "rules", Status: "ok", Message: fmt.Sprintf("%d routing rules configured", len(rules))})
+			if !configValid {
+				items = append(items, doctorItem{Category: "connectivity", Target: "config", Status: "skipped", Message: "config validation failed"})
+			} else {
+				rows, code := a.collectAllStatusRows(cmd.Context(), effective)
+				for _, row := range rows {
+					target := row.Adapter
+					if row.Instance != "" {
+						target += ":" + row.Instance
 					}
-					audit := config.AuditClockifyMappings(effective)
-					for _, prefix := range audit.MissingPrefixes {
-						items = append(items, doctorItem{Category: "routing", Target: prefix, Status: "warning", Message: "routed prefix has no Clockify project mapping"})
+					if row.Adapter == "clockify" && row.WorkspaceID != "" {
+						target = row.Adapter + ":" + row.WorkspaceID
 					}
-					for _, prefix := range audit.OrphanedPrefixes {
-						items = append(items, doctorItem{Category: "routing", Target: prefix, Status: "warning", Message: "Clockify project mapping is not referenced by Jira routing"})
+					status := "ok"
+					if row.Status != "OK" {
+						status = "error"
 					}
+					items = append(items, doctorItem{Category: "connectivity", Target: target, Status: status, Message: row.Status})
 				}
-			}
-
-			if connectivity {
-				if !configValid {
-					items = append(items, doctorItem{Category: "connectivity", Target: "config", Status: "skipped", Message: "config validation failed"})
-				} else {
-					rows, code := a.collectAllStatusRows(cmd.Context(), effective)
-					for _, row := range rows {
-						target := row.Adapter
-						if row.Instance != "" {
-							target += ":" + row.Instance
-						}
-						if row.Adapter == "clockify" && row.WorkspaceID != "" {
-							target = row.Adapter + ":" + row.WorkspaceID
-						}
-						status := "ok"
-						if row.Status != "OK" {
-							status = "error"
-						}
-						items = append(items, doctorItem{Category: "connectivity", Target: target, Status: status, Message: row.Status})
-					}
-					exitCode = firstStatusExitCode(exitCode, code)
-				}
+				exitCode = firstStatusExitCode(exitCode, code)
 			}
 
 			if mode == "json" {
@@ -517,12 +403,6 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&local, "local", false, "Run local config checks")
-	cmd.Flags().BoolVar(&env, "env", false, "Run env var checks")
-	cmd.Flags().BoolVar(&routing, "routing", false, "Run routing checks")
-	cmd.Flags().BoolVar(&connectivity, "connectivity", false, "Run live adapter checks")
-	cmd.Flags().BoolVar(&all, "all", false, "Run all checks")
-	return cmd
 }
 
 func (a *app) newRoutingCommand() *cobra.Command {
@@ -814,33 +694,6 @@ func clockifyMappingRows(items []clockifyMappingRow) [][]string {
 		rows = append(rows, []string{item.Prefix, item.Project, item.Status, item.Message})
 	}
 	return rows
-}
-
-func yesNo(value bool) string {
-	if value {
-		return "yes"
-	}
-	return "no"
-}
-
-func (a *app) renderEnvTemplate(mode, format string, refs []config.EnvVarRef) error {
-	lines := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		if format == "export" {
-			lines = append(lines, fmt.Sprintf("export %s=", ref.Name))
-		} else {
-			lines = append(lines, ref.Name+"=")
-		}
-	}
-	if mode == "json" {
-		return a.writeJSON(map[string]any{"format": format, "lines": lines})
-	}
-	for _, line := range lines {
-		if _, err := fmt.Fprintln(a.stdout, line); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func parseProjectMappings(values []string) (map[string]string, error) {

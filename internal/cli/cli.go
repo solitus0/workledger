@@ -383,7 +383,7 @@ func (a *app) newInitCommand() *cobra.Command {
 
 			_, _ = fmt.Fprintf(
 				a.stdout,
-				"Local worklogs are ready.\n\nConfig:\n  Status: %s\n  Path: %s\n\nClockify:\n  Status: %s\n\nDatabase:\n  Path: %s\n\nNext:\n  workledger worklogs add\n\nOptional adapter setup:\n  workledger setup jira-cloud --instance <name>\n  workledger setup jira-data-center --instance <name>\n  workledger setup clockify\n\nValidate anytime:\n  workledger config validate\n",
+				"Local worklogs are ready.\n\nConfig:\n  Status: %s\n  Path: %s\n\nClockify:\n  Status: %s\n\nDatabase:\n  Path: %s\n\nNext:\n  workledger worklogs add\n\nOptional adapter setup:\n  workledger setup jira-cloud --instance <name>\n  workledger setup jira-data-center --instance <name>\n  workledger setup clockify\n\nInspect anytime:\n  workledger config\n",
 				initConfigStatusLabel(configStatus),
 				effective.ConfigPath,
 				initClockifyStatusLabel(configStatus, effective.File.Clockify),
@@ -416,17 +416,9 @@ func initClockifyStatusLabel(configStatus string, clockifyCfg *config.ClockifyCo
 }
 
 func (a *app) newConfigCommand() *cobra.Command {
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "config",
-		Short: "Config commands",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return cmd.Help()
-		},
-	}
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "validate",
-		Short: "Validate config",
+		Short: "Show effective config",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, issues, err := config.ValidateExisting()
@@ -436,40 +428,46 @@ func (a *app) newConfigCommand() *cobra.Command {
 			if len(issues) > 0 {
 				return a.fail(mode, 2, "validation_error", "config validation failed", issues)
 			}
-
-			payload := map[string]any{
-				"valid":       true,
-				"config_path": effective.ConfigPath,
-				"effective": map[string]any{
-					"default_output": effective.DefaultOutput,
-					"storage": map[string]any{
-						"sqlite_path": effective.SQLitePath,
-					},
-					"worklogs": map[string]any{
-						"minimum_duration_seconds":    effective.MinimumDurationSeconds,
-						"daily_minimum_quota_seconds": effective.DailyMinimumQuotaSeconds,
-						"day_start":                   effective.DayStart,
-						"day_end":                     effective.DayEnd,
-						"daily_lunch":                 effective.DailyLunch,
-					},
-				},
-			}
-			if effective.LocalTimezoneConfig != nil {
-				payload["effective"].(map[string]any)["local_timezone"] = *effective.LocalTimezoneConfig
-			}
-
+			summary := config.Summary(effective)
 			if mode == "json" {
-				return a.writeJSON(payload)
+				return a.writeJSON(map[string]any{
+					"config_path":                 summary.ConfigPath,
+					"default_output":              summary.DefaultOutput,
+					"sqlite_path":                 summary.SQLitePath,
+					"local_timezone":              emptyToNil(summary.LocalTimezone),
+					"minimum_duration_seconds":    summary.MinimumDurationSeconds,
+					"daily_minimum_quota_seconds": summary.DailyMinimumQuotaSeconds,
+					"day_start":                   summary.DayStart,
+					"day_end":                     summary.DayEnd,
+					"daily_lunch":                 summary.DailyLunch,
+					"jira_instance_count":         summary.JiraInstanceCount,
+					"unique_env_var_count":        summary.UniqueEnvVarCount,
+					"missing_env_var_count":       summary.MissingEnvVarCount,
+					"unique_routed_prefix_count":  summary.UniqueRoutedPrefixCount,
+					"reporting_target_count":      summary.ReportingTargetCount,
+					"clockify_mapping_count":      summary.ClockifyMappingCount,
+				})
 			}
-			_, _ = fmt.Fprintln(a.stdout, "config is valid")
-			return nil
+			rows := [][]string{
+				{"config_path", summary.ConfigPath},
+				{"default_output", summary.DefaultOutput},
+				{"sqlite_path", summary.SQLitePath},
+				{"local_timezone", displayOrDash(summary.LocalTimezone)},
+				{"minimum_duration_seconds", fmt.Sprint(summary.MinimumDurationSeconds)},
+				{"daily_minimum_quota_seconds", fmt.Sprint(summary.DailyMinimumQuotaSeconds)},
+				{"day_start", summary.DayStart},
+				{"day_end", summary.DayEnd},
+				{"daily_lunch", summary.DailyLunch},
+				{"jira_instance_count", fmt.Sprint(summary.JiraInstanceCount)},
+				{"unique_env_var_count", fmt.Sprint(summary.UniqueEnvVarCount)},
+				{"missing_env_var_count", fmt.Sprint(summary.MissingEnvVarCount)},
+				{"unique_routed_prefix_count", fmt.Sprint(summary.UniqueRoutedPrefixCount)},
+				{"reporting_target_count", fmt.Sprint(summary.ReportingTargetCount)},
+				{"clockify_mapping_count", fmt.Sprint(summary.ClockifyMappingCount)},
+			}
+			return renderTable(a.stdout, []string{"FIELD", "VALUE"}, rows)
 		},
-	})
-
-	cmd.AddCommand(a.newConfigEnvCommand())
-	cmd.AddCommand(a.newConfigSummaryCommand())
-
-	return cmd
+	}
 }
 
 func (a *app) newWorklogsCommand() *cobra.Command {

@@ -58,13 +58,12 @@ Placement rule:
 - [ ] FUNC-037c: Ordinary commands shall fail clearly before feature SQL runs when the configured SQLite schema is outdated or mismatched, telling the operator to run `workledger init` to repair it.
 
 ## Configuration Commands
-- [ ] FUNC-038: `workledger config validate` shall validate the effective local config without requiring adapter connectivity.
-- [ ] FUNC-039: `workledger config validate` shall support `table` output.
-- [ ] FUNC-040: `workledger config validate` shall support `json` output.
-- [ ] FUNC-041: `workledger config validate` shall print an explicit success line to stdout in table output.
-- [ ] FUNC-042: `workledger config validate` shall return a JSON success payload on stdout in JSON output.
-- [ ] FUNC-042a: `workledger config validate --output json` effective `worklogs` payload shall include `day_start`, `day_end`, and `daily_lunch`.
-- [ ] FUNC-043: `workledger config validate` shall return a JSON error payload with all discovered validation errors on failure in JSON output.
+- [ ] FUNC-038: `workledger config` shall validate the effective local config before rendering configuration details.
+- [ ] FUNC-039: `workledger config` shall support `table` output.
+- [ ] FUNC-040: `workledger config` shall support `json` output.
+- [ ] FUNC-041: `workledger config` shall report config path, effective settings, configured-adapter counts, env-var counts, routing counts, reporting-target counts, and Clockify mapping counts.
+- [ ] FUNC-042: `workledger config` shall expose the effective `day_start`, `day_end`, and `daily_lunch` settings in table and JSON output.
+- [ ] FUNC-043: `workledger config` shall return a JSON error payload with all discovered validation errors on failure in JSON output.
 - [ ] FUNC-044: `workledger setup jira-cloud` shall append one Jira Cloud instance block to an existing valid local config.
 - [ ] FUNC-045: `workledger setup jira-cloud` shall accept `--instance`, `--base-url`, `--email`, `--token-env`, and repeated `--issue-prefix`.
 - [ ] FUNC-046: `workledger setup jira-cloud` shall fail when the target instance name already exists.
@@ -82,19 +81,9 @@ Placement rule:
 - [ ] FUNC-058: `workledger setup clockify` shall fail when an active `clockify` block already exists.
 - [ ] FUNC-059: `workledger setup clockify` shall write `clockify.auth.api_key_env`.
 - [ ] FUNC-060: `workledger setup clockify` may write `clockify.project_mapping.issue_prefixes`.
-- [ ] FUNC-061: `workledger config env` shall report env vars referenced by the effective config.
-- [ ] FUNC-062: `workledger config env --print-export-template` shall print one `export NAME=` line per unique referenced env var.
-- [ ] FUNC-063: `workledger config env --dotenv-template` shall print one `NAME=` line per unique referenced env var.
-- [ ] FUNC-064: `workledger config summary` shall report config path, effective settings, configured-adapter counts, env-var counts, routing counts, reporting-target counts, and Clockify mapping counts.
-- [ ] FUNC-064a: `workledger config summary` shall expose the effective `day_start`, `day_end`, and `daily_lunch` settings in table and JSON output.
-- [ ] FUNC-065: `workledger doctor` shall run local config validation, env-var checks, and routing checks when invoked without a check-group flag.
-- [ ] FUNC-066: `workledger doctor --local` shall enable local checks.
-- [ ] FUNC-067: `workledger doctor --env` shall enable env-var checks.
-- [ ] FUNC-068: `workledger doctor --routing` shall enable routing checks.
-- [ ] FUNC-069: `workledger doctor --connectivity` shall enable adapter connectivity checks.
-- [ ] FUNC-070: `workledger doctor --all` shall enable all check groups.
+- [ ] FUNC-061: `workledger doctor` shall run local config validation, env-var checks, routing checks, and adapter connectivity checks by default.
 - [ ] FUNC-070a: Local `doctor` checks shall validate the effective `storage.sqlite_path`, including DB-file writability when present, parent-directory writability, and whether SQLite sidecar files can be created.
-- [ ] FUNC-070b: Bare `workledger doctor` shall include the local storage writability check because bare `doctor` includes local checks by default.
+- [ ] FUNC-070b: Bare `workledger doctor` shall include the local storage writability check.
 
 ## Routing Commands
 - [ ] FUNC-071: `workledger routing list` shall emit configured Jira routing inventory across all configured Jira families and instances.

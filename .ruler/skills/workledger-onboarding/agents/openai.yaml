@@ -1,4 +1,4 @@
 interface:
   display_name: "Workledger Onboarding"
-  short_description: "Guide first-time workledger setup, config validation, adapter setup, env vars, and diagnostics"
-  default_prompt: "Use $workledger-onboarding to initialize workledger, configure Jira or Clockify adapters, prepare token environment variables, validate configuration, and run setup diagnostics."
+  short_description: "Guide first-time workledger setup, adapter setup, config inspection, env vars, and diagnostics"
+  default_prompt: "Use $workledger-onboarding to initialize workledger, configure Jira or Clockify adapters, prepare token environment variables, inspect configuration with workledger config, and run comprehensive setup diagnostics with workledger doctor."
