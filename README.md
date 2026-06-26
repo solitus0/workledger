@@ -201,8 +201,8 @@ Use local worklog commands when the canonical SQLite ledger should change.
 workledger worklogs list --today
 workledger worklogs search "reconciliation"
 workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description "Implement reconciliation flow"
-workledger worklogs add --issue PROJ-123 --snap --today --duration 2h --description "Implement reconciliation flow"
-workledger worklogs add --issue PROJ-123 --snap --from 2026-05-14 --to 2026-05-14 --duration 5h --description "Implement reconciliation flow"
+workledger worklogs add --issue PROJ-123 --fit --today --duration 2h --description "Implement reconciliation flow"
+workledger worklogs add --issue PROJ-123 --fill --from 2026-05-14 --to 2026-05-14 --duration 5h --description "Implement reconciliation flow"
 workledger worklogs update <id> --duration 1h45m --description "Refine reconciliation flow"
 workledger worklogs shift --today --issue PROJ-123 --by 15m --dry
 workledger worklogs delete <id>
@@ -210,7 +210,7 @@ workledger worklogs delete --today --issue PROJ-123 --dry
 workledger worklogs delete --today --issue PROJ-123 --yes
 ```
 
-`worklogs add --snap` reuses the same date-window and workday inputs as `worklogs context`, defaults to the current local day when no selector is provided, and may split one requested duration into two worklogs when lunch bisects the placement. A snapped add may warn when the final fragment extends past the effective `day_end`; table mode prints that warning to `stderr` and JSON mode returns it in top-level `warnings`.
+`worklogs add --fit` and `worklogs add --fill` reuse the same date-window and workday inputs as `worklogs context`, default to the current local day when no selector is provided, respect `day_start`, lunch exclusion, occupied local worklogs, and local midnight, and do not treat `day_end` as a hard placement limit. `--fit` creates exactly one worklog in the earliest continuous free slot that can contain the full duration. `--fill` fills the requested duration from the earliest free slot onward and may create multiple fragments across gaps, lunch, and selected dates.
 
 `worklogs delete` is destructive. It removes the selected active local rows immediately, and a later `plan reconcile --pull` may re-import rows that still exist remotely.
 

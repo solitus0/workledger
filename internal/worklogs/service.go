@@ -99,7 +99,8 @@ type AddInput struct {
 	IssueKey      string
 	Started       string
 	StartedUTC    string
-	Snap          bool
+	Fit           bool
+	Fill          bool
 	Today         bool
 	Yesterday     bool
 	Monday        bool
@@ -126,15 +127,9 @@ type AddInput struct {
 	Force         bool
 }
 
-type AddWarning struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
 type AddResult struct {
-	DryRun   bool
-	Records  []LocalWorklog
-	Warnings []AddWarning
+	DryRun  bool
+	Records []LocalWorklog
 }
 
 type PatchInput struct {
@@ -304,26 +299,26 @@ func (s *Service) Add(cfg config.EffectiveConfig, input AddInput) (AddResult, er
 }
 
 func (s *Service) prepareAdd(cfg config.EffectiveConfig, input AddInput) (AddResult, error) {
-	candidates, warnings, err := s.prepareAddCandidates(cfg, input)
+	candidates, err := s.prepareAddCandidates(cfg, input)
 	if err != nil {
 		return AddResult{}, err
 	}
 	if err := s.validateAddConflicts(cfg, candidates, input.Force); err != nil {
 		return AddResult{}, err
 	}
-	return AddResult{Records: candidates, Warnings: warnings}, nil
+	return AddResult{Records: candidates}, nil
 }
 
-func (s *Service) prepareAddCandidates(cfg config.EffectiveConfig, input AddInput) ([]LocalWorklog, []AddWarning, error) {
+func (s *Service) prepareAddCandidates(cfg config.EffectiveConfig, input AddInput) ([]LocalWorklog, error) {
 	if placementCount(input) != 1 {
-		return nil, nil, ValidationError{Issues: []ValidationIssue{{Field: "placement", Message: "provide exactly one of started, started_utc, or snap"}}}
+		return nil, ValidationError{Issues: []ValidationIssue{{Field: "placement", Message: "provide exactly one of started, started_utc, fit, or fill"}}}
 	}
-	if input.Snap {
-		return s.prepareSnapAddCandidates(cfg, input)
+	if input.Fit || input.Fill {
+		return s.prepareAutomaticAddCandidates(cfg, input)
 	}
 
-	if hasSnapOnlyAddFlags(input) {
-		return nil, nil, ValidationError{Issues: []ValidationIssue{{Field: "snap", Message: "date-window and workday flags require snap"}}}
+	if hasAutomaticPlacementOnlyAddFlags(input) {
+		return nil, ValidationError{Issues: []ValidationIssue{{Field: "placement", Message: "date-window and workday flags require fit or fill"}}}
 	}
 
 	candidate, err := buildCandidate(cfg, AddCandidateInput{
@@ -334,16 +329,16 @@ func (s *Service) prepareAddCandidates(cfg config.EffectiveConfig, input AddInpu
 		Description: input.Description,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return []LocalWorklog{candidate}, nil, nil
+	return []LocalWorklog{candidate}, nil
 }
 
-func (s *Service) prepareSnapAddCandidates(cfg config.EffectiveConfig, input AddInput) ([]LocalWorklog, []AddWarning, error) {
+func (s *Service) prepareAutomaticAddCandidates(cfg config.EffectiveConfig, input AddInput) ([]LocalWorklog, error) {
 	candidateBase, err := buildAddBaseCandidate(cfg, input.IssueKey, input.Duration, input.Description)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	filters, err := normalizeContextFiltersAt(cfg, ContextInput{
@@ -366,7 +361,7 @@ func (s *Service) prepareSnapAddCandidates(cfg config.EffectiveConfig, input Add
 		WeekOffsetSet: input.WeekOffsetSet,
 	}, s.now)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	window, err := normalizeWorkdayWindow(cfg, ContextInput{
 		DayStart: input.DayStart,
@@ -375,24 +370,30 @@ func (s *Service) prepareSnapAddCandidates(cfg config.EffectiveConfig, input Add
 		NoLunch:  input.NoLunch,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	active, err := s.listActive(EffectiveFilters{})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	selectedDates := selectedContextDates(filters.From, filters.To, cfg.Location)
-	for _, selectedDate := range selectedDates {
-		plan, warnings := buildSnapPlanForDate(cfg, selectedDate, window, active, candidateBase)
-		if len(plan) == 0 {
-			continue
+	if input.Fit {
+		for _, selectedDate := range selectedDates {
+			plan := buildFitPlanForDate(cfg, selectedDate, window, active, candidateBase)
+			if len(plan) > 0 {
+				return plan, nil
+			}
 		}
-		return plan, warnings, nil
+		return nil, noAutomaticPlacementError()
 	}
 
-	return nil, nil, ValidationError{Issues: []ValidationIssue{{Field: "snap", Message: "no snapped placement fits inside the selected date window"}}}
+	plan := buildFillPlanAcrossDates(cfg, selectedDates, window, active, candidateBase)
+	if len(plan) == 0 {
+		return nil, noAutomaticPlacementError()
+	}
+	return plan, nil
 }
 
 func (s *Service) Update(cfg config.EffectiveConfig, id string, patch PatchInput) (LocalWorklog, error) {
@@ -620,13 +621,16 @@ func placementCount(input AddInput) int {
 	if input.StartedUTC != "" {
 		count++
 	}
-	if input.Snap {
+	if input.Fit {
+		count++
+	}
+	if input.Fill {
 		count++
 	}
 	return count
 }
 
-func hasSnapOnlyAddFlags(input AddInput) bool {
+func hasAutomaticPlacementOnlyAddFlags(input AddInput) bool {
 	return input.Today ||
 		input.Yesterday ||
 		input.Monday ||
@@ -1077,7 +1081,87 @@ func normalizeDescription(value string) (string, error) {
 	return normalized, nil
 }
 
-func buildSnapPlanForDate(cfg config.EffectiveConfig, selectedDate time.Time, window workdayWindow, active []LocalWorklog, base LocalWorklog) ([]LocalWorklog, []AddWarning) {
+func buildFitPlanForDate(cfg config.EffectiveConfig, selectedDate time.Time, window workdayWindow, active []LocalWorklog, base LocalWorklog) []LocalWorklog {
+	freeSlots := buildAddPlacementFreeSlots(cfg, selectedDate, window, active)
+	for _, slot := range freeSlots {
+		if slot.DurationSeconds < base.DurationSeconds {
+			continue
+		}
+		return []LocalWorklog{{
+			IssueKey:        base.IssueKey,
+			StartedAtUTC:    slot.Start.UTC(),
+			DurationSeconds: base.DurationSeconds,
+			Description:     base.Description,
+		}}
+	}
+	return nil
+}
+
+func buildFillPlanAcrossDates(cfg config.EffectiveConfig, selectedDates []time.Time, window workdayWindow, active []LocalWorklog, base LocalWorklog) []LocalWorklog {
+	slots := make([]ContextFreeSlot, 0)
+	for _, selectedDate := range selectedDates {
+		slots = append(slots, buildAddPlacementFreeSlots(cfg, selectedDate, window, active)...)
+	}
+	if totalSlotDuration(slots) < base.DurationSeconds {
+		return nil
+	}
+
+	plan := make([]LocalWorklog, 0)
+	remaining := base.DurationSeconds
+	for index, slot := range slots {
+		if remaining == 0 {
+			break
+		}
+		if slot.DurationSeconds < cfg.MinimumDurationSeconds {
+			continue
+		}
+
+		duration := min(remaining, slot.DurationSeconds)
+		if duration < cfg.MinimumDurationSeconds {
+			if len(plan) == 0 {
+				return nil
+			}
+			previous := &plan[len(plan)-1]
+			needed := cfg.MinimumDurationSeconds - duration
+			if previous.DurationSeconds-needed < cfg.MinimumDurationSeconds {
+				return nil
+			}
+			previous.DurationSeconds -= needed
+			duration += needed
+			remaining += needed
+		}
+
+		availableAfter := totalSlotDuration(slots[index+1:])
+		if remaining-duration > availableAfter {
+			duration = remaining - availableAfter
+			if duration > slot.DurationSeconds || duration < cfg.MinimumDurationSeconds {
+				return nil
+			}
+		}
+
+		plan = append(plan, LocalWorklog{
+			IssueKey:        base.IssueKey,
+			StartedAtUTC:    slot.Start.UTC(),
+			DurationSeconds: duration,
+			Description:     base.Description,
+		})
+		remaining -= duration
+	}
+	if remaining != 0 {
+		return nil
+	}
+	return plan
+}
+
+func totalSlotDuration(slots []ContextFreeSlot) int {
+	total := 0
+	for _, slot := range slots {
+		total += slot.DurationSeconds
+	}
+	return total
+}
+
+func buildAddPlacementFreeSlots(cfg config.EffectiveConfig, selectedDate time.Time, window workdayWindow, active []LocalWorklog) []ContextFreeSlot {
 	dayStart := time.Date(selectedDate.Year(), selectedDate.Month(), selectedDate.Day(), 0, 0, 0, 0, cfg.Location)
 	dayEnd := dayStart.Add(24 * time.Hour)
 
@@ -1097,124 +1181,36 @@ func buildSnapPlanForDate(cfg config.EffectiveConfig, selectedDate time.Time, wi
 		})
 	}
 
-	freeSlots := buildFreeSlots(selectedDate, cfg.Location, window, sortIntervals(occupied))
-	if len(freeSlots) == 0 {
-		return nil, nil
+	base := []localInterval{{
+		Start: applyClock(selectedDate, cfg.Location, window.dayStartMinutes),
+		End:   dayEnd,
+	}}
+	if window.lunchStart != nil && window.lunchEnd != nil {
+		base = subtractIntervalSet(base, localInterval{
+			Start: applyClock(selectedDate, cfg.Location, *window.lunchStart),
+			End:   applyClock(selectedDate, cfg.Location, *window.lunchEnd),
+		})
+	}
+	for _, item := range mergeIntervals(sortIntervals(occupied)) {
+		base = subtractIntervalSet(base, item)
 	}
 
-	lunchStart := time.Time{}
-	lunchEnd := time.Time{}
-	hasLunch := window.lunchStart != nil && window.lunchEnd != nil
-	if hasLunch {
-		lunchStart = applyClock(selectedDate, cfg.Location, *window.lunchStart)
-		lunchEnd = applyClock(selectedDate, cfg.Location, *window.lunchEnd)
+	slots := make([]ContextFreeSlot, 0, len(base))
+	for _, item := range base {
+		if !item.Start.Before(item.End) {
+			continue
+		}
+		slots = append(slots, ContextFreeSlot{
+			Start:           item.Start,
+			End:             item.End,
+			DurationSeconds: int(item.End.Sub(item.Start) / time.Second),
+		})
 	}
-	workdayEnd := applyClock(selectedDate, cfg.Location, window.dayEndMinutes)
-
-	for _, slot := range freeSlots {
-		start := slot.Start
-		candidateEnd := start.Add(time.Duration(base.DurationSeconds) * time.Second)
-
-		if hasLunch && start.Before(lunchStart) && candidateEnd.After(lunchStart) {
-			firstDuration := int(lunchStart.Sub(start) / time.Second)
-			if firstDuration <= 0 {
-				continue
-			}
-			remainder := base.DurationSeconds - firstDuration
-			if remainder <= 0 {
-				continue
-			}
-			if firstDuration < cfg.MinimumDurationSeconds || remainder < cfg.MinimumDurationSeconds {
-				continue
-			}
-			if !isTimeFree(lunchEnd, selectedDate, occupied, dayEnd) {
-				continue
-			}
-			secondEnd := lunchEnd.Add(time.Duration(remainder) * time.Second)
-			if secondEnd.After(dayEnd) {
-				continue
-			}
-			if overlapsIntervals(occupied, lunchEnd, secondEnd) {
-				continue
-			}
-			warnings := []AddWarning(nil)
-			if secondEnd.After(workdayEnd) {
-				warnings = []AddWarning{{
-					Code:    "day_end_boundary_reached",
-					Message: "day_end boundary reached; snapped worklog extends past the effective workday end",
-				}}
-			}
-			return []LocalWorklog{
-				{
-					IssueKey:        base.IssueKey,
-					StartedAtUTC:    start.UTC(),
-					DurationSeconds: firstDuration,
-					Description:     base.Description,
-				},
-				{
-					IssueKey:        base.IssueKey,
-					StartedAtUTC:    lunchEnd.UTC(),
-					DurationSeconds: remainder,
-					Description:     base.Description,
-				},
-			}, warnings
-		}
-
-		if candidateEnd.Before(workdayEnd) || candidateEnd.Equal(workdayEnd) {
-			if !overlapsIntervals(occupied, start, candidateEnd) {
-				return []LocalWorklog{{
-					IssueKey:        base.IssueKey,
-					StartedAtUTC:    start.UTC(),
-					DurationSeconds: base.DurationSeconds,
-					Description:     base.Description,
-				}}, nil
-			}
-			continue
-		}
-
-		if !slot.End.Equal(workdayEnd) {
-			continue
-		}
-		if candidateEnd.After(dayEnd) {
-			continue
-		}
-		if overlapsIntervals(occupied, start, candidateEnd) {
-			continue
-		}
-
-		return []LocalWorklog{{
-				IssueKey:        base.IssueKey,
-				StartedAtUTC:    start.UTC(),
-				DurationSeconds: base.DurationSeconds,
-				Description:     base.Description,
-			}}, []AddWarning{{
-				Code:    "day_end_boundary_reached",
-				Message: "day_end boundary reached; snapped worklog extends past the effective workday end",
-			}}
-	}
-
-	return nil, nil
+	return slots
 }
 
-func isTimeFree(at time.Time, selectedDate time.Time, occupied []localInterval, dayEnd time.Time) bool {
-	if !at.Before(dayEnd) {
-		return false
-	}
-	for _, item := range occupied {
-		if !item.Start.After(at) && at.Before(item.End) {
-			return false
-		}
-	}
-	return at.Year() == selectedDate.Year() && at.Month() == selectedDate.Month() && at.Day() == selectedDate.Day()
-}
-
-func overlapsIntervals(occupied []localInterval, start, end time.Time) bool {
-	for _, item := range occupied {
-		if start.Before(item.End) && item.Start.Before(end) {
-			return true
-		}
-	}
-	return false
+func noAutomaticPlacementError() error {
+	return ValidationError{Issues: []ValidationIssue{{Field: "placement", Message: "no free slot available in the current time window"}}}
 }
 
 func isDuplicate(a, b LocalWorklog) bool {

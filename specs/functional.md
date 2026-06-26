@@ -173,24 +173,27 @@ Placement rule:
 
 ## Worklog Creation
 - [ ] FUNC-136: `workledger worklogs add` shall require `--issue <KEY>`.
-- [ ] FUNC-137: `workledger worklogs add` shall require exactly one of `--started <LocalTimestamp>`, `--started-utc <RFC3339UTC>`, or `--snap`.
+- [ ] FUNC-137: `workledger worklogs add` shall require exactly one of `--started <LocalTimestamp>`, `--started-utc <RFC3339UTC>`, `--fit`, or `--fill`.
 - [ ] FUNC-138: `workledger worklogs add` shall require `--duration <GoDuration>`.
 - [ ] FUNC-139: `workledger worklogs add` shall require `--description <text>`.
 - [ ] FUNC-140: `workledger worklogs add` shall accept description input through a flag.
 - [ ] FUNC-141: `workledger worklogs add --force` shall allow the operator to bypass duplicate or overlap rejection explicitly.
 - [ ] FUNC-141a: `workledger worklogs add --dry` shall validate and preview one would-be local worklog without writing it.
 - [ ] FUNC-141b: `workledger worklogs add --dry` shall use the same normalization, duplicate validation, overlap validation, and `--force` behavior as executed `worklogs add`.
-- [ ] FUNC-141c: `workledger worklogs add --snap` shall reuse the `worklogs context` date-window selectors and workday-analysis inputs: `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, `--to`, `--day-start`, `--day-end`, `--lunch`, and `--no-lunch`.
-- [ ] FUNC-141d: `workledger worklogs add --snap` shall apply `--week-offset` with the same weekday-only validation and week-shift semantics as `worklogs context`.
-- [ ] FUNC-141d: `workledger worklogs add --snap` without an explicit date selector shall search the current local day.
-- [ ] FUNC-141e: `workledger worklogs add --snap` shall search selected dates in ascending order and choose the earliest free fitting start in that window.
-- [ ] FUNC-141f: `workledger worklogs add --snap` shall split at the effective lunch window when the requested duration crosses lunch, shall preserve the exact requested total duration across the created fragments, and shall allow that split only when every created fragment is greater than or equal to the effective configured minimum local worklog duration.
-- [ ] FUNC-141g: `workledger worklogs add --snap` may create one or two active worklogs atomically and shall not cross local midnight.
-- [ ] FUNC-141h: `workledger worklogs add --snap` may extend the final fragment past the effective `day_end` with a warning when no later active worklog blocks that overflow.
+- [ ] FUNC-141c: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall reuse the `worklogs context` date-window selectors and workday-analysis inputs: `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, `--to`, `--day-start`, `--day-end`, `--lunch`, and `--no-lunch`.
+- [ ] FUNC-141d: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall apply `--week-offset` with the same weekday-only validation and week-shift semantics as `worklogs context`.
+- [ ] FUNC-141e: `workledger worklogs add --fit` and `workledger worklogs add --fill` without an explicit date selector shall search the current local day.
+- [ ] FUNC-141f: `workledger worklogs add --fit` shall search selected dates in ascending order, choose the earliest continuous free slot that contains the full requested duration, and create exactly one worklog.
+- [ ] FUNC-141g: `workledger worklogs add --fit` shall not split across lunch, occupied gaps, dates, or local midnight.
+- [ ] FUNC-141h: `workledger worklogs add --fill` shall search selected dates and free slots in ascending order and allocate the exact requested duration across one or more created worklogs.
+- [ ] FUNC-141i: `workledger worklogs add --fill` may split across lunch, occupied gaps, and selected dates, but shall not cross local midnight within any fragment.
+- [ ] FUNC-141j: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall respect `day_start`, lunch exclusion unless `--no-lunch` is supplied, and occupied active local worklogs.
+- [ ] FUNC-141k: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall not treat `day_end` as a hard placement limit and shall not warn only because a created worklog extends past `day_end`.
+- [ ] FUNC-141l: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall fail validation with `no free slot available in the current time window` when placement is impossible.
 - [ ] FUNC-142: `workledger worklogs add` shall auto-generate the created worklog `id`.
 - [ ] FUNC-143: `workledger worklogs add` shall return the created canonical worklog on success.
-- [ ] FUNC-143a: non-snap `workledger worklogs add` success output shall keep the single-record contract.
-- [ ] FUNC-143b: snap `workledger worklogs add` success output shall return one `records` item per created worklog and shall expose optional success warnings.
+- [ ] FUNC-143a: manual `workledger worklogs add` success output shall keep the single-record contract.
+- [ ] FUNC-143b: automatic `workledger worklogs add --fit` and `workledger worklogs add --fill` success output shall return one `records` item per created worklog.
 
 ## Worklog Update
 - [ ] FUNC-144: `workledger worklogs update <id>` shall use patch-style flags `--issue`, `--started`, `--started-utc`, `--duration`, and `--description`.

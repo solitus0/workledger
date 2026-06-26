@@ -43,7 +43,7 @@ const (
 	utcTimestampHelp       = "UTC started timestamp in RFC3339, e.g. 2026-05-14T09:00:00Z"
 	clockHelp              = "Clock time in HH:MM, e.g. 09:00"
 	lunchWindowHelp        = "Lunch exclusion window in HH:MM-HH:MM, e.g. 12:00-13:00"
-	worklogsAddExample     = "  workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started-utc 2026-05-14T09:00:00Z --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --snap --today --duration 2h --description \"Implement reconciliation\""
+	worklogsAddExample     = "  workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started-utc 2026-05-14T09:00:00Z --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --fit --today --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --fill --today --duration 2h --description \"Implement reconciliation\""
 	worklogsUpdateExample  = "  workledger worklogs update <id> --started 2026-05-14T09:00 --duration 1h30m\n  workledger worklogs update <id> --started-utc 2026-05-14T09:00:00Z"
 	worklogsContextExample = "  workledger worklogs context --today --day-start 09:00 --day-end 17:30\n  workledger worklogs context --from 2026-05-14 --to 2026-05-14 --lunch 12:00-13:00"
 	worklogsApplyExample   = "  workledger worklogs apply --file payload.json\n  workledger worklogs apply --stdin\n\nPayload timestamps:\n  started_at uses the same local timestamp grammar as --started\n  started_at_utc uses RFC3339 UTC, e.g. 2026-05-14T09:00:00Z"
@@ -998,7 +998,8 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	var issue string
 	var started string
 	var startedUTC string
-	var snap bool
+	var fit bool
+	var fill bool
 	var today bool
 	var yesterday bool
 	var monday bool
@@ -1041,7 +1042,8 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 				IssueKey:      issue,
 				Started:       started,
 				StartedUTC:    startedUTC,
-				Snap:          snap,
+				Fit:           fit,
+				Fill:          fill,
 				Today:         today,
 				Yesterday:     yesterday,
 				Monday:        monday,
@@ -1078,7 +1080,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 				return a.handleWorklogError(mode, effective, err)
 			}
 
-			if snap {
+			if fit || fill {
 				if mode == "json" {
 					payload := map[string]any{
 						"records": worklogRecordsJSON(result.Records, effective.Location, dry),
@@ -1086,12 +1088,8 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 					if dry {
 						payload["dry_run"] = true
 					}
-					if len(result.Warnings) > 0 {
-						payload["warnings"] = result.Warnings
-					}
 					return a.writeJSON(payload)
 				}
-				writeAddWarnings(a.stderr, result.Warnings)
 				if dry {
 					return renderTable(a.stdout, []string{"ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows(result.Records, effective.Location, []string{"issue_key", "started_at", "duration_seconds", "description"}, 0))
 				}
@@ -1118,7 +1116,8 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
 	cmd.Flags().StringVar(&started, "started", "", localTimestampHelp)
 	cmd.Flags().StringVar(&startedUTC, "started-utc", "", utcTimestampHelp)
-	cmd.Flags().BoolVar(&snap, "snap", false, "Snap to the earliest fitting time in the selected local date window")
+	cmd.Flags().BoolVar(&fit, "fit", false, "Place the full duration in the earliest continuous free slot")
+	cmd.Flags().BoolVar(&fill, "fill", false, "Fill the duration across earliest free slots")
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
@@ -1140,7 +1139,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	cmd.Flags().StringVar(&dayStart, "day-start", "", clockHelp)
 	cmd.Flags().StringVar(&dayEnd, "day-end", "", clockHelp)
 	cmd.Flags().StringVar(&lunch, "lunch", "", lunchWindowHelp)
-	cmd.Flags().BoolVar(&noLunch, "no-lunch", false, "Disable lunch exclusion for snap placement")
+	cmd.Flags().BoolVar(&noLunch, "no-lunch", false, "Disable lunch exclusion for automatic placement")
 	cmd.Flags().StringVar(&duration, "duration", "", "Worklog duration")
 	cmd.Flags().StringVar(&description, "description", "", "Description")
 	cmd.Flags().BoolVar(&dry, "dry", false, "Validate without writing")
@@ -4480,12 +4479,6 @@ func worklogRecordsJSON(items []worklogs.LocalWorklog, location *time.Location, 
 		records = append(records, worklogRecordJSON(item, location))
 	}
 	return records
-}
-
-func writeAddWarnings(w io.Writer, warnings []worklogs.AddWarning) {
-	for _, warning := range warnings {
-		_, _ = fmt.Fprintln(w, warning.Message)
-	}
 }
 
 func filterRecord(record map[string]any, fields []string) map[string]any {

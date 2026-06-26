@@ -617,7 +617,7 @@ func TestPreviewAddEnforcesConflictsAndForce(t *testing.T) {
 	}
 }
 
-func TestPreviewAddSnapSplitsAcrossLunch(t *testing.T) {
+func TestPreviewAddFitCreatesOneContinuousWorklog(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()
 
@@ -634,83 +634,39 @@ func TestPreviewAddSnapSplitsAcrossLunch(t *testing.T) {
 	mustAddWorklog(t, service, cfg, AddInput{
 		IssueKey:    "ABC-123",
 		StartedUTC:  "2026-05-03T09:00:00Z",
-		Duration:    "2h",
+		Duration:    "1h",
 		Description: "Morning",
 	})
-
-	result, err := service.PreviewAdd(cfg, AddInput{
-		IssueKey:    "ABC-124",
-		Snap:        true,
-		Today:       true,
-		Duration:    "2h",
-		Description: "Snapped",
-	})
-	if err != nil {
-		t.Fatalf("snap preview failed: %v", err)
-	}
-	if len(result.Records) != 2 {
-		t.Fatalf("expected 2 snapped records, got %#v", result)
-	}
-	first := result.Records[0]
-	second := result.Records[1]
-	if got := first.StartedAtUTC.Format(time.RFC3339); got != "2026-05-03T11:00:00Z" {
-		t.Fatalf("unexpected first start %s", got)
-	}
-	if first.DurationSeconds != 3600 {
-		t.Fatalf("unexpected first duration %d", first.DurationSeconds)
-	}
-	if got := second.StartedAtUTC.Format(time.RFC3339); got != "2026-05-03T12:45:00Z" {
-		t.Fatalf("unexpected second start %s", got)
-	}
-	if second.DurationSeconds != 3600 {
-		t.Fatalf("unexpected second duration %d", second.DurationSeconds)
-	}
-}
-
-func TestPreviewAddSnapSkipsLunchSplitBelowMinimumAndFindsLaterSlot(t *testing.T) {
-	store, service := newTestService(t)
-	defer store.Close()
-
-	cfg := config.EffectiveConfig{
-		Location:               time.UTC,
-		MinimumDurationSeconds: 900,
-		DayStart:               "09:00",
-		DayEnd:                 "17:00",
-		DailyLunch:             "12:00-12:45",
-	}
-	service.now = func() time.Time {
-		return time.Date(2026, 5, 3, 7, 0, 0, 0, time.UTC)
-	}
 	mustAddWorklog(t, service, cfg, AddInput{
-		IssueKey:    "ABC-123",
-		StartedUTC:  "2026-05-03T09:00:00Z",
-		Duration:    "2h50m",
-		Description: "Morning",
+		IssueKey:    "ABC-125",
+		StartedUTC:  "2026-05-03T11:00:00Z",
+		Duration:    "1h",
+		Description: "Late morning",
 	})
 
 	result, err := service.PreviewAdd(cfg, AddInput{
 		IssueKey:    "ABC-124",
-		Snap:        true,
+		Fit:         true,
 		Today:       true,
-		Duration:    "30m",
-		Description: "Snapped",
+		Duration:    "2h",
+		Description: "Fit",
 	})
 	if err != nil {
-		t.Fatalf("snap preview failed: %v", err)
+		t.Fatalf("fit preview failed: %v", err)
 	}
 	if len(result.Records) != 1 {
-		t.Fatalf("expected 1 snapped record, got %#v", result)
+		t.Fatalf("expected 1 fitted record, got %#v", result)
 	}
 	record := result.Records[0]
 	if got := record.StartedAtUTC.Format(time.RFC3339); got != "2026-05-03T12:45:00Z" {
 		t.Fatalf("unexpected start %s", got)
 	}
-	if record.DurationSeconds != 1800 {
+	if record.DurationSeconds != 7200 {
 		t.Fatalf("unexpected duration %d", record.DurationSeconds)
 	}
 }
 
-func TestPreviewAddSnapReturnsNoFitWhenLunchSplitFragmentsFallBelowMinimum(t *testing.T) {
+func TestPreviewAddFitRefusesFragmentedPlacement(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()
 
@@ -726,41 +682,28 @@ func TestPreviewAddSnapReturnsNoFitWhenLunchSplitFragmentsFallBelowMinimum(t *te
 	}
 	mustAddWorklog(t, service, cfg, AddInput{
 		IssueKey:    "ABC-123",
-		StartedUTC:  "2026-05-03T09:00:00Z",
-		Duration:    "2h50m",
-		Description: "Morning",
+		StartedUTC:  "2026-05-03T10:00:00Z",
+		Duration:    "1h",
+		Description: "Middle",
 	})
 	mustAddWorklog(t, service, cfg, AddInput{
 		IssueKey:    "ABC-125",
-		StartedUTC:  "2026-05-03T12:45:00Z",
-		Duration:    "4h15m",
-		Description: "Afternoon",
+		StartedUTC:  "2026-05-03T13:45:00Z",
+		Duration:    "10h15m",
+		Description: "Rest",
 	})
 
 	_, err := service.PreviewAdd(cfg, AddInput{
 		IssueKey:    "ABC-124",
-		Snap:        true,
+		Fit:         true,
 		Today:       true,
-		Duration:    "30m",
-		Description: "Snapped",
+		Duration:    "2h",
+		Description: "Fit",
 	})
-	if err == nil {
-		t.Fatal("expected snap no-fit validation error")
-	}
-	validationErr, ok := err.(ValidationError)
-	if !ok {
-		t.Fatalf("expected validation error, got %T", err)
-	}
-	if len(validationErr.Issues) != 1 {
-		t.Fatalf("expected one validation issue, got %#v", validationErr)
-	}
-	issue := validationErr.Issues[0]
-	if issue.Field != "snap" || issue.Message != "no snapped placement fits inside the selected date window" {
-		t.Fatalf("unexpected validation issue %#v", issue)
-	}
+	assertNoAutomaticPlacement(t, err)
 }
 
-func TestPreviewAddSnapAllowsLunchSplitFragmentAtMinimumBoundary(t *testing.T) {
+func TestPreviewAddFitRespectsLunchAndNoLunch(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()
 
@@ -774,43 +717,41 @@ func TestPreviewAddSnapAllowsLunchSplitFragmentAtMinimumBoundary(t *testing.T) {
 	service.now = func() time.Time {
 		return time.Date(2026, 5, 3, 7, 0, 0, 0, time.UTC)
 	}
-	mustAddWorklog(t, service, cfg, AddInput{
-		IssueKey:    "ABC-123",
-		StartedUTC:  "2026-05-03T09:00:00Z",
-		Duration:    "2h45m",
-		Description: "Morning",
-	})
 
 	result, err := service.PreviewAdd(cfg, AddInput{
 		IssueKey:    "ABC-124",
-		Snap:        true,
+		Fit:         true,
 		Today:       true,
-		Duration:    "30m",
-		Description: "Snapped",
+		Duration:    "4h",
+		Description: "Fit",
 	})
 	if err != nil {
-		t.Fatalf("snap preview failed: %v", err)
+		t.Fatalf("fit preview failed: %v", err)
 	}
-	if len(result.Records) != 2 {
-		t.Fatalf("expected 2 snapped records, got %#v", result)
+	if len(result.Records) != 1 {
+		t.Fatalf("expected 1 fitted record, got %#v", result)
 	}
-	first := result.Records[0]
-	second := result.Records[1]
-	if got := first.StartedAtUTC.Format(time.RFC3339); got != "2026-05-03T11:45:00Z" {
-		t.Fatalf("unexpected first start %s", got)
+	if got := result.Records[0].StartedAtUTC.Format(time.RFC3339); got != "2026-05-03T12:45:00Z" {
+		t.Fatalf("unexpected start %s", got)
 	}
-	if first.DurationSeconds != 900 {
-		t.Fatalf("unexpected first duration %d", first.DurationSeconds)
+
+	noLunchResult, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fit:         true,
+		Today:       true,
+		NoLunch:     true,
+		Duration:    "4h",
+		Description: "Fit",
+	})
+	if err != nil {
+		t.Fatalf("fit no-lunch preview failed: %v", err)
 	}
-	if got := second.StartedAtUTC.Format(time.RFC3339); got != "2026-05-03T12:45:00Z" {
-		t.Fatalf("unexpected second start %s", got)
-	}
-	if second.DurationSeconds != 900 {
-		t.Fatalf("unexpected second duration %d", second.DurationSeconds)
+	if got := noLunchResult.Records[0].StartedAtUTC.Format(time.RFC3339); got != "2026-05-03T09:00:00Z" {
+		t.Fatalf("unexpected no-lunch start %s", got)
 	}
 }
 
-func TestAddSnapWarnsWhenExtendingPastDayEnd(t *testing.T) {
+func TestAddFitExtendsPastDayEndWithoutWarning(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()
 
@@ -833,16 +774,13 @@ func TestAddSnapWarnsWhenExtendingPastDayEnd(t *testing.T) {
 
 	result, err := service.Add(cfg, AddInput{
 		IssueKey:    "ABC-124",
-		Snap:        true,
+		Fit:         true,
 		Today:       true,
 		Duration:    "2h",
 		Description: "Overflow",
 	})
 	if err != nil {
-		t.Fatalf("snap add failed: %v", err)
-	}
-	if len(result.Warnings) != 1 || result.Warnings[0].Code != "day_end_boundary_reached" {
-		t.Fatalf("expected day_end warning, got %#v", result.Warnings)
+		t.Fatalf("fit add failed: %v", err)
 	}
 	if len(result.Records) != 1 {
 		t.Fatalf("expected 1 record, got %#v", result)
@@ -852,6 +790,256 @@ func TestAddSnapWarnsWhenExtendingPastDayEnd(t *testing.T) {
 	}
 	if got := countActiveWorklogs(t, store); got != 2 {
 		t.Fatalf("expected two persisted rows, got %d", got)
+	}
+}
+
+func TestPreviewAddFitRespectsDayStartAndMidnight(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{
+		Location:               time.UTC,
+		MinimumDurationSeconds: 900,
+		DayStart:               "22:00",
+		DayEnd:                 "23:00",
+		DailyLunch:             "23:00-23:15",
+	}
+	service.now = func() time.Time {
+		return time.Date(2026, 5, 3, 7, 0, 0, 0, time.UTC)
+	}
+
+	result, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fit:         true,
+		Today:       true,
+		NoLunch:     true,
+		Duration:    "1h",
+		Description: "Fit",
+	})
+	if err != nil {
+		t.Fatalf("fit preview failed: %v", err)
+	}
+	if got := result.Records[0].StartedAtUTC.Format(time.RFC3339); got != "2026-05-03T22:00:00Z" {
+		t.Fatalf("unexpected start %s", got)
+	}
+
+	_, err = service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fit:         true,
+		Today:       true,
+		NoLunch:     true,
+		Duration:    "3h",
+		Description: "Too long",
+	})
+	assertNoAutomaticPlacement(t, err)
+}
+
+func TestPreviewAddFillSplitsAcrossEarliestGapsAndLunch(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{
+		Location:               time.UTC,
+		MinimumDurationSeconds: 900,
+		DayStart:               "09:00",
+		DayEnd:                 "17:00",
+		DailyLunch:             "12:00-13:00",
+	}
+	service.now = func() time.Time {
+		return time.Date(2026, 5, 3, 7, 0, 0, 0, time.UTC)
+	}
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-123",
+		StartedUTC:  "2026-05-03T10:00:00Z",
+		Duration:    "1h",
+		Description: "Middle",
+	})
+
+	result, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fill:        true,
+		Today:       true,
+		Duration:    "3h",
+		Description: "Fill",
+	})
+	if err != nil {
+		t.Fatalf("fill preview failed: %v", err)
+	}
+	assertRecords(t, result.Records, []expectedRecord{
+		{start: "2026-05-03T09:00:00Z", duration: 3600},
+		{start: "2026-05-03T11:00:00Z", duration: 3600},
+		{start: "2026-05-03T13:00:00Z", duration: 3600},
+	})
+}
+
+func TestPreviewAddFillCanSpanSelectedDates(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{
+		Location:               time.UTC,
+		MinimumDurationSeconds: 900,
+		DayStart:               "09:00",
+		DayEnd:                 "17:00",
+		DailyLunch:             "12:00-13:00",
+	}
+
+	result, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fill:        true,
+		From:        "2026-05-03",
+		To:          "2026-05-04",
+		Duration:    "27h",
+		Description: "Fill",
+	})
+	if err != nil {
+		t.Fatalf("fill preview failed: %v", err)
+	}
+	assertRecords(t, result.Records, []expectedRecord{
+		{start: "2026-05-03T09:00:00Z", duration: 10800},
+		{start: "2026-05-03T13:00:00Z", duration: 39600},
+		{start: "2026-05-04T09:00:00Z", duration: 10800},
+		{start: "2026-05-04T13:00:00Z", duration: 36000},
+	})
+}
+
+func TestPreviewAddFillExtendsPastDayEndWithoutWarning(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{
+		Location:               time.UTC,
+		MinimumDurationSeconds: 900,
+		DayStart:               "09:00",
+		DayEnd:                 "17:00",
+		DailyLunch:             "12:00-13:00",
+	}
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-123",
+		StartedUTC:  "2026-05-03T09:00:00Z",
+		Duration:    "7h",
+		Description: "Busy",
+	})
+
+	result, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fill:        true,
+		From:        "2026-05-03",
+		To:          "2026-05-03",
+		Duration:    "2h",
+		Description: "Fill",
+	})
+	if err != nil {
+		t.Fatalf("fill preview failed: %v", err)
+	}
+	if len(result.Records) != 1 {
+		t.Fatalf("expected 1 record, got %#v", result)
+	}
+	if got := result.Records[0].StartedAtUTC.Format(time.RFC3339); got != "2026-05-03T16:00:00Z" {
+		t.Fatalf("unexpected start %s", got)
+	}
+}
+
+func TestPreviewAddFillAdjustsFragmentsToMinimumDuration(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{
+		Location:               time.UTC,
+		MinimumDurationSeconds: 900,
+		DayStart:               "09:00",
+		DayEnd:                 "17:00",
+		DailyLunch:             "10:00-10:15",
+	}
+	service.now = func() time.Time {
+		return time.Date(2026, 5, 3, 7, 0, 0, 0, time.UTC)
+	}
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-123",
+		StartedUTC:  "2026-05-03T10:35:00Z",
+		Duration:    "13h25m",
+		Description: "Rest",
+	})
+
+	result, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fill:        true,
+		Today:       true,
+		Duration:    "70m",
+		Description: "Fill",
+	})
+	if err != nil {
+		t.Fatalf("fill preview failed: %v", err)
+	}
+	assertRecords(t, result.Records, []expectedRecord{
+		{start: "2026-05-03T09:00:00Z", duration: 3300},
+		{start: "2026-05-03T10:15:00Z", duration: 900},
+	})
+}
+
+func TestAddFillFailsAtomicallyWhenFullDurationCannotBePlaced(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{
+		Location:               time.UTC,
+		MinimumDurationSeconds: 900,
+		DayStart:               "09:00",
+		DayEnd:                 "17:00",
+		DailyLunch:             "12:00-13:00",
+	}
+	_, err := service.Add(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fill:        true,
+		From:        "2026-05-03",
+		To:          "2026-05-03",
+		Duration:    "15h",
+		Description: "Fill",
+	})
+	assertNoAutomaticPlacement(t, err)
+	if got := countActiveWorklogs(t, store); got != 0 {
+		t.Fatalf("expected no persisted rows, got %d", got)
+	}
+}
+
+type expectedRecord struct {
+	start    string
+	duration int
+}
+
+func assertRecords(t *testing.T, records []LocalWorklog, expected []expectedRecord) {
+	t.Helper()
+
+	if len(records) != len(expected) {
+		t.Fatalf("expected %d records, got %#v", len(expected), records)
+	}
+	for index, want := range expected {
+		record := records[index]
+		if got := record.StartedAtUTC.Format(time.RFC3339); got != want.start {
+			t.Fatalf("record %d: unexpected start %s", index, got)
+		}
+		if record.DurationSeconds != want.duration {
+			t.Fatalf("record %d: unexpected duration %d", index, record.DurationSeconds)
+		}
+	}
+}
+
+func assertNoAutomaticPlacement(t *testing.T, err error) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatal("expected automatic placement validation error")
+	}
+	validationErr, ok := err.(ValidationError)
+	if !ok {
+		t.Fatalf("expected validation error, got %T", err)
+	}
+	if len(validationErr.Issues) != 1 {
+		t.Fatalf("expected one validation issue, got %#v", validationErr)
+	}
+	issue := validationErr.Issues[0]
+	if issue.Field != "placement" || issue.Message != "no free slot available in the current time window" {
+		t.Fatalf("unexpected validation issue %#v", issue)
 	}
 }
 
