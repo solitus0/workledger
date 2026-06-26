@@ -225,7 +225,7 @@ type ReconcileProfileSummary struct {
 }
 
 type pushProfileScope struct {
-	Target                          ReconcileTarget
+	Targets                         []ReconcileTarget
 	Profile                         string
 	Reporting                       bool
 	SuppressMissingRoutes           bool
@@ -545,6 +545,17 @@ func selectedAdapterFamilies(targets []ReconcileTarget) []string {
 	set := map[string]struct{}{}
 	for _, target := range targets {
 		set[target.AdapterFamily] = struct{}{}
+	}
+	return sortedSetKeys(set)
+}
+
+func reconcileTargetInstances(targets []ReconcileTarget) []string {
+	set := map[string]struct{}{}
+	for _, target := range targets {
+		if target.Instance == "" {
+			continue
+		}
+		set[target.Instance] = struct{}{}
 	}
 	return sortedSetKeys(set)
 }
@@ -892,6 +903,11 @@ func (s *Service) reconcileJiraPushProfilesInMemory(
 ) ([]ReconcileResult, error) {
 	results := make([]ReconcileResult, 0, len(scopes))
 	for _, scope := range scopes {
+		targets := uniqueReconcileTargets(scope.Targets)
+		if len(targets) == 0 {
+			continue
+		}
+		adapterFamily := targets[0].AdapterFamily
 		profileOptions := append([]PlanOptions(nil), options...)
 		opts := resolvePlanOptions(options)
 		opts.SuppressMissingRoutes = scope.SuppressMissingRoutes
@@ -900,21 +916,21 @@ func (s *Service) reconcileJiraPushProfilesInMemory(
 		if scope.SuppressMissingRoutes || len(scope.ExcludedRemoteOwnedIssueKeys) > 0 || scope.PreserveNonActionablePlanResult {
 			profileOptions = []PlanOptions{opts}
 		}
-		profileCfg := configWithJiraTargets(cfg, scope.Target.AdapterFamily, []ReconcileTarget{scope.Target})
+		profileCfg := configWithJiraTargets(cfg, adapterFamily, targets)
 		result, err := reconcileOne(ctx, profileCfg, scope.Profile, windowFrom, windowTo, onlyDeleted, profileOptions...)
 		if err != nil {
 			return nil, err
 		}
-		if scope.SuppressMissingRoutes && isNoMatchingAutoInstanceFailurePlan(result.Plan, scope.Target.Instance) {
+		if scope.SuppressMissingRoutes && len(targets) == 1 && isNoMatchingAutoInstanceFailurePlan(result.Plan, targets[0].Instance) {
 			result.Plan = nil
 			result.NoPlan = &ReconcileNoPlanResult{
 				PlanCreated:             false,
-				AdapterFamily:           scope.Target.AdapterFamily,
-				AdapterFamilies:         []string{scope.Target.AdapterFamily},
+				AdapterFamily:           adapterFamily,
+				AdapterFamilies:         []string{adapterFamily},
 				RouteProfile:            scope.Profile,
 				WindowFromUTC:           windowFrom.UTC(),
 				WindowToUTC:             windowTo.UTC(),
-				ResolvedTargetInstances: []string{scope.Target.Instance},
+				ResolvedTargetInstances: []string{targets[0].Instance},
 				MatchedScopeCount:       0,
 				ActionableScopeCount:    0,
 				Reason:                  "no_matching_routes",
@@ -924,22 +940,22 @@ func (s *Service) reconcileJiraPushProfilesInMemory(
 			result.Plan = nil
 			result.NoPlan = &ReconcileNoPlanResult{
 				PlanCreated:             false,
-				AdapterFamily:           scope.Target.AdapterFamily,
-				AdapterFamilies:         []string{scope.Target.AdapterFamily},
+				AdapterFamily:           adapterFamily,
+				AdapterFamilies:         []string{adapterFamily},
 				RouteProfile:            scope.Profile,
 				WindowFromUTC:           windowFrom.UTC(),
 				WindowToUTC:             windowTo.UTC(),
-				ResolvedTargetInstances: []string{scope.Target.Instance},
+				ResolvedTargetInstances: reconcileTargetInstances(targets),
 				MatchedScopeCount:       0,
 				ActionableScopeCount:    0,
 				Reason:                  "no_matching_routes",
 			}
 		}
 		if scope.SuppressMissingRoutes && result.NoPlan != nil && len(result.NoPlan.ResolvedTargetInstances) == 0 {
-			result.NoPlan.ResolvedTargetInstances = []string{scope.Target.Instance}
+			result.NoPlan.ResolvedTargetInstances = reconcileTargetInstances(targets)
 		}
 		if result.Plan != nil {
-			result.ProfileSummaries = []ReconcileProfileSummary{summarizePlanProfile(scope.Target.AdapterFamily, scope.Profile, *result.Plan)}
+			result.ProfileSummaries = []ReconcileProfileSummary{summarizePlanProfile(adapterFamily, scope.Profile, *result.Plan)}
 		} else if result.NoPlan != nil {
 			result.ProfileSummaries = []ReconcileProfileSummary{summarizeNoPlanProfile(*result.NoPlan)}
 			result.NoPlan.ProfileSummaries = append([]ReconcileProfileSummary(nil), result.ProfileSummaries...)
@@ -960,7 +976,7 @@ func resolveJiraPushProfileScopes(cfg config.EffectiveConfig, family string, tar
 			}
 			profile := jiraTargetProfiles(cfg, target)[profileName]
 			scopes = append(scopes, pushProfileScope{
-				Target:    target,
+				Targets:   []ReconcileTarget{target},
 				Profile:   profileName,
 				Reporting: len(profile.ReportingTargets) > 0,
 			})
@@ -976,9 +992,17 @@ func resolveJiraPushProfileScopes(cfg config.EffectiveConfig, family string, tar
 			}
 		}
 		if len(scopes) > 1 {
-			for i := range scopes {
-				scopes[i].SuppressMissingRoutes = true
+			mergedTargets := make([]ReconcileTarget, 0, len(scopes))
+			reporting := false
+			for _, scope := range scopes {
+				mergedTargets = append(mergedTargets, scope.Targets...)
+				reporting = reporting || scope.Reporting
 			}
+			return []pushProfileScope{{
+				Targets:   uniqueReconcileTargets(mergedTargets),
+				Profile:   profileName,
+				Reporting: reporting,
+			}}, nil
 		}
 		return scopes, nil
 	}
@@ -1070,7 +1094,7 @@ func resolveAutomaticJiraPushProfileScopes(family string, targets []jiraRoutingT
 	for _, item := range targets {
 		if _, ok := item.profiles["default"]; ok {
 			scopes = append(scopes, pushProfileScope{
-				Target:                       item.target,
+				Targets:                      []ReconcileTarget{item.target},
 				Profile:                      "default",
 				SuppressMissingRoutes:        true,
 				ExcludedRemoteOwnedIssueKeys: autoReportingTargetIssuesForProfiles(item.profiles),
@@ -1094,7 +1118,7 @@ func resolveAutomaticJiraPushProfileScopes(family string, targets []jiraRoutingT
 		sort.Strings(reportingProfiles)
 		for _, profileName := range reportingProfiles {
 			scopes = append(scopes, pushProfileScope{
-				Target:                          item.target,
+				Targets:                         []ReconcileTarget{item.target},
 				Profile:                         profileName,
 				Reporting:                       true,
 				SuppressMissingRoutes:           true,

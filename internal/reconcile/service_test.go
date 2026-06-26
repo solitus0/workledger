@@ -2969,6 +2969,54 @@ func TestReconcileMultiPushPlanExplicitRouteProfileKeepsNameScopedAcrossInstance
 	}
 }
 
+func TestReconcileMultiPushPlanExplicitRouteProfileKeepsMissingRoutesAcrossInstances(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "ZAPP-1", "2026-05-01T08:00:00Z", 3600, "Unrouted work")
+
+	cfg := testJiraCloudConfig()
+	cfg.File.JiraCloud.Instances["ops"] = config.JiraCloudInstance{
+		BaseURL: "https://ops.atlassian.net",
+		Auth:    config.JiraCloudAuthBlock{Email: "user@example.com", Token: "t2"},
+		Routing: &config.JiraInstanceRoutes{
+			Profiles: map[string]config.JiraRouteProfile{
+				"default": {IssuePrefixes: []string{"OPS"}},
+			},
+		},
+	}
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			user:            jiracloud.User{AccountID: "u1"},
+			worklogsByIssue: map[string][]jiracloud.Worklog{},
+		}
+	}
+
+	result, err := service.ReconcileMultiPushPlan(
+		context.Background(),
+		cfg,
+		targetScope(jiraCloudTarget("product"), jiraCloudTarget("ops")),
+		"default",
+		mustTime("2026-05-01T00:00:00Z"),
+		mustTime("2026-05-01T23:59:59Z"),
+		false,
+	)
+	if err != nil {
+		t.Fatalf("ReconcileMultiPushPlan failed: %v", err)
+	}
+	if result.Plan == nil || result.NoPlan != nil {
+		t.Fatalf("expected saved blocked plan, got %#v", result)
+	}
+	if len(result.Plan.Items) != 1 {
+		t.Fatalf("expected one missing-route item, got %#v", result.Plan.Items)
+	}
+	item := result.Plan.Items[0]
+	if item.IssueKey != "ZAPP-1" || item.PlanStatus != "blocked" || item.ReasonCode != "missing_route" {
+		t.Fatalf("expected explicit profile to preserve missing route, got %#v", item)
+	}
+}
+
 func TestReconcileMultiPushPlanRejectsAmbiguousAutomaticReportingProfiles(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
