@@ -224,11 +224,13 @@ type ReconcileProfileSummary struct {
 	Reason                  string
 }
 
-type autoRouteProfileSelection struct {
-	AdapterFamily string
-	Instance      string
-	Profile       string
-	Reporting     bool
+type pushProfileScope struct {
+	Target                          ReconcileTarget
+	Profile                         string
+	Reporting                       bool
+	SuppressMissingRoutes           bool
+	ExcludedRemoteOwnedIssueKeys    []string
+	PreserveNonActionablePlanResult bool
 }
 
 func NewService(store *sqlitestore.Store) *Service {
@@ -248,8 +250,7 @@ func NewService(store *sqlitestore.Store) *Service {
 }
 
 type ReconcileScope struct {
-	AdapterFamilies []string
-	Instances       []string
+	Targets []ReconcileTarget
 }
 
 func normalizePlanSummary(plan *Plan) {
@@ -489,23 +490,13 @@ func aggregateNoPlanResult(routeProfile string, windowFrom, windowTo time.Time, 
 	}
 }
 
-func scopeSelectsClockify(instances []string) bool {
-	if len(instances) == 0 {
-		return true
-	}
-	for _, instance := range instances {
-		if instance == config.ClockifyInstanceName {
-			return true
-		}
-	}
-	return false
-}
-
-func filterJiraScopeConfig(cfg config.EffectiveConfig, family string, instances []string) config.EffectiveConfig {
+func configWithJiraTargets(cfg config.EffectiveConfig, family string, targets []ReconcileTarget) config.EffectiveConfig {
 	filtered := cfg
 	allowed := map[string]struct{}{}
-	for _, instance := range instances {
-		allowed[instance] = struct{}{}
+	for _, target := range targets {
+		if target.AdapterFamily == family {
+			allowed[target.Instance] = struct{}{}
+		}
 	}
 	switch family {
 	case "jira-cloud":
@@ -540,6 +531,22 @@ func filterJiraScopeConfig(cfg config.EffectiveConfig, family string, instances 
 		filtered.File.JiraData = &copied
 	}
 	return filtered
+}
+
+func reconcileTargetsByFamily(targets []ReconcileTarget) map[string][]ReconcileTarget {
+	grouped := map[string][]ReconcileTarget{}
+	for _, target := range uniqueReconcileTargets(targets) {
+		grouped[target.AdapterFamily] = append(grouped[target.AdapterFamily], target)
+	}
+	return grouped
+}
+
+func selectedAdapterFamilies(targets []ReconcileTarget) []string {
+	set := map[string]struct{}{}
+	for _, target := range targets {
+		set[target.AdapterFamily] = struct{}{}
+	}
+	return sortedSetKeys(set)
 }
 
 func mergePlans(direction string, cfg config.EffectiveConfig, windowFrom, windowTo time.Time, plans []Plan) (Plan, error) {
@@ -590,69 +597,51 @@ func mergePlans(direction string, cfg config.EffectiveConfig, windowFrom, window
 }
 
 func (s *Service) CreateMultiPullPlan(ctx context.Context, cfg config.EffectiveConfig, scope ReconcileScope, windowFrom, windowTo time.Time, options ...PlanOptions) (Plan, error) {
-	plans := make([]Plan, 0, len(scope.AdapterFamilies))
-	for _, family := range scope.AdapterFamilies {
-		switch family {
+	targets := uniqueReconcileTargets(scope.Targets)
+	plans := make([]Plan, 0, len(targets))
+	for _, target := range targets {
+		switch target.AdapterFamily {
 		case "clockify":
-			if !scopeSelectsClockify(scope.Instances) {
-				continue
-			}
 			plan, err := s.buildClockifyPullPlan(ctx, cfg, windowFrom, windowTo, options...)
 			if err != nil {
 				failure, ok := classifyPullPlanFailure(err)
 				if !ok {
 					return Plan{}, err
 				}
-				plan, err = s.buildCheckFailedPullPlan(cfg, family, config.ClockifyInstanceName, windowFrom, windowTo, failure)
+				plan, err = s.buildCheckFailedPullPlan(cfg, target.AdapterFamily, target.Instance, windowFrom, windowTo, failure)
 				if err != nil {
 					return Plan{}, err
 				}
 			}
 			plans = append(plans, plan)
 		case "jira-cloud":
-			filtered := filterJiraScopeConfig(cfg, family, scope.Instances)
-			instances := make([]string, 0, len(filtered.File.JiraCloud.Instances))
-			for instance := range filtered.File.JiraCloud.Instances {
-				instances = append(instances, instance)
-			}
-			sort.Strings(instances)
-			for _, instance := range instances {
-				plan, err := s.buildJiraCloudPullPlan(ctx, filtered, instance, windowFrom, windowTo, options...)
-				if err != nil {
-					failure, ok := classifyPullPlanFailure(err)
-					if !ok {
-						return Plan{}, err
-					}
-					plan, err = s.buildCheckFailedPullPlan(cfg, family, instance, windowFrom, windowTo, failure)
-					if err != nil {
-						return Plan{}, err
-					}
+			plan, err := s.buildJiraCloudPullPlan(ctx, cfg, target.Instance, windowFrom, windowTo, options...)
+			if err != nil {
+				failure, ok := classifyPullPlanFailure(err)
+				if !ok {
+					return Plan{}, err
 				}
-				plans = append(plans, plan)
+				plan, err = s.buildCheckFailedPullPlan(cfg, target.AdapterFamily, target.Instance, windowFrom, windowTo, failure)
+				if err != nil {
+					return Plan{}, err
+				}
 			}
+			plans = append(plans, plan)
 		case "jira-data-center":
-			filtered := filterJiraScopeConfig(cfg, family, scope.Instances)
-			instances := make([]string, 0, len(filtered.File.JiraData.Instances))
-			for instance := range filtered.File.JiraData.Instances {
-				instances = append(instances, instance)
-			}
-			sort.Strings(instances)
-			for _, instance := range instances {
-				plan, err := s.buildJiraDataPullPlan(ctx, filtered, instance, windowFrom, windowTo, options...)
-				if err != nil {
-					failure, ok := classifyPullPlanFailure(err)
-					if !ok {
-						return Plan{}, err
-					}
-					plan, err = s.buildCheckFailedPullPlan(cfg, family, instance, windowFrom, windowTo, failure)
-					if err != nil {
-						return Plan{}, err
-					}
+			plan, err := s.buildJiraDataPullPlan(ctx, cfg, target.Instance, windowFrom, windowTo, options...)
+			if err != nil {
+				failure, ok := classifyPullPlanFailure(err)
+				if !ok {
+					return Plan{}, err
 				}
-				plans = append(plans, plan)
+				plan, err = s.buildCheckFailedPullPlan(cfg, target.AdapterFamily, target.Instance, windowFrom, windowTo, failure)
+				if err != nil {
+					return Plan{}, err
+				}
 			}
+			plans = append(plans, plan)
 		default:
-			return Plan{}, fmt.Errorf("unsupported adapter family %q", family)
+			return Plan{}, fmt.Errorf("unsupported adapter family %q", target.AdapterFamily)
 		}
 	}
 	if len(plans) == 1 {
@@ -768,17 +757,24 @@ func (s *Service) buildCheckFailedPullPlan(cfg config.EffectiveConfig, family, i
 }
 
 func (s *Service) ReconcileMultiPushPlan(ctx context.Context, cfg config.EffectiveConfig, scope ReconcileScope, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) (ReconcileResult, error) {
-	plans := make([]Plan, 0, len(scope.AdapterFamilies))
+	targets := uniqueReconcileTargets(scope.Targets)
+	if strings.TrimSpace(routeProfile) != "" {
+		for _, target := range targets {
+			if target.AdapterFamily == "clockify" {
+				return ReconcileResult{}, ValidationError{Message: "--route-profile can only be used when all selected reconcile targets are jira-cloud or jira-data-center"}
+			}
+		}
+	}
+
+	plans := make([]Plan, 0, len(targets))
 	profileSummaries := make([]ReconcileProfileSummary, 0)
 	noPlanProfileSummaries := make([]ReconcileProfileSummary, 0)
 	var lastNoPlan *ReconcileNoPlanResult
 	allNoPlan := true
-	for _, family := range scope.AdapterFamilies {
+	for _, family := range selectedAdapterFamilies(targets) {
+		familyTargets := reconcileTargetsByFamily(targets)[family]
 		switch family {
 		case "clockify":
-			if !scopeSelectsClockify(scope.Instances) {
-				continue
-			}
 			plan, err := s.buildClockifyPushPlan(ctx, cfg, windowFrom, windowTo, onlyDeleted, options...)
 			if err != nil {
 				return ReconcileResult{}, err
@@ -787,8 +783,11 @@ func (s *Service) ReconcileMultiPushPlan(ctx context.Context, cfg config.Effecti
 			plans = append(plans, plan)
 			allNoPlan = false
 		case "jira-cloud":
-			filtered := filterJiraScopeConfig(cfg, family, scope.Instances)
-			results, err := s.reconcileJiraCloudPushProfilesInMemory(ctx, filtered, routeProfile, windowFrom, windowTo, onlyDeleted, options...)
+			scopes, err := resolveJiraPushProfileScopes(cfg, family, familyTargets, routeProfile)
+			if err != nil {
+				return ReconcileResult{}, err
+			}
+			results, err := s.reconcileJiraPushProfilesInMemory(ctx, cfg, scopes, windowFrom, windowTo, onlyDeleted, s.reconcileJiraCloudPushPlanInMemory, options...)
 			if err != nil {
 				return ReconcileResult{}, err
 			}
@@ -816,8 +815,11 @@ func (s *Service) ReconcileMultiPushPlan(ctx context.Context, cfg config.Effecti
 				}
 			}
 		case "jira-data-center":
-			filtered := filterJiraScopeConfig(cfg, family, scope.Instances)
-			results, err := s.reconcileJiraDataPushProfilesInMemory(ctx, filtered, routeProfile, windowFrom, windowTo, onlyDeleted, options...)
+			scopes, err := resolveJiraPushProfileScopes(cfg, family, familyTargets, routeProfile)
+			if err != nil {
+				return ReconcileResult{}, err
+			}
+			results, err := s.reconcileJiraPushProfilesInMemory(ctx, cfg, scopes, windowFrom, windowTo, onlyDeleted, s.reconcileJiraDataPushPlanInMemory, options...)
 			if err != nil {
 				return ReconcileResult{}, err
 			}
@@ -878,72 +880,66 @@ func (s *Service) ReconcileMultiPushPlan(ctx context.Context, cfg config.Effecti
 	return ReconcileResult{Plan: &merged, ProfileSummaries: append([]ReconcileProfileSummary(nil), profileSummaries...)}, nil
 }
 
-func (s *Service) reconcileJiraCloudPushProfilesInMemory(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) ([]ReconcileResult, error) {
-	selections := []autoRouteProfileSelection{{AdapterFamily: "jira-cloud", Profile: routeProfile}}
-	autoMode := strings.TrimSpace(routeProfile) == ""
-	if autoMode {
-		var err error
-		selections, err = resolveAutoJiraCloudPushRouteProfiles(cfg)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	results := make([]ReconcileResult, 0, len(selections))
-	for _, selection := range selections {
+func (s *Service) reconcileJiraPushProfilesInMemory(
+	ctx context.Context,
+	cfg config.EffectiveConfig,
+	scopes []pushProfileScope,
+	windowFrom time.Time,
+	windowTo time.Time,
+	onlyDeleted bool,
+	reconcileOne func(context.Context, config.EffectiveConfig, string, time.Time, time.Time, bool, ...PlanOptions) (ReconcileResult, error),
+	options ...PlanOptions,
+) ([]ReconcileResult, error) {
+	results := make([]ReconcileResult, 0, len(scopes))
+	for _, scope := range scopes {
 		profileOptions := append([]PlanOptions(nil), options...)
-		profileCfg := cfg
-		if autoMode {
-			opts := resolvePlanOptions(options)
-			opts.SuppressMissingRoutes = true
-			if !selection.Reporting {
-				opts.ExcludedRemoteOwnedIssueKeys = autoReportingTargetIssues(cfg, selection.AdapterFamily, selection.Instance)
-			}
-			if selection.Reporting {
-				opts.PreserveNonActionableReportingPlan = true
-			}
+		opts := resolvePlanOptions(options)
+		opts.SuppressMissingRoutes = scope.SuppressMissingRoutes
+		opts.ExcludedRemoteOwnedIssueKeys = append([]string(nil), scope.ExcludedRemoteOwnedIssueKeys...)
+		opts.PreserveNonActionableReportingPlan = scope.PreserveNonActionablePlanResult
+		if scope.SuppressMissingRoutes || len(scope.ExcludedRemoteOwnedIssueKeys) > 0 || scope.PreserveNonActionablePlanResult {
 			profileOptions = []PlanOptions{opts}
-			profileCfg = filterJiraScopeConfig(cfg, selection.AdapterFamily, []string{selection.Instance})
 		}
-		result, err := s.reconcileJiraCloudPushPlanInMemory(ctx, profileCfg, selection.Profile, windowFrom, windowTo, onlyDeleted, profileOptions...)
+		profileCfg := configWithJiraTargets(cfg, scope.Target.AdapterFamily, []ReconcileTarget{scope.Target})
+		result, err := reconcileOne(ctx, profileCfg, scope.Profile, windowFrom, windowTo, onlyDeleted, profileOptions...)
 		if err != nil {
 			return nil, err
 		}
-		if autoMode && isNoMatchingAutoInstanceFailurePlan(result.Plan, selection.Instance) {
+		if scope.SuppressMissingRoutes && isNoMatchingAutoInstanceFailurePlan(result.Plan, scope.Target.Instance) {
 			result.Plan = nil
 			result.NoPlan = &ReconcileNoPlanResult{
 				PlanCreated:             false,
-				AdapterFamily:           "jira-cloud",
-				AdapterFamilies:         []string{"jira-cloud"},
-				RouteProfile:            selection.Profile,
+				AdapterFamily:           scope.Target.AdapterFamily,
+				AdapterFamilies:         []string{scope.Target.AdapterFamily},
+				RouteProfile:            scope.Profile,
 				WindowFromUTC:           windowFrom.UTC(),
 				WindowToUTC:             windowTo.UTC(),
-				ResolvedTargetInstances: []string{selection.Instance},
+				ResolvedTargetInstances: []string{scope.Target.Instance},
 				MatchedScopeCount:       0,
 				ActionableScopeCount:    0,
 				Reason:                  "no_matching_routes",
 			}
 		}
-		if autoMode && result.Plan != nil && len(result.Plan.Items) == 0 {
+		if scope.SuppressMissingRoutes && result.Plan != nil && len(result.Plan.Items) == 0 {
 			result.Plan = nil
 			result.NoPlan = &ReconcileNoPlanResult{
 				PlanCreated:             false,
-				AdapterFamily:           "jira-cloud",
-				AdapterFamilies:         []string{"jira-cloud"},
-				RouteProfile:            selection.Profile,
+				AdapterFamily:           scope.Target.AdapterFamily,
+				AdapterFamilies:         []string{scope.Target.AdapterFamily},
+				RouteProfile:            scope.Profile,
 				WindowFromUTC:           windowFrom.UTC(),
 				WindowToUTC:             windowTo.UTC(),
-				ResolvedTargetInstances: []string{selection.Instance},
+				ResolvedTargetInstances: []string{scope.Target.Instance},
 				MatchedScopeCount:       0,
 				ActionableScopeCount:    0,
 				Reason:                  "no_matching_routes",
 			}
 		}
-		if autoMode && result.NoPlan != nil && len(result.NoPlan.ResolvedTargetInstances) == 0 {
-			result.NoPlan.ResolvedTargetInstances = []string{selection.Instance}
+		if scope.SuppressMissingRoutes && result.NoPlan != nil && len(result.NoPlan.ResolvedTargetInstances) == 0 {
+			result.NoPlan.ResolvedTargetInstances = []string{scope.Target.Instance}
 		}
 		if result.Plan != nil {
-			result.ProfileSummaries = []ReconcileProfileSummary{summarizePlanProfile("jira-cloud", selection.Profile, *result.Plan)}
+			result.ProfileSummaries = []ReconcileProfileSummary{summarizePlanProfile(scope.Target.AdapterFamily, scope.Profile, *result.Plan)}
 		} else if result.NoPlan != nil {
 			result.ProfileSummaries = []ReconcileProfileSummary{summarizeNoPlanProfile(*result.NoPlan)}
 			result.NoPlan.ProfileSummaries = append([]ReconcileProfileSummary(nil), result.ProfileSummaries...)
@@ -953,120 +949,197 @@ func (s *Service) reconcileJiraCloudPushProfilesInMemory(ctx context.Context, cf
 	return results, nil
 }
 
-func (s *Service) reconcileJiraDataPushProfilesInMemory(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) ([]ReconcileResult, error) {
-	selections := []autoRouteProfileSelection{{AdapterFamily: "jira-data-center", Profile: routeProfile}}
-	autoMode := strings.TrimSpace(routeProfile) == ""
-	if autoMode {
-		var err error
-		selections, err = resolveAutoJiraDataPushRouteProfiles(cfg)
-		if err != nil {
-			return nil, err
+func resolveJiraPushProfileScopes(cfg config.EffectiveConfig, family string, targets []ReconcileTarget, routeProfile string) ([]pushProfileScope, error) {
+	targets = uniqueReconcileTargets(targets)
+	profileName := strings.TrimSpace(routeProfile)
+	if profileName != "" {
+		scopes := make([]pushProfileScope, 0, len(targets))
+		for _, target := range targets {
+			if !jiraTargetHasRouteProfile(cfg, target.AdapterFamily, target.Instance, profileName) {
+				continue
+			}
+			profile := jiraTargetProfiles(cfg, target)[profileName]
+			scopes = append(scopes, pushProfileScope{
+				Target:    target,
+				Profile:   profileName,
+				Reporting: len(profile.ReportingTargets) > 0,
+			})
 		}
+		if len(scopes) == 0 {
+			switch family {
+			case "jira-cloud":
+				return nil, fmt.Errorf("jira_cloud route profile %q is not configured", profileName)
+			case "jira-data-center":
+				return nil, fmt.Errorf("jira_data_center route profile %q is not configured", profileName)
+			default:
+				return nil, fmt.Errorf("unsupported adapter family %q", family)
+			}
+		}
+		if len(scopes) > 1 {
+			for i := range scopes {
+				scopes[i].SuppressMissingRoutes = true
+			}
+		}
+		return scopes, nil
 	}
 
-	results := make([]ReconcileResult, 0, len(selections))
-	for _, selection := range selections {
-		profileOptions := append([]PlanOptions(nil), options...)
-		profileCfg := cfg
-		if autoMode {
-			opts := resolvePlanOptions(options)
-			opts.SuppressMissingRoutes = true
-			if !selection.Reporting {
-				opts.ExcludedRemoteOwnedIssueKeys = autoReportingTargetIssues(cfg, selection.AdapterFamily, selection.Instance)
-			}
-			if selection.Reporting {
-				opts.PreserveNonActionableReportingPlan = true
-			}
-			profileOptions = []PlanOptions{opts}
-			profileCfg = filterJiraScopeConfig(cfg, selection.AdapterFamily, []string{selection.Instance})
+	routingTargets := make([]jiraRoutingTarget, 0, len(targets))
+	for _, target := range targets {
+		profiles := jiraTargetProfiles(cfg, target)
+		if len(profiles) == 0 {
+			continue
 		}
-		result, err := s.reconcileJiraDataPushPlanInMemory(ctx, profileCfg, selection.Profile, windowFrom, windowTo, onlyDeleted, profileOptions...)
-		if err != nil {
-			return nil, err
-		}
-		if autoMode && isNoMatchingAutoInstanceFailurePlan(result.Plan, selection.Instance) {
-			result.Plan = nil
-			result.NoPlan = &ReconcileNoPlanResult{
-				PlanCreated:             false,
-				AdapterFamily:           "jira-data-center",
-				AdapterFamilies:         []string{"jira-data-center"},
-				RouteProfile:            selection.Profile,
-				WindowFromUTC:           windowFrom.UTC(),
-				WindowToUTC:             windowTo.UTC(),
-				ResolvedTargetInstances: []string{selection.Instance},
-				MatchedScopeCount:       0,
-				ActionableScopeCount:    0,
-				Reason:                  "no_matching_routes",
-			}
-		}
-		if autoMode && result.Plan != nil && len(result.Plan.Items) == 0 {
-			result.Plan = nil
-			result.NoPlan = &ReconcileNoPlanResult{
-				PlanCreated:             false,
-				AdapterFamily:           "jira-data-center",
-				AdapterFamilies:         []string{"jira-data-center"},
-				RouteProfile:            selection.Profile,
-				WindowFromUTC:           windowFrom.UTC(),
-				WindowToUTC:             windowTo.UTC(),
-				ResolvedTargetInstances: []string{selection.Instance},
-				MatchedScopeCount:       0,
-				ActionableScopeCount:    0,
-				Reason:                  "no_matching_routes",
-			}
-		}
-		if autoMode && result.NoPlan != nil && len(result.NoPlan.ResolvedTargetInstances) == 0 {
-			result.NoPlan.ResolvedTargetInstances = []string{selection.Instance}
-		}
-		if result.Plan != nil {
-			result.ProfileSummaries = []ReconcileProfileSummary{summarizePlanProfile("jira-data-center", selection.Profile, *result.Plan)}
-		} else if result.NoPlan != nil {
-			result.ProfileSummaries = []ReconcileProfileSummary{summarizeNoPlanProfile(*result.NoPlan)}
-			result.NoPlan.ProfileSummaries = append([]ReconcileProfileSummary(nil), result.ProfileSummaries...)
-		}
-		results = append(results, result)
+		routingTargets = append(routingTargets, jiraRoutingTarget{
+			target:   target,
+			profiles: profiles,
+		})
 	}
-	return results, nil
+	return resolveAutomaticJiraPushProfileScopes(family, routingTargets)
 }
 
-func autoReportingTargetIssues(cfg config.EffectiveConfig, adapterFamily, instanceName string) []string {
+type jiraRoutingTarget struct {
+	target   ReconcileTarget
+	profiles map[string]config.JiraRouteProfile
+}
+
+func resolveJiraRouteProfileForTargets(family, profileName string, targets []jiraRoutingTarget) (jiraRouteProfile, error) {
+	if len(targets) == 0 {
+		switch family {
+		case "jira-cloud":
+			return jiraRouteProfile{}, errors.New("jira_cloud routing is required for push")
+		case "jira-data-center":
+			return jiraRouteProfile{}, errors.New("jira_data_center routing is required for push")
+		default:
+			return jiraRouteProfile{}, fmt.Errorf("unsupported adapter family %q", family)
+		}
+	}
+	if strings.TrimSpace(profileName) == "" {
+		profileName = "default"
+	}
+
+	routes := make([]jiraResolvedRouteRule, 0)
+	found := false
+	for _, target := range targets {
+		profile, ok := target.profiles[profileName]
+		if !ok {
+			continue
+		}
+		found = true
+		for _, prefix := range profile.IssuePrefixes {
+			routes = append(routes, jiraResolvedRouteRule{
+				prefix:         prefix,
+				targetInstance: target.target.Instance,
+			})
+		}
+		for prefix, targetIssue := range profile.ReportingTargets {
+			routes = append(routes, jiraResolvedRouteRule{
+				prefix:         prefix,
+				targetInstance: target.target.Instance,
+				targetIssue:    targetIssue,
+				reporting:      true,
+			})
+		}
+	}
+	if !found {
+		switch family {
+		case "jira-cloud":
+			return jiraRouteProfile{}, fmt.Errorf("jira_cloud route profile %q is not configured", profileName)
+		case "jira-data-center":
+			return jiraRouteProfile{}, fmt.Errorf("jira_data_center route profile %q is not configured", profileName)
+		default:
+			return jiraRouteProfile{}, fmt.Errorf("unsupported adapter family %q", family)
+		}
+	}
+	return jiraRouteProfile{routes: routes}, nil
+}
+
+func resolveAutomaticJiraPushProfileScopes(family string, targets []jiraRoutingTarget) ([]pushProfileScope, error) {
+	if len(targets) == 0 {
+		switch family {
+		case "jira-cloud":
+			return nil, ValidationError{Message: "jira_cloud routing is required for push"}
+		case "jira-data-center":
+			return nil, ValidationError{Message: "jira_data_center routing is required for push"}
+		default:
+			return nil, fmt.Errorf("unsupported adapter family %q", family)
+		}
+	}
+
+	scopes := make([]pushProfileScope, 0)
+	prefixOwners := map[string][]string{}
+	for _, item := range targets {
+		if _, ok := item.profiles["default"]; ok {
+			scopes = append(scopes, pushProfileScope{
+				Target:                       item.target,
+				Profile:                      "default",
+				SuppressMissingRoutes:        true,
+				ExcludedRemoteOwnedIssueKeys: autoReportingTargetIssuesForProfiles(item.profiles),
+			})
+		}
+
+		reportingProfiles := make([]string, 0)
+		for profileName, profile := range item.profiles {
+			if profileName == "default" || len(profile.ReportingTargets) == 0 {
+				continue
+			}
+			reportingProfiles = append(reportingProfiles, profileName)
+			for prefix := range profile.ReportingTargets {
+				prefix = strings.TrimSpace(prefix)
+				if prefix == "" {
+					continue
+				}
+				prefixOwners[prefix] = append(prefixOwners[prefix], item.target.Instance+"/"+profileName)
+			}
+		}
+		sort.Strings(reportingProfiles)
+		for _, profileName := range reportingProfiles {
+			scopes = append(scopes, pushProfileScope{
+				Target:                          item.target,
+				Profile:                         profileName,
+				Reporting:                       true,
+				SuppressMissingRoutes:           true,
+				PreserveNonActionablePlanResult: true,
+			})
+		}
+	}
+
+	ambiguous := make([]string, 0)
+	for prefix, owners := range prefixOwners {
+		uniqueOwners := map[string]struct{}{}
+		for _, owner := range owners {
+			uniqueOwners[owner] = struct{}{}
+		}
+		if len(uniqueOwners) <= 1 {
+			continue
+		}
+		ownerList := sortedSetKeys(uniqueOwners)
+		ambiguous = append(ambiguous, fmt.Sprintf("%s (%s)", prefix, strings.Join(ownerList, ", ")))
+	}
+	if len(ambiguous) > 0 {
+		sort.Strings(ambiguous)
+		switch family {
+		case "jira-cloud":
+			return nil, ValidationError{Message: "automatic jira-cloud reporting reconcile is ambiguous for prefixes " + strings.Join(ambiguous, "; ") + "; rerun with --route-profile <name>"}
+		case "jira-data-center":
+			return nil, ValidationError{Message: "automatic jira-data-center reporting reconcile is ambiguous for prefixes " + strings.Join(ambiguous, "; ") + "; rerun with --route-profile <name>"}
+		default:
+			return nil, fmt.Errorf("unsupported adapter family %q", family)
+		}
+	}
+
+	return scopes, nil
+}
+
+func autoReportingTargetIssuesForProfiles(profiles map[string]config.JiraRouteProfile) []string {
 	issues := map[string]struct{}{}
-	switch adapterFamily {
-	case "jira-cloud":
-		if cfg.File.JiraCloud == nil {
-			return nil
+	for profileName, profile := range profiles {
+		if profileName == "default" {
+			continue
 		}
-		instance, ok := cfg.File.JiraCloud.Instances[instanceName]
-		if !ok || instance.Routing == nil {
-			return nil
-		}
-		for profileName, profile := range instance.Routing.Profiles {
-			if profileName == "default" {
-				continue
-			}
-			for _, targetIssue := range profile.ReportingTargets {
-				targetIssue = strings.TrimSpace(targetIssue)
-				if targetIssue != "" {
-					issues[targetIssue] = struct{}{}
-				}
-			}
-		}
-	case "jira-data-center":
-		if cfg.File.JiraData == nil {
-			return nil
-		}
-		instance, ok := cfg.File.JiraData.Instances[instanceName]
-		if !ok || instance.Routing == nil {
-			return nil
-		}
-		for profileName, profile := range instance.Routing.Profiles {
-			if profileName == "default" {
-				continue
-			}
-			for _, targetIssue := range profile.ReportingTargets {
-				targetIssue = strings.TrimSpace(targetIssue)
-				if targetIssue != "" {
-					issues[targetIssue] = struct{}{}
-				}
+		for _, targetIssue := range profile.ReportingTargets {
+			targetIssue = strings.TrimSpace(targetIssue)
+			if targetIssue != "" {
+				issues[targetIssue] = struct{}{}
 			}
 		}
 	}

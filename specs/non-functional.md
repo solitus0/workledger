@@ -461,8 +461,8 @@ Placement rule:
 - [ ] NFR-402: One Jira route profile shall use exactly one delivery mode: `issue_prefixes` or `reporting_targets`.
 - [ ] NFR-403: The same source prefix may map to different reporting issues in different route profiles.
 - [ ] NFR-404: The same reporting target issue may be referenced by more than one route profile.
-- [ ] NFR-405: Reporting delivery shall always require explicit `--route-profile` selection.
-- [ ] NFR-406: Reporting delivery shall never be activated implicitly through the `default` profile.
+- [ ] NFR-405: Explicit `--route-profile` selection shall remain the only way to limit Jira push planning to one named route profile.
+- [ ] NFR-406: Jira push planning without `--route-profile` shall include non-default reporting-mode profiles in addition to `default`.
 - [ ] NFR-407: A reporting route profile shall resolve only to instances in the selected Jira adapter family.
 - [ ] NFR-408: Jira pull-scope exclusion for reporting-loop prevention shall be defined by explicit issue keys.
 - [ ] NFR-409: Jira pull-scope exclusion for reporting-loop prevention shall not use project-level exclusion.
@@ -471,6 +471,7 @@ Placement rule:
 - [ ] NFR-412: Config validation shall fail when one route profile mixes `issue_prefixes` and `reporting_targets`.
 - [ ] NFR-413: Config validation shall fail when the implicit `default` route profile uses `reporting_targets`.
 - [ ] NFR-414: Planning shall fail clearly when a requested non-default route profile does not exist under any instance in the selected adapter family.
+- [ ] NFR-414a: Automatic Jira reporting inclusion shall fail clearly when the same source prefix is owned by more than one selected reporting-mode route profile in the same adapter family.
 
 ## Reconcile Planning
 - [ ] NFR-415: Each saved plan shall persist `plan_direction` as `pull` or `push`.
@@ -484,11 +485,11 @@ Placement rule:
 - [ ] NFR-423: `plan reconcile` shall persist non-importable remote observations as saved plan findings.
 - [ ] NFR-423a: one `plan reconcile` invocation with repeated adapters or instances shall persist at most one saved plan.
 - [ ] NFR-424: Push planning shall group active selected local worklogs by target adapter family, target adapter instance, issue key, and selected reconcile time window.
-- [ ] NFR-425: A delete-only push scope shall exist when tombstones leave no active local rows in the same target, issue, and selected reconcile window.
+- [ ] NFR-425: Push planning shall also discover owned remote scopes directly from the selected adapter window, including scopes that currently have no local rows.
 - [ ] NFR-426: Pull planning shall group remote rows into canonical reconcile scopes after normalization.
 - [ ] NFR-427: Pull planning shall not treat remote row IDs as canonical local identity.
 - [ ] NFR-428: Pull planning shall not treat remote row boundaries as canonical local identity.
-- [ ] NFR-429: A pull plan shall not recreate a local allocation protected by a matching tombstone.
+- [ ] NFR-429: Pull planning shall compare remote rows only against the current active local ledger state.
 - [ ] NFR-430: Saved plan items shall persist `plan_direction`.
 - [ ] NFR-431: Saved plan items shall persist `planned_action`.
 - [ ] NFR-432: Each saved plan item shall represent one reconcile scope.
@@ -499,11 +500,13 @@ Placement rule:
 - [ ] NFR-436a: For push plans, `comparison_status=remote_missing` shall be used when the normalized remote row count for the saved scope is zero, matching displayed `remote_row_count=0`.
 - [ ] NFR-437: Per-entry remote worklog identity shall not be part of reconcile identity.
 - [ ] NFR-438: Remote cleanup and replacement shall consider only remote rows inside the saved target adapter instance, target issue, and saved reconcile time window, deleting unmatched rows and creating only missing saved rows.
-- [ ] NFR-439: No local rows and no tombstone-backed delete intent shall not trigger cleanup.
+- [ ] NFR-438a: Jira-family reporting cleanup and replacement shall consider only current-user remote worklogs; foreign-authored rows may be reported as present but shall not make an otherwise empty current-user scope actionable or blocked.
+- [ ] NFR-439: An owned remote scope with no local rows in the selected window shall still trigger cleanup planning when remote rows exist.
 - [ ] NFR-440: Reporting window membership shall be determined by worklog `started_at` only.
 - [ ] NFR-441: Reporting window membership shall not use interval overlap.
 - [ ] NFR-442: Reporting window membership shall not use row-splitting across boundaries.
-- [ ] NFR-443: A reporting reconcile that finds only non-actionable scopes shall not persist a saved plan.
+- [ ] NFR-443: An explicit reporting-only reconcile that finds only non-actionable scopes shall not persist a saved plan.
+- [ ] NFR-443a: In automatic multi-profile Jira push reconcile, exact-match reporting scopes may be persisted as skipped saved-plan items when another selected adapter or profile causes a merged saved plan to be persisted.
 
 ## Saved Plans
 - [ ] NFR-444: Each saved plan shall retain a deterministic `config_fingerprint`.

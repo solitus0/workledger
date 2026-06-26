@@ -7,6 +7,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Changed
+- Bare Jira push `workledger plan reconcile` now includes non-default reporting profiles automatically, surfaces per-profile breakdowns in reconcile output, and shows persisted route profiles in `plan show`.
+
+### Fixed
+- `workledger plan reconcile --route-profile` now fails fast when no Jira target is selected, instead of falling through to unrelated adapters such as Clockify.
+- Implicit all-target reconcile validation now includes the concrete skipped-target reasons when every configured target is invalid.
+
 ## [0.1.6] - 2026-06-02
 
 ### Added

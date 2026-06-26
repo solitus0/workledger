@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -47,7 +48,7 @@ const (
 	worklogsContextExample = "  workledger worklogs context --today --day-start 09:00 --day-end 17:30\n  workledger worklogs context --from 2026-05-14 --to 2026-05-14 --lunch 12:00-13:00"
 	worklogsApplyExample   = "  workledger worklogs apply --file payload.json\n  workledger worklogs apply --stdin\n\nPayload timestamps:\n  started_at uses the same local timestamp grammar as --started\n  started_at_utc uses RFC3339 UTC, e.g. 2026-05-14T09:00:00Z"
 	totalsExample          = "  workledger totals --today\n  workledger totals --from 2026-05-14 --to 2026-05-16 --adapter clockify"
-	planReconcileExample   = "  workledger plan reconcile --push --adapter clockify --today\n  workledger plan reconcile --pull --adapter jira-cloud --from 2026-05-14 --to 2026-05-16"
+	planReconcileExample   = "  workledger plan reconcile --today\n  workledger plan reconcile --pull --current-week"
 	planListExample        = "  workledger plan list --today\n  workledger plan list --from 2026-05-14 --to 2026-05-16"
 	weekOffsetHelp         = "Shift weekday filters by N weeks; only valid with --mon..--sun"
 )
@@ -1352,7 +1353,6 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	return cmd
 }
 
-
 func (a *app) newStatusCommand() *cobra.Command {
 	var adapter string
 	var instance string
@@ -2531,7 +2531,6 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 	var adapters []string
 	var instances []string
 	var routeProfile string
-	var onlyDeleted bool
 	var today bool
 	var yesterday bool
 	var monday bool
@@ -2556,11 +2555,12 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 		Example: planReconcileExample,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			if pull == push {
-				return a.fail(mode, 2, "validation_error", "reconcile requires exactly one of --pull or --push", nil)
+			direction, err := resolveReconcileDirection(pull, push)
+			if err != nil {
+				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
-			if pull && onlyDeleted {
-				return a.fail(mode, 2, "validation_error", "--only-deleted can only be used with --push", nil)
+			if direction == "pull" && strings.TrimSpace(routeProfile) != "" {
+				return a.fail(mode, 2, "validation_error", "--route-profile can only be used with --push", nil)
 			}
 
 			effective, store, cleanup, err := a.loadStore(mode, true, "plan reconcile")
@@ -2580,47 +2580,78 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
 
-			selectedAdapters, selectedInstances, err := validateReconcileScope(effective, adapters, instances)
+			selection, err := reconcile.ResolveSelection(effective, reconcile.SelectionRequest{
+				Adapters:     adapters,
+				Instances:    instances,
+				Direction:    direction,
+				RouteProfile: routeProfile,
+			})
 			if err != nil {
+				var selectionErr reconcile.SelectionError
+				if errors.As(err, &selectionErr) {
+					return a.fail(mode, 2, "validation_error", selectionErr.Error(), reconcileSkippedTargetsDetails(selectionErr.SkippedTargets))
+				}
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
 
 			plans := reconcile.NewService(store)
 			var plan reconcile.Plan
 			var result reconcile.ReconcileResult
-			scope := reconcile.ReconcileScope{AdapterFamilies: selectedAdapters, Instances: selectedInstances}
-			if pull {
+			scope := reconcile.ReconcileScope{Targets: selection.Targets}
+			if direction == "pull" {
 				plan, err = plans.CreateMultiPullPlan(cmd.Context(), effective, scope, windowFrom, windowTo, reconcile.PlanOptions{Reporter: reporter})
 			} else {
-				result, err = plans.ReconcileMultiPushPlan(cmd.Context(), effective, scope, routeProfile, windowFrom, windowTo, onlyDeleted, reconcile.PlanOptions{Reporter: reporter})
+				result, err = plans.ReconcileMultiPushPlan(cmd.Context(), effective, scope, routeProfile, windowFrom, windowTo, false, reconcile.PlanOptions{Reporter: reporter})
 				if err == nil && result.Plan != nil {
 					plan = *result.Plan
 				}
 			}
 			if err != nil {
-				return a.handleReconcileAdapterError(mode, strings.Join(selectedAdapters, ","), err)
+				var validationErr reconcile.ValidationError
+				if errors.As(err, &validationErr) {
+					return a.fail(mode, 2, "validation_error", err.Error(), nil)
+				}
+				return a.handleReconcileAdapterError(mode, strings.Join(reconcileSelectionAdapterFamilies(selection.Targets), ","), err)
 			}
 
 			if result.NoPlan != nil {
 				if mode == "json" {
-					return a.writeJSON(reconcileNoPlanJSON(*result.NoPlan))
+					if err := a.writeJSON(reconcileNoPlanJSON(*result.NoPlan, selection.SkippedTargets)); err != nil {
+						return err
+					}
+				} else {
+					if err := renderReconcileNoPlanTable(a.stdout, *result.NoPlan, effective.Location); err != nil {
+						return err
+					}
+					if err := renderReconcileSkippedTargetsTable(a.stdout, selection.SkippedTargets); err != nil {
+						return err
+					}
 				}
-				return renderReconcileNoPlanTable(a.stdout, *result.NoPlan, effective.Location)
+				if len(selection.SkippedTargets) > 0 {
+					return exitError{code: 6}
+				}
+				return nil
 			}
 
 			if mode == "json" {
-				if err := a.writeJSON(planJSON(plan)); err != nil {
+				if err := a.writeJSON(planJSON(plan, selection.SkippedTargets, result.ProfileSummaries)); err != nil {
 					return err
 				}
 			} else {
 				if err := renderTable(a.stdout, []string{"PLAN_ID", "STATUS", "ACTIONABLE", "INVALID_FINDINGS"}, [][]string{{plan.ID, plan.AggregateStatus, fmt.Sprint(countPlanItemsByStatus(plan.Items, "ready")), fmt.Sprint(len(plan.Findings))}}); err != nil {
 					return err
 				}
+				if err := renderReconcileProfileBreakdownTable(a.stdout, result.ProfileSummaries); err != nil {
+					return err
+				}
+				if err := renderReconcileSkippedTargetsTable(a.stdout, selection.SkippedTargets); err != nil {
+					return err
+				}
 				if err := renderReconcilePlanNextSteps(a.stdout, plan); err != nil {
 					return err
 				}
 			}
-			if hasPlanItemsWithStatus(plan.Items, "check_failed") {
+			if hasPlanItemsWithStatus(plan.Items, "check_failed") || len(selection.SkippedTargets) > 0 {
 				return exitError{code: 6}
 			}
 			return nil
@@ -2632,7 +2663,6 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&adapters, "adapter", nil, "Adapter family")
 	cmd.Flags().StringArrayVar(&instances, "instance", nil, "Adapter instance allowlist")
 	cmd.Flags().StringVar(&routeProfile, "route-profile", "", "Push route profile")
-	cmd.Flags().BoolVar(&onlyDeleted, "only-deleted", false, "Push tombstoned local rows only")
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
@@ -2686,7 +2716,7 @@ func (a *app) newPlanShowCommand() *cobra.Command {
 				plan.Items = filterPlanItemsByStatus(plan.Items, "ready")
 			}
 			if mode == "json" {
-				return a.writeJSON(planJSON(plan))
+				return a.writeJSON(planJSON(plan, nil, nil))
 			}
 
 			return renderPlanShowTable(a.stdout, effective.Location, plan.Items)
@@ -2961,60 +2991,22 @@ func sortedSetKeys(values map[string]struct{}) []string {
 	return items
 }
 
-func validateReconcileScope(effective config.EffectiveConfig, adapters []string, instances []string) ([]string, []string, error) {
-	if len(adapters) == 0 && len(instances) == 0 {
-		return nil, nil, errors.New("at least one --adapter or --instance is required")
+func resolveReconcileDirection(pull, push bool) (string, error) {
+	if pull && push {
+		return "", errors.New("reconcile cannot combine --pull and --push")
 	}
+	if pull {
+		return "pull", nil
+	}
+	return "push", nil
+}
+
+func reconcileSelectionAdapterFamilies(targets []reconcile.ReconcileTarget) []string {
 	adapterSet := map[string]struct{}{}
-	for _, adapter := range adapters {
-		switch adapter {
-		case "clockify", "jira-cloud", "jira-data-center":
-			adapterSet[adapter] = struct{}{}
-		default:
-			return nil, nil, errors.New("supported adapters are clockify, jira-cloud, and jira-data-center")
-		}
+	for _, target := range targets {
+		adapterSet[target.AdapterFamily] = struct{}{}
 	}
-	instanceOwners := map[string]string{}
-	if effective.File.JiraCloud != nil {
-		for name := range effective.File.JiraCloud.Instances {
-			instanceOwners[name] = "jira-cloud"
-		}
-	}
-	if effective.File.JiraData != nil {
-		for name := range effective.File.JiraData.Instances {
-			instanceOwners[name] = "jira-data-center"
-		}
-	}
-	instanceSet := map[string]struct{}{}
-	for _, instance := range instances {
-		owner, ok := instanceOwners[instance]
-		if !ok && instance == config.ClockifyInstanceName {
-			if _, _, err := config.ResolveClockifyInstance(effective, instance); err != nil {
-				return nil, nil, err
-			}
-			owner = "clockify"
-			ok = true
-		}
-		if !ok {
-			return nil, nil, fmt.Errorf("adapter instance %q is not configured", instance)
-		}
-		adapterSet[owner] = struct{}{}
-		instanceSet[instance] = struct{}{}
-	}
-	selectedAdapters := sortedSetKeys(adapterSet)
-	selectedInstances := sortedSetKeys(instanceSet)
-	if _, ok := adapterSet["clockify"]; ok {
-		if _, err := config.ResolveClockifyConfig(effective); err != nil {
-			return nil, nil, err
-		}
-	}
-	if _, ok := adapterSet["jira-cloud"]; ok && effective.File.JiraCloud == nil {
-		return nil, nil, errors.New("jira_cloud config is required")
-	}
-	if _, ok := adapterSet["jira-data-center"]; ok && effective.File.JiraData == nil {
-		return nil, nil, errors.New("jira_data_center config is required")
-	}
-	return selectedAdapters, selectedInstances, nil
+	return sortedSetKeys(adapterSet)
 }
 
 func (a *app) loadJiraDataTotalsRows(ctx context.Context, effective config.EffectiveConfig, instanceName string, windowFrom, windowTo time.Time, issuePrefixes []string, excludedIssues []string) ([]reconcilemodel.Row, error) {
@@ -3194,10 +3186,11 @@ func filterPlanItemsByStatus(items []reconcile.PlanItem, status string) []reconc
 
 func renderPlanShowTable(w io.Writer, location *time.Location, items []reconcile.PlanItem) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, strings.Join([]string{"TARGET", "ISSUE", "WINDOW", "STATUS", "ACTION", "COMPARE", "LOCAL", "REMOTE", "MATCH", "CREATE", "DELETE", "EXECUTION"}, "\t"))
+	_, _ = fmt.Fprintln(tw, strings.Join([]string{"TARGET", "PROFILE", "ISSUE", "WINDOW", "STATUS", "ACTION", "COMPARE", "LOCAL", "REMOTE", "MATCH", "CREATE", "DELETE", "EXECUTION"}, "\t"))
 	for _, item := range items {
 		_, _ = fmt.Fprintln(tw, strings.Join([]string{
 			planShowTargetValue(item),
+			planShowProfileValue(item),
 			item.TargetIssue,
 			formatSavedPlanWindow(item.WindowFromUTC, item.WindowToUTC, location),
 			item.PlanStatus,
@@ -3219,6 +3212,21 @@ func planShowTargetValue(item reconcile.PlanItem) string {
 		return item.TargetAdapterFamily
 	}
 	return item.TargetAdapterFamily + "/" + item.TargetAdapterInstance
+}
+
+func effectivePlanItemRouteProfile(item reconcile.PlanItem) string {
+	profile := strings.TrimSpace(item.RouteProfile)
+	if profile != "" {
+		return profile
+	}
+	if item.PlanDirection == "push" && (item.TargetAdapterFamily == "jira-cloud" || item.TargetAdapterFamily == "jira-data-center") {
+		return "default"
+	}
+	return ""
+}
+
+func planShowProfileValue(item reconcile.PlanItem) string {
+	return displayOrDash(effectivePlanItemRouteProfile(item))
 }
 
 func planShowDiffMetricValue(item reconcile.PlanItem, value int) string {
@@ -3243,7 +3251,7 @@ func planShowHasDiffCounts(item reconcile.PlanItem) bool {
 	}
 }
 
-func planJSON(plan reconcile.Plan) map[string]any {
+func planJSON(plan reconcile.Plan, skippedTargets []reconcile.SkippedTarget, profileSummaries []reconcile.ReconcileProfileSummary) map[string]any {
 	items := make([]map[string]any, 0, len(plan.Items))
 	for _, item := range plan.Items {
 		payload := make([]map[string]any, 0, len(item.Payload))
@@ -3263,6 +3271,7 @@ func planJSON(plan reconcile.Plan) map[string]any {
 			"target_adapter_family":   item.TargetAdapterFamily,
 			"target_adapter_instance": emptyToNil(item.TargetAdapterInstance),
 			"target_issue":            item.TargetIssue,
+			"route_profile":           emptyToNil(effectivePlanItemRouteProfile(item)),
 			"plan_status":             item.PlanStatus,
 			"planned_action":          item.PlannedAction,
 			"comparison_status":       item.ComparisonStatus,
@@ -3292,7 +3301,7 @@ func planJSON(plan reconcile.Plan) map[string]any {
 		})
 	}
 
-	return map[string]any{
+	result := map[string]any{
 		"plan_id":            plan.ID,
 		"plan_direction":     plan.Direction,
 		"adapter_family":     plan.AdapterFamily,
@@ -3305,9 +3314,14 @@ func planJSON(plan reconcile.Plan) map[string]any {
 		"aggregate_status":   plan.AggregateStatus,
 		"applied_at":         plan.AppliedAt,
 		"summary":            map[string]any{"total_items": len(plan.Items), "ready_items": countPlanItemsByStatus(plan.Items, "ready"), "skipped_items": countPlanItemsByStatus(plan.Items, "skipped"), "invalid_findings": len(plan.Findings)},
+		"skipped_targets":    reconcileSkippedTargetsDetails(skippedTargets),
 		"items":              items,
 		"findings":           findings,
 	}
+	if len(profileSummaries) > 0 {
+		result["profile_breakdown"] = reconcileProfileBreakdownJSON(profileSummaries)
+	}
+	return result
 }
 
 func planListJSON(items []reconcile.ListEntry) []map[string]any {
@@ -3329,8 +3343,20 @@ func planListJSON(items []reconcile.ListEntry) []map[string]any {
 	return rows
 }
 
-func reconcileNoPlanJSON(result reconcile.ReconcileNoPlanResult) map[string]any {
-	return map[string]any{
+func reconcileSkippedTargetsDetails(skippedTargets []reconcile.SkippedTarget) []map[string]any {
+	details := make([]map[string]any, 0, len(skippedTargets))
+	for _, target := range skippedTargets {
+		details = append(details, map[string]any{
+			"target_adapter_family":   target.AdapterFamily,
+			"target_adapter_instance": target.Instance,
+			"reason":                  target.Reason,
+		})
+	}
+	return details
+}
+
+func reconcileNoPlanJSON(result reconcile.ReconcileNoPlanResult, skippedTargets []reconcile.SkippedTarget) map[string]any {
+	payload := map[string]any{
 		"plan_created":              false,
 		"reason":                    result.Reason,
 		"adapter_family":            result.AdapterFamily,
@@ -3341,11 +3367,16 @@ func reconcileNoPlanJSON(result reconcile.ReconcileNoPlanResult) map[string]any 
 		"resolved_target_instances": result.ResolvedTargetInstances,
 		"matched_scope_count":       result.MatchedScopeCount,
 		"actionable_scope_count":    result.ActionableScopeCount,
+		"skipped_targets":           reconcileSkippedTargetsDetails(skippedTargets),
 	}
+	if len(result.ProfileSummaries) > 0 {
+		payload["profile_breakdown"] = reconcileProfileBreakdownJSON(result.ProfileSummaries)
+	}
+	return payload
 }
 
 func renderReconcileNoPlanTable(w io.Writer, result reconcile.ReconcileNoPlanResult, location *time.Location) error {
-	return renderTable(w,
+	if err := renderTable(w,
 		[]string{"PLAN_CREATED", "REASON", "ADAPTERS", "ROUTE_PROFILE", "WINDOW", "RESOLVED_TARGET_INSTANCES", "MATCHED_SCOPES", "ACTIONABLE_SCOPES"},
 		[][]string{{
 			"false",
@@ -3357,7 +3388,50 @@ func renderReconcileNoPlanTable(w io.Writer, result reconcile.ReconcileNoPlanRes
 			fmt.Sprint(result.MatchedScopeCount),
 			fmt.Sprint(result.ActionableScopeCount),
 		}},
-	)
+	); err != nil {
+		return err
+	}
+	return renderReconcileProfileBreakdownTable(w, result.ProfileSummaries)
+}
+
+func renderReconcileSkippedTargetsTable(w io.Writer, skippedTargets []reconcile.SkippedTarget) error {
+	if len(skippedTargets) == 0 {
+		return nil
+	}
+
+	rows := make([][]string, 0, len(skippedTargets))
+	for _, target := range skippedTargets {
+		rows = append(rows, []string{target.AdapterFamily, target.Instance, target.Reason})
+	}
+
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
+	return renderTable(w, []string{"SKIPPED_ADAPTER", "SKIPPED_INSTANCE", "REASON"}, rows)
+}
+
+func renderReconcileProfileBreakdownTable(w io.Writer, summaries []reconcile.ReconcileProfileSummary) error {
+	if len(summaries) == 0 {
+		return nil
+	}
+
+	rows := make([][]string, 0, len(summaries))
+	for _, summary := range summaries {
+		rows = append(rows, []string{
+			summary.AdapterFamily,
+			displayOrDash(summary.RouteProfile),
+			joinOrDash(summary.ResolvedTargetInstances),
+			fmt.Sprint(summary.ScopeCount),
+			fmt.Sprint(summary.ActionableScopeCount),
+			strconv.FormatBool(summary.PlanCreated),
+			displayOrDash(summary.Reason),
+		})
+	}
+
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
+	return renderTable(w, []string{"PROFILE_ADAPTER", "PROFILE", "TARGET_INSTANCES", "SCOPES", "ACTIONABLE", "PLAN_CREATED", "REASON"}, rows)
 }
 
 func renderReconcilePlanNextSteps(w io.Writer, plan reconcile.Plan) error {
@@ -3408,6 +3482,22 @@ func displayOrDash(value string) string {
 		return "-"
 	}
 	return value
+}
+
+func reconcileProfileBreakdownJSON(summaries []reconcile.ReconcileProfileSummary) []map[string]any {
+	rows := make([]map[string]any, 0, len(summaries))
+	for _, summary := range summaries {
+		rows = append(rows, map[string]any{
+			"adapter_family":            summary.AdapterFamily,
+			"route_profile":             summary.RouteProfile,
+			"resolved_target_instances": summary.ResolvedTargetInstances,
+			"scope_count":               summary.ScopeCount,
+			"actionable_scope_count":    summary.ActionableScopeCount,
+			"plan_created":              summary.PlanCreated,
+			"reason":                    emptyToNil(summary.Reason),
+		})
+	}
+	return rows
 }
 
 func (a *app) loadStore(mode string, requireWrite bool, operation string) (config.EffectiveConfig, *sqlitestore.Store, func(), error) {

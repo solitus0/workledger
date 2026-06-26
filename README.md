@@ -135,7 +135,7 @@ workledger totals --instance clockify --today
 Create, review, and apply a remote sync plan:
 
 ```sh
-workledger plan reconcile --push --instance clockify --today
+workledger plan reconcile --today
 Next:
   workledger plan show <plan-id>
   workledger plan apply <plan-id>
@@ -143,7 +143,7 @@ workledger plan show
 workledger plan apply
 ```
 
-`plan show` stays offline: it renders the saved plan without new external requests. In table mode it shows one compact row per scope with explicit `LOCAL`, `REMOTE`, `MATCH`, `CREATE`, and `DELETE` columns so saved row churn is visible without decoding combined fields.
+`plan show` stays offline: it renders the saved plan without new external requests. In table mode it shows one compact row per scope with a `PROFILE` column plus explicit `LOCAL`, `REMOTE`, `MATCH`, `CREATE`, and `DELETE` columns so saved row churn is visible without decoding combined fields.
 
 ## Core concepts
 
@@ -292,9 +292,9 @@ Remote sync is intentionally plan-based:
 Examples:
 
 ```sh
-workledger plan reconcile --push --adapter=clockify --today
-workledger plan reconcile --pull --instance main --current-week
-workledger plan reconcile --push --instance dc --route-profile reporting --from 2026-05-01 --to 2026-05-14
+workledger plan reconcile --today
+workledger plan reconcile --pull --current-week
+workledger plan reconcile --instance dc --route-profile reporting --from 2026-05-01 --to 2026-05-14
 workledger plan show
 workledger plan show <plan-id> --all
 workledger plan list --current-month
@@ -304,6 +304,8 @@ workledger plan retry <plan-id> --only uncertain
 ```
 
 `plan reconcile` is non-destructive. It creates a saved execution contract; it does not mutate canonical local worklogs or remote systems by itself. In human-readable output it also prints the next saved-plan commands so operators can review or apply the result immediately.
+
+For Jira push planning, omitting `--route-profile` now includes the selected targets' `default` profile plus every non-default profile that uses `reporting_targets`. Use `--route-profile default` to keep push planning on the default route only, or `--route-profile <name>` to restrict planning to one explicit profile. `--route-profile` is Jira-only, and every selected reconcile target must be a Jira target.
 
 ## Output and automation contracts
 

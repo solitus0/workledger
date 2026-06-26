@@ -282,25 +282,39 @@ Placement rule:
 
 ## Reconcile Planning
 - [ ] FUNC-229: `workledger plan reconcile` shall create remote-sync plans.
-- [ ] FUNC-230: `workledger plan reconcile` shall require exactly one of `--pull` or `--push`.
-- [ ] FUNC-231: `workledger plan reconcile` shall require at least one scope selector supplied by repeated `--adapter=<family>` and/or repeated `--instance=<name>`.
+- [ ] FUNC-230: `workledger plan reconcile` shall default to push when neither `--pull` nor `--push` is supplied.
+- [ ] FUNC-230a: `workledger plan reconcile` shall fail validation when both `--pull` and `--push` are supplied.
+- [ ] FUNC-231: `workledger plan reconcile` without `--adapter` or `--instance` shall target all configured reconcile-capable targets.
 - [ ] FUNC-232: `workledger plan reconcile` shall require an explicit selected date window supplied by `--from` plus `--to` or by exactly one date-window shortcut selector.
 - [ ] FUNC-233: `workledger plan reconcile` shall persist exactly one saved plan after command-level validation succeeds unless a reporting reconcile resolves only non-actionable scopes.
 - [ ] FUNC-234: `workledger plan reconcile` shall return a no-plan result when a reporting reconcile finds only non-actionable scopes.
+- [ ] FUNC-234a: A reporting no-plan result with at least one matched scope and zero actionable scopes shall report reason `exact_match`.
+- [ ] FUNC-234b: Automatic multi-profile Jira push reconcile shall include exact-match reporting scopes in the saved merged plan when at least one selected adapter or profile creates a saved plan.
 - [ ] FUNC-235: `workledger plan reconcile --pull --adapter=<family>` shall inspect remote worklogs from the selected adapter family's configured source scope.
 - [ ] FUNC-235a: `workledger plan reconcile` shall accept repeated `--instance=<name>` as an adapter-instance allowlist, including the implicit Clockify instance `clockify` and configured Jira instances.
-- [ ] FUNC-235b: omitted `--instance` shall include the implicit Clockify instance when `clockify` is selected and all configured instances for each explicitly selected Jira adapter family.
+- [ ] FUNC-235b: explicit `--adapter` without `--instance` shall include the implicit Clockify instance when `clockify` is selected and all configured instances for each explicitly selected Jira adapter family.
+- [ ] FUNC-235c: `workledger plan reconcile --adapter=<family> --instance=<name>` shall fail validation when an instance does not belong to one of the selected adapters.
+- [ ] FUNC-235d: `workledger plan reconcile --instance=<name>` shall fail validation and require explicit `--adapter` when that instance name exists in both configured Jira families.
 - [ ] FUNC-236: `workledger plan reconcile --pull --adapter=<family>` shall normalize remote observations into canonical candidate rows.
 - [ ] FUNC-237: `workledger plan reconcile --pull --adapter=<family>` shall compare normalized observations with the current local canonical ledger.
 - [ ] FUNC-238: `workledger plan reconcile --pull --adapter=<family>` shall produce a saved merge plan without mutating local canonical worklogs during reconcile.
 - [ ] FUNC-238a: `workledger plan reconcile --pull` with multiple selected adapters or instances shall persist a saved `check_failed` plan instead of aborting when one selected adapter scope fails with a remote request error after command-level validation.
 - [ ] FUNC-239: `workledger plan reconcile --push --adapter=<family>` shall load canonical local worklogs from SQLite for delivery planning.
-- [ ] FUNC-240: `workledger plan reconcile --push --adapter=<family>` shall load deleted-worklog tombstones from SQLite for remote cleanup planning.
-- [ ] FUNC-241: `workledger plan reconcile --push --adapter=<family> --only-deleted` shall limit push planning to tombstone-backed cleanup scopes.
-- [ ] FUNC-242: `workledger plan reconcile --push --adapter=<family> --route-profile=<name>` shall select a named route profile for push planning.
-- [ ] FUNC-243: `workledger plan reconcile --push --adapter=<family>` shall use the configured `default` route profile when `--route-profile` is omitted.
+- [ ] FUNC-240: `workledger plan reconcile --push --adapter=<family>` shall discover owned remote rows directly from the selected adapter scope and selected reconcile window, including issues or reporting targets that currently have no matching local rows.
+- [ ] FUNC-241: Normal push planning shall plan remote cleanup or replacement when an owned remote scope has no matching local row-set in the selected window.
+- [ ] FUNC-242: `workledger plan reconcile --route-profile=<name>` shall limit push planning to selected Jira targets that define the named route profile.
+- [ ] FUNC-242a: `workledger plan reconcile --route-profile=<name>` shall fail validation unless every selected reconcile target is a Jira target.
+- [ ] FUNC-243: `workledger plan reconcile` push planning shall include the configured `default` route profile for each selected Jira target when `--route-profile` is omitted.
+- [ ] FUNC-243c: `workledger plan reconcile` push planning without `--route-profile` shall also include every non-default selected Jira route profile that uses `reporting_targets`.
+- [ ] FUNC-243d: `workledger plan reconcile --route-profile=default` shall limit push planning to the `default` route profile only.
+- [ ] FUNC-243e: `workledger plan reconcile` push planning without `--route-profile` shall fail clearly when the same source prefix is owned by more than one selected reporting-mode Jira route profile in the same adapter family.
+- [ ] FUNC-243f: Automatic Jira push planning shall exclude exact configured reporting target issue keys from default-profile remote-owned discovery so reporting rows are not planned for cleanup as canonical local issue scopes.
+- [ ] FUNC-243a: implicit all-target reconcile shall skip invalid configured targets when at least one valid target remains and shall surface those skipped targets in command output.
+- [ ] FUNC-243b: implicit all-target reconcile shall fail validation when no valid reconcile target remains after filtering invalid configured targets, and the validation output shall include the per-target skip reasons.
 - [ ] FUNC-244: `workledger plan reconcile --push --adapter=<family>` shall compute local-versus-remote diffs for selected scopes against resolved target adapter instances.
 - [ ] FUNC-244a: human-readable `workledger plan reconcile` output shall include next-step commands for `plan show <plan-id>` and, when the saved plan contains one or more `ready` items, `plan apply <plan-id>`.
+- [ ] FUNC-244b: human-readable `workledger plan reconcile` push output shall render a per-adapter summary breakdown for selected push targets, including adapter family, route profile when applicable, resolved target instances, scope count, actionable count, plan-created state, and reason when present; Jira targets shall use route-profile rows and Clockify shall use one non-profiled row.
+- [ ] FUNC-244c: Saved-plan profile breakdown rows shall populate `reason`/`REASON` with a stable reason code when the profile has no actionable scopes or contains `check_failed` scopes; multiple reason codes shall render as `mixed`.
 
 ## Plan Review
 - [ ] FUNC-246: `workledger plan show` shall load a saved plan by requested plan ID when provided.
@@ -310,8 +324,8 @@ Placement rule:
 - [ ] FUNC-250: `workledger plan show` shall report `plan_status` per scope.
 - [ ] FUNC-251: `workledger plan show` shall report `planned_action` per scope.
 - [ ] FUNC-252: `workledger plan show` shall report comparison status per scope.
-- [ ] FUNC-253: `workledger plan show` shall report target adapter family, target issue, saved reconcile time window, local row count, remote row count, saved change counts, and execution state per scope.
-- [ ] FUNC-253b: Human-readable `workledger plan show` output shall render one compact table row per scope with explicit `LOCAL`, `REMOTE`, `MATCH`, `CREATE`, and `DELETE` columns.
+- [ ] FUNC-253: `workledger plan show` shall report target adapter family, route profile when present, target issue, saved reconcile time window, local row count, remote row count, saved change counts, and execution state per scope.
+- [ ] FUNC-253b: Human-readable `workledger plan show` output shall render one compact table row per scope with explicit `PROFILE`, `LOCAL`, `REMOTE`, `MATCH`, `CREATE`, and `DELETE` columns.
 - [ ] FUNC-253c: When saved diff metrics are unavailable, human-readable `workledger plan show` output shall render `-` in `MATCH`, `CREATE`, and `DELETE` without any additional detail line.
 - [ ] FUNC-253a: `workledger plan show` shall limit rendered scopes to saved plan items whose `plan_status` is `ready` by default; `workledger plan show --all` shall render all saved plan items regardless of status.
 

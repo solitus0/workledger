@@ -127,7 +127,7 @@ func TestHelpShowsAcceptedDateFormatsAndExamples(t *testing.T) {
 			args: []string{"plan", "reconcile", "--help"},
 			contains: []string{
 				"To Date selector: YYYY-MM-DD",
-				"workledger plan reconcile --pull --adapter jira-cloud --from 2026-05-14 --to 2026-05-16",
+				"workledger plan reconcile --today",
 				"Date filter modifiers:",
 			},
 		},
@@ -3534,7 +3534,7 @@ func TestPlanReconcilePullInfersMixedJiraFamiliesFromInstances(t *testing.T) {
 	}
 }
 
-func TestPlanReconcilePullUnionsExplicitAdapterAndInstanceInferredFamily(t *testing.T) {
+func TestPlanReconcilePullRejectsInstanceOutsideSelectedAdapter(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	jiraCloudServer := newJiraCloudTestServer(t, map[string][]string{
@@ -3563,23 +3563,16 @@ func TestPlanReconcilePullUnionsExplicitAdapterAndInstanceInferredFamily(t *test
 	}
 
 	result := runCLI(t, "plan", "reconcile", "--pull", "--adapter", "jira-cloud", "--instance", "maxima_lt_jira", "--instance", "ito_jira", "--current-week", "--output", "json")
-	if result.code != 0 {
-		t.Fatalf("expected success, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	if result.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
-
-	payload := decodeJSONMap(t, []byte(result.stdout))
-	if payload["adapter_family"] != "multiple" {
-		t.Fatalf("unexpected adapter summary %s", result.stdout)
-	}
-	if got := payload["adapter_families"].([]any); len(got) != 2 || got[0] != "jira-cloud" || got[1] != "jira-data-center" {
-		t.Fatalf("unexpected adapter families %s", result.stdout)
-	}
-	if got := payload["target_instances"].([]any); len(got) != 2 || got[0] != "ito_jira" || got[1] != "maxima_lt_jira" {
-		t.Fatalf("unexpected target instances %s", result.stdout)
+	if !strings.Contains(result.stdout, `instance \"ito_jira\" belongs to adapter jira-data-center, not selected adapters jira-cloud`) &&
+		!strings.Contains(result.stderr, `instance "ito_jira" belongs to adapter jira-data-center, not selected adapters jira-cloud`) {
+		t.Fatalf("unexpected validation message stdout=%s stderr=%s", result.stdout, result.stderr)
 	}
 }
 
-func TestPlanReconcileRequiresAdapterOrInstance(t *testing.T) {
+func TestPlanReconcilePullWithoutSelectorsUsesAllConfiguredTargets(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTCAndClockify(t)
 
@@ -3594,16 +3587,19 @@ func TestPlanReconcileRequiresAdapterOrInstance(t *testing.T) {
 	}
 
 	result := runCLI(t, "plan", "reconcile", "--pull", "--current-week", "--output", "json")
-	if result.code != 2 {
-		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	if result.code != 0 {
+		t.Fatalf("expected success, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
-	if !strings.Contains(result.stdout, "at least one --adapter or --instance is required") &&
-		!strings.Contains(result.stderr, "at least one --adapter or --instance is required") {
-		t.Fatalf("unexpected validation message stdout=%s stderr=%s", result.stdout, result.stderr)
+	payload := decodeJSONMap(t, []byte(result.stdout))
+	if payload["plan_direction"] != "pull" {
+		t.Fatalf("expected pull plan, got %s", result.stdout)
+	}
+	if got := payload["target_instances"].([]any); len(got) != 1 || got[0] != "clockify" {
+		t.Fatalf("unexpected target instances %s", result.stdout)
 	}
 }
 
-func TestPlanReconcilePullHonorsClockifyOnlyAllowlistWithExplicitJiraAdapter(t *testing.T) {
+func TestPlanReconcilePullRejectsClockifyInstanceOutsideSelectedJiraAdapter(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	clockifyServer := newClockifyTestServer(t)
@@ -3632,30 +3628,17 @@ func TestPlanReconcilePullHonorsClockifyOnlyAllowlistWithExplicitJiraAdapter(t *
 	}
 
 	result := runCLI(t, "plan", "reconcile", "--pull", "--adapter", "jira-cloud", "--instance", "clockify", "--current-week", "--output", "json")
-	if result.code != 0 {
-		t.Fatalf("expected success, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	if result.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
-
-	payload := decodeJSONMap(t, []byte(result.stdout))
-	if payload["adapter_family"] != "clockify" {
-		t.Fatalf("unexpected adapter summary %s", result.stdout)
-	}
-	if got := payload["adapter_families"].([]any); len(got) != 1 || got[0] != "clockify" {
-		t.Fatalf("unexpected adapter families %s", result.stdout)
-	}
-	if got := payload["target_instances"].([]any); len(got) != 1 || got[0] != "clockify" {
-		t.Fatalf("unexpected target instances %s", result.stdout)
+	if !strings.Contains(result.stdout, `instance \"clockify\" belongs to adapter clockify, not selected adapters jira-cloud`) &&
+		!strings.Contains(result.stderr, `instance "clockify" belongs to adapter clockify, not selected adapters jira-cloud`) {
+		t.Fatalf("unexpected validation message stdout=%s stderr=%s", result.stdout, result.stderr)
 	}
 }
 
-func TestPlanReconcilePullSkipsClockifyWhenInstanceAllowlistExcludesIt(t *testing.T) {
+func TestPlanReconcilePullRejectsAmbiguousInstanceWithoutAdapter(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-
-	clockifyServer := newClockifyTestServer(t)
-	defer clockifyServer.Close()
-	originalBaseURL := clockifyadapter.BaseURL
-	clockifyadapter.BaseURL = clockifyServer.URL
-	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
 
 	jiraCloudServer := newJiraCloudTestServer(t, map[string][]string{
 		"AAPP-123": {
@@ -3663,33 +3646,32 @@ func TestPlanReconcilePullSkipsClockifyWhenInstanceAllowlistExcludesIt(t *testin
 		},
 	})
 	defer jiraCloudServer.Close()
+	jiraDataServer := newJiraDataTotalsTestServer(t, map[string][]string{
+		"BAPP-456": {
+			`{"id":"wl-2","started":"2026-05-12T10:00:00.000+0000","timeSpentSeconds":1800,"comment":"Review PR","author":{"name":"user-1"}}`,
+		},
+	})
+	defer jiraDataServer.Close()
 
 	writeConfigWithUTCAndBareTotalsAdapters(
 		t,
-		map[string]string{"maxima_lt_jira": jiraCloudServer.URL},
-		nil,
-		map[string]string{"maxima_lt_jira": "AAPP"},
-		nil,
+		map[string]string{"shared": jiraCloudServer.URL},
+		map[string]string{"shared": jiraDataServer.URL},
+		map[string]string{"shared": "AAPP"},
+		map[string]string{"shared": "BAPP"},
 	)
 
 	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
 		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
 	}
 
-	result := runCLI(t, "plan", "reconcile", "--pull", "--adapter", "clockify", "--instance", "maxima_lt_jira", "--current-week", "--output", "json")
-	if result.code != 0 {
-		t.Fatalf("expected success, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	result := runCLI(t, "plan", "reconcile", "--pull", "--instance", "shared", "--current-week", "--output", "json")
+	if result.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
-
-	payload := decodeJSONMap(t, []byte(result.stdout))
-	if payload["adapter_family"] != "jira-cloud" {
-		t.Fatalf("unexpected adapter summary %s", result.stdout)
-	}
-	if got := payload["adapter_families"].([]any); len(got) != 1 || got[0] != "jira-cloud" {
-		t.Fatalf("unexpected adapter families %s", result.stdout)
-	}
-	if got := payload["target_instances"].([]any); len(got) != 1 || got[0] != "maxima_lt_jira" {
-		t.Fatalf("unexpected target instances %s", result.stdout)
+	if !strings.Contains(result.stdout, `instance \"shared\" exists in both jira_cloud and jira_data_center; use --adapter jira-cloud or --adapter jira-data-center`) &&
+		!strings.Contains(result.stderr, `instance "shared" exists in both jira_cloud and jira_data_center; use --adapter jira-cloud or --adapter jira-data-center`) {
+		t.Fatalf("unexpected validation message stdout=%s stderr=%s", result.stdout, result.stderr)
 	}
 }
 
@@ -3791,6 +3773,317 @@ func TestPlanReconcilePullMixedInstancesPersistsPartialPlanOnAdapterFailures(t *
 	}
 	if countSavedPlans(t) != 1 {
 		t.Fatalf("expected one saved plan, got %d", countSavedPlans(t))
+	}
+}
+
+func TestPlanReconcileImplicitAllSkipsInvalidTargets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	setClockifyTestEnv(t)
+	setJiraCloudTestEnv(t)
+
+	clockifyServer := newClockifyTestServer(t)
+	defer clockifyServer.Close()
+	originalBaseURL := clockifyadapter.BaseURL
+	clockifyadapter.BaseURL = clockifyServer.URL
+	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
+
+	home := os.Getenv("HOME")
+	sqlitePath := filepath.Join(home, ".local", "share", "workledger", "worklogs.db")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\nclockify:\n  workspace_id: ws-active\n  user_id: user-1\n  auth:\n    api_key_env: WORKLEDGER_TEST_CLOCKIFY_API_KEY\n  project_mapping:\n    issue_prefixes:\n      AAPP: App Project\n    default_project: App Project\njira_cloud:\n  instances:\n    product:\n      base_url: https://cloud.example\n      auth:\n        email: user@example.com\n        token_env: WORKLEDGER_TEST_JIRA_CLOUD_TOKEN\n")
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	result := runCLI(t, "plan", "reconcile", "--today", "--output", "json")
+	if result.code != 6 {
+		t.Fatalf("expected partial result exit 6, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	payload := decodeJSONMap(t, []byte(result.stdout))
+	if payload["plan_direction"] != "push" {
+		t.Fatalf("expected implicit push plan, got %s", result.stdout)
+	}
+	skipped := payload["skipped_targets"].([]any)
+	if len(skipped) != 1 {
+		t.Fatalf("expected one skipped target, got %s", result.stdout)
+	}
+	skippedTarget := skipped[0].(map[string]any)
+	if skippedTarget["target_adapter_family"] != "jira-cloud" || skippedTarget["target_adapter_instance"] != "product" {
+		t.Fatalf("unexpected skipped target %#v", skippedTarget)
+	}
+	if !strings.Contains(skippedTarget["reason"].(string), `jira_cloud instance "product" does not define an implicit push route profile (default or reporting_targets)`) {
+		t.Fatalf("unexpected skipped target reason %#v", skippedTarget)
+	}
+}
+
+func TestPlanReconcilePushMixedAdaptersPersistsPartialPlanWhenJiraCloudSearchFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	setClockifyTestEnv(t)
+	setJiraCloudTestEnv(t)
+
+	clockifyServer := newClockifyTestServer(t)
+	defer clockifyServer.Close()
+	originalClockifyBaseURL := clockifyadapter.BaseURL
+	clockifyadapter.BaseURL = clockifyServer.URL
+	defer func() { clockifyadapter.BaseURL = originalClockifyBaseURL }()
+
+	jiraCloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rest/api/3/search/jql":
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			t.Fatalf("unexpected request path %s", r.URL.Path)
+		}
+	}))
+	defer jiraCloudServer.Close()
+
+	home := os.Getenv("HOME")
+	sqlitePath := filepath.Join(home, ".local", "share", "workledger", "worklogs.db")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\nclockify:\n  workspace_id: ws-active\n  user_id: user-1\n  auth:\n    api_key_env: WORKLEDGER_TEST_CLOCKIFY_API_KEY\n  project_mapping:\n    issue_prefixes:\n      AAPP: App Project\n    default_project: App Project\njira_cloud:\n  instances:\n    product:\n      base_url: "+jiraCloudServer.URL+"\n      auth:\n        email: user@example.com\n        token_env: WORKLEDGER_TEST_JIRA_CLOUD_TOKEN\n      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n")
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started", "todayT09:00", "--duration", "1h", "--description", "Investigated bug", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	result := runCLI(t, "plan", "reconcile", "--current-month", "--progress", "plain", "--output", "json")
+	if result.code != 6 {
+		t.Fatalf("expected partial-success exit 6, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	payload := decodeJSONMap(t, []byte(result.stdout))
+	if payload["aggregate_status"] != "check_failed" {
+		t.Fatalf("expected check_failed aggregate status, got %s", result.stdout)
+	}
+	items := payload["items"].([]any)
+	foundClockify := false
+	foundJiraFailure := false
+	for _, raw := range items {
+		item := raw.(map[string]any)
+		switch item["target_adapter_family"] {
+		case "clockify":
+			foundClockify = true
+		case "jira-cloud":
+			if item["plan_status"] == "check_failed" && item["reason_code"] == "auth_error" && item["target_adapter_instance"] == "product" {
+				foundJiraFailure = true
+			}
+		}
+	}
+	if !foundClockify || !foundJiraFailure {
+		t.Fatalf("expected mixed partial plan, got %s", result.stdout)
+	}
+	breakdown := payload["profile_breakdown"].([]any)
+	foundJiraSummary := false
+	for _, raw := range breakdown {
+		summary := raw.(map[string]any)
+		if summary["adapter_family"] == "jira-cloud" && summary["resolved_target_instances"].([]any)[0] == "product" {
+			foundJiraSummary = true
+			if summary["reason"] != "auth_error" || summary["actionable_scope_count"] != float64(0) || summary["plan_created"] != true {
+				t.Fatalf("unexpected jira profile summary %#v", summary)
+			}
+		}
+	}
+	if !foundJiraSummary {
+		t.Fatalf("expected jira profile summary, got %s", result.stdout)
+	}
+	if countSavedPlans(t) != 1 {
+		t.Fatalf("expected one saved plan, got %d", countSavedPlans(t))
+	}
+}
+
+func TestPlanReconcilePushTextSummaryIncludesCheckFailedReason(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	setJiraCloudTestEnv(t)
+
+	jiraCloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rest/api/3/search/jql":
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			t.Fatalf("unexpected request path %s", r.URL.Path)
+		}
+	}))
+	defer jiraCloudServer.Close()
+
+	home := os.Getenv("HOME")
+	sqlitePath := filepath.Join(home, ".local", "share", "workledger", "worklogs.db")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\njira_cloud:\n  instances:\n    product:\n      base_url: "+jiraCloudServer.URL+"\n      auth:\n        email: user@example.com\n        token_env: WORKLEDGER_TEST_JIRA_CLOUD_TOKEN\n      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n")
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started", "todayT09:00", "--duration", "1h", "--description", "Investigated bug", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	result := runCLI(t, "plan", "reconcile", "--adapter", "jira-cloud", "--current-month")
+	if result.code != 6 {
+		t.Fatalf("expected partial-success exit 6, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if !regexp.MustCompile(`(?m)^jira-cloud\s+default\s+product\s+1\s+0\s+true\s+auth_error$`).MatchString(result.stdout) {
+		t.Fatalf("expected jira summary row with auth_error, got %q", result.stdout)
+	}
+}
+
+func TestPlanReconcileImplicitAllInvalidTargetsReturnsSkippedReasons(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	setJiraCloudTestEnv(t)
+
+	home := os.Getenv("HOME")
+	sqlitePath := filepath.Join(home, ".local", "share", "workledger", "worklogs.db")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\njira_cloud:\n  instances:\n    product:\n      base_url: https://cloud.example\n      auth:\n        email: user@example.com\n        token_env: WORKLEDGER_TEST_JIRA_CLOUD_TOKEN\n")
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	result := runCLI(t, "plan", "reconcile", "--today", "--output", "json")
+	if result.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	errorPayload := decodeErrorPayload(t, result.stdout)
+	if !strings.Contains(errorPayload["message"].(string), `jira-cloud/product: jira_cloud instance "product" does not define an implicit push route profile (default or reporting_targets)`) {
+		t.Fatalf("expected concrete skipped-target reason, got %s", result.stdout)
+	}
+	details, ok := errorPayload["details"].([]any)
+	if !ok || len(details) != 1 {
+		t.Fatalf("expected one skipped-target detail, got %s", result.stdout)
+	}
+	detail := details[0].(map[string]any)
+	if detail["target_adapter_family"] != "jira-cloud" || detail["target_adapter_instance"] != "product" {
+		t.Fatalf("unexpected skipped-target detail %#v", detail)
+	}
+}
+
+func TestPlanReconcilePushRouteProfileRequiresJiraTarget(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTCAndClockifyPush(t)
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+
+	result := runCLI(t, "plan", "reconcile", "--route-profile", "reporting", "--today", "--output", "json")
+	if result.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "--route-profile can only be used when all selected reconcile targets are jira-cloud or jira-data-center") &&
+		!strings.Contains(result.stderr, "--route-profile can only be used when all selected reconcile targets are jira-cloud or jira-data-center") {
+		t.Fatalf("unexpected route-profile validation output stdout=%s stderr=%s", result.stdout, result.stderr)
+	}
+}
+
+func TestPlanReconcilePushRouteProfileRejectsMixedClockifyTargetsJSON(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	setClockifyTestEnv(t)
+	setJiraCloudTestEnv(t)
+
+	clockifyServer := newClockifyTestServer(t)
+	defer clockifyServer.Close()
+	originalBaseURL := clockifyadapter.BaseURL
+	clockifyadapter.BaseURL = clockifyServer.URL
+	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
+
+	jiraCloudServer := newJiraCloudTestServer(t, map[string][]string{})
+	defer jiraCloudServer.Close()
+
+	home := os.Getenv("HOME")
+	sqlitePath := filepath.Join(home, ".local", "share", "workledger", "worklogs.db")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\nclockify:\n  workspace_id: ws-active\n  user_id: user-1\n  auth:\n    api_key_env: WORKLEDGER_TEST_CLOCKIFY_API_KEY\n  project_mapping:\n    issue_prefixes:\n      AAPP: App Project\n    default_project: App Project\n    create_issue_tag_if_missing: true\njira_cloud:\n  instances:\n    product:\n      base_url: "+jiraCloudServer.URL+"\n      auth:\n        email: user@example.com\n        token_env: WORKLEDGER_TEST_JIRA_CLOUD_TOKEN\n      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n          reporting:\n            reporting_targets:\n              AAPP: REPORT-1\n")
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Build feature", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	reconcileResult := runCLI(t, "plan", "reconcile", "--adapter", "clockify", "--adapter", "jira-cloud", "--route-profile", "reporting", "--from", "2026-04-02", "--to", "2026-04-02", "--output", "json")
+	if reconcileResult.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", reconcileResult.code, reconcileResult.stdout, reconcileResult.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(reconcileResult.stdout))
+	errorPayload := payload["error"].(map[string]any)
+	if !strings.Contains(errorPayload["message"].(string), "--route-profile can only be used when all selected reconcile targets are jira-cloud or jira-data-center") {
+		t.Fatalf("unexpected error payload %s", reconcileResult.stdout)
+	}
+}
+
+func TestPlanReconcilePushRouteProfileRejectsMixedClockifyTargetsText(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	setClockifyTestEnv(t)
+	setJiraCloudTestEnv(t)
+
+	clockifyServer := newClockifyTestServer(t)
+	defer clockifyServer.Close()
+	originalBaseURL := clockifyadapter.BaseURL
+	clockifyadapter.BaseURL = clockifyServer.URL
+	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
+
+	jiraCloudServer := newJiraCloudTestServer(t, map[string][]string{})
+	defer jiraCloudServer.Close()
+
+	home := os.Getenv("HOME")
+	sqlitePath := filepath.Join(home, ".local", "share", "workledger", "worklogs.db")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\nclockify:\n  workspace_id: ws-active\n  user_id: user-1\n  auth:\n    api_key_env: WORKLEDGER_TEST_CLOCKIFY_API_KEY\n  project_mapping:\n    issue_prefixes:\n      AAPP: App Project\n    default_project: App Project\n    create_issue_tag_if_missing: true\njira_cloud:\n  instances:\n    product:\n      base_url: "+jiraCloudServer.URL+"\n      auth:\n        email: user@example.com\n        token_env: WORKLEDGER_TEST_JIRA_CLOUD_TOKEN\n      routing:\n        profiles:\n          reporting:\n            reporting_targets:\n              AAPP: REPORT-1\n")
+
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", init.code, init.stdout, init.stderr)
+	}
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Build feature", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	reconcileResult := runCLI(t, "plan", "reconcile", "--adapter", "clockify", "--adapter", "jira-cloud", "--route-profile", "reporting", "--from", "2026-04-02", "--to", "2026-04-02")
+	if reconcileResult.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", reconcileResult.code, reconcileResult.stdout, reconcileResult.stderr)
+	}
+	if !strings.Contains(reconcileResult.stdout, "--route-profile can only be used when all selected reconcile targets are jira-cloud or jira-data-center") &&
+		!strings.Contains(reconcileResult.stderr, "--route-profile can only be used when all selected reconcile targets are jira-cloud or jira-data-center") {
+		t.Fatalf("unexpected route-profile validation output stdout=%s stderr=%s", reconcileResult.stdout, reconcileResult.stderr)
+	}
+}
+
+func TestPlanReconcilePushAutoAllowsReportingOnlyJiraTargets(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := newJiraCloudTestServer(t, map[string][]string{})
+	defer server.Close()
+	writeConfigWithUTCAndJiraCloud(t, map[string]string{"product": server.URL}, map[string]string{
+		"product": "      routing:\n        profiles:\n          reporting:\n            reporting_targets:\n              AAPP: REPORT-1\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Build feature", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	reconcileResult := runCLI(t, "plan", "reconcile", "--push", "--adapter", "jira-cloud", "--from", "2026-04-02", "--to", "2026-04-02", "--output", "json")
+	if reconcileResult.code != 0 {
+		t.Fatalf("reconcile failed: code=%d stdout=%s stderr=%s", reconcileResult.code, reconcileResult.stdout, reconcileResult.stderr)
+	}
+
+	payload := decodeJSONMap(t, []byte(reconcileResult.stdout))
+	items := payload["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("expected one reporting item, got %s", reconcileResult.stdout)
+	}
+	item := items[0].(map[string]any)
+	if item["target_adapter_family"] != "jira-cloud" || item["target_adapter_instance"] != "product" || item["target_issue"] != "REPORT-1" || item["route_profile"] != "reporting" {
+		t.Fatalf("unexpected reporting-only item %#v", item)
 	}
 }
 
@@ -4005,6 +4298,8 @@ func TestJiraCloudPushReconcileCheckFailedPlanUsesExitSixAndNormalJSON(t *testin
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/rest/api/3/search/jql":
+			_, _ = w.Write([]byte(`{"issues":[]}`))
 		case "/rest/api/3/myself":
 			w.WriteHeader(http.StatusUnauthorized)
 		default:
@@ -4057,7 +4352,7 @@ func TestJiraCloudPushReconcileCheckFailedPlanUsesExitSixAndNormalJSON(t *testin
 	}
 }
 
-func TestJiraCloudReportingReconcileAlreadyInSyncReturnsNoPlanJSON(t *testing.T) {
+func TestJiraCloudReportingReconcileExactMatchReturnsNoPlanJSON(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	server := newJiraCloudTestServer(t, map[string][]string{
@@ -4083,7 +4378,7 @@ func TestJiraCloudReportingReconcileAlreadyInSyncReturnsNoPlanJSON(t *testing.T)
 		t.Fatalf("reconcile failed: code=%d stdout=%s stderr=%s", reconcileResult.code, reconcileResult.stdout, reconcileResult.stderr)
 	}
 	payload := decodeJSONMap(t, []byte(reconcileResult.stdout))
-	if payload["plan_created"] != false || payload["reason"] != "already_in_sync" {
+	if payload["plan_created"] != false || payload["reason"] != "exact_match" {
 		t.Fatalf("unexpected no-plan payload %s", reconcileResult.stdout)
 	}
 	if payload["plan_id"] != nil {
@@ -4122,14 +4417,234 @@ func TestJiraCloudReportingReconcileNoMatchingRoutesReturnsNoPlanTable(t *testin
 	if reconcileResult.code != 0 {
 		t.Fatalf("reconcile failed: code=%d stdout=%s stderr=%s", reconcileResult.code, reconcileResult.stdout, reconcileResult.stderr)
 	}
-	if !strings.Contains(reconcileResult.stdout, "PLAN_CREATED") || !strings.Contains(reconcileResult.stdout, "no_matching_routes") || !strings.Contains(reconcileResult.stdout, "false") {
-		t.Fatalf("unexpected no-plan table %q", reconcileResult.stdout)
+	if !strings.Contains(reconcileResult.stdout, "PLAN_ID") || !strings.Contains(reconcileResult.stdout, "blocked") || !strings.Contains(reconcileResult.stdout, "PLAN_CREATED") || !strings.Contains(reconcileResult.stdout, "true") {
+		t.Fatalf("unexpected reporting plan table %q", reconcileResult.stdout)
 	}
-	if !strings.Contains(reconcileResult.stdout, "2026-04-02 - 2026-04-02") {
-		t.Fatalf("expected localized no-plan window, got %q", reconcileResult.stdout)
+	if count := countSavedPlans(t); count != 1 {
+		t.Fatalf("expected one saved blocked plan, got %d", count)
 	}
-	if count := countSavedPlans(t); count != 0 {
-		t.Fatalf("expected no saved plans, got %d", count)
+}
+
+func TestPlanReconcilePushAutoIncludesReportingProfiles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := newJiraCloudTestServer(t, map[string][]string{})
+	defer server.Close()
+	writeConfigWithUTCAndJiraCloud(t, map[string]string{"product": server.URL}, map[string]string{
+		"product": "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n          reporting:\n            reporting_targets:\n              AAPP: REPORT-1\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Build feature", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	reconcileResult := runCLI(t, "plan", "reconcile", "--push", "--adapter", "jira-cloud", "--from", "2026-04-02", "--to", "2026-04-02", "--output", "json")
+	if reconcileResult.code != 0 {
+		t.Fatalf("reconcile failed: code=%d stdout=%s stderr=%s", reconcileResult.code, reconcileResult.stdout, reconcileResult.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(reconcileResult.stdout))
+	items := payload["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("expected default and reporting items, got %s", reconcileResult.stdout)
+	}
+	first := items[0].(map[string]any)
+	second := items[1].(map[string]any)
+	if first["route_profile"] != "default" || second["route_profile"] != "reporting" {
+		t.Fatalf("unexpected item route profiles %s", reconcileResult.stdout)
+	}
+	breakdown := payload["profile_breakdown"].([]any)
+	if len(breakdown) != 2 {
+		t.Fatalf("expected profile breakdown, got %s", reconcileResult.stdout)
+	}
+	if breakdown[0].(map[string]any)["route_profile"] != "default" || breakdown[1].(map[string]any)["route_profile"] != "reporting" {
+		t.Fatalf("unexpected profile breakdown order %s", reconcileResult.stdout)
+	}
+
+	show := runCLI(t, "plan", "show")
+	if show.code != 0 {
+		t.Fatalf("show failed: code=%d stdout=%s stderr=%s", show.code, show.stdout, show.stderr)
+	}
+	if !strings.Contains(show.stdout, "PROFILE") || !strings.Contains(show.stdout, "default") || !strings.Contains(show.stdout, "reporting") {
+		t.Fatalf("expected plan show profile column, got %q", show.stdout)
+	}
+}
+
+func TestPlanReconcilePushAutoPersistsExactMatchReportingProfileInShowAll(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := newJiraDataTotalsTestServer(t, map[string][]string{
+		"AAPP-123": {
+			`{"id":"wl-default","started":"2026-04-02T08:00:00.000+0000","timeSpentSeconds":3600,"comment":"Build feature","author":{"name":"user-1","key":"user-1"}}`,
+		},
+		"REPORT-1": {
+			`{"id":"wl-reporting","started":"2026-04-02T08:00:00.000+0000","timeSpentSeconds":3600,"comment":"AAPP-123 | Build feature","author":{"name":"user-1","key":"user-1"}}`,
+		},
+	})
+	defer server.Close()
+	writeConfigWithUTCAndJiraData(t, map[string]string{"main": server.URL}, map[string]string{
+		"main": "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n          reporting:\n            reporting_targets:\n              AAPP: REPORT-1\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Build feature", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	reconcileResult := runCLI(t, "plan", "reconcile", "--push", "--adapter", "jira-data-center", "--from", "2026-04-02", "--to", "2026-04-02", "--output", "json")
+	if reconcileResult.code != 0 {
+		t.Fatalf("reconcile failed: code=%d stdout=%s stderr=%s", reconcileResult.code, reconcileResult.stdout, reconcileResult.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(reconcileResult.stdout))
+	items := payload["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("expected default and exact-match reporting items, got %s", reconcileResult.stdout)
+	}
+	breakdown := payload["profile_breakdown"].([]any)
+	if breakdown[1].(map[string]any)["route_profile"] != "reporting" || breakdown[1].(map[string]any)["plan_created"] != true || breakdown[1].(map[string]any)["reason"] != "exact_match" {
+		t.Fatalf("expected persisted exact-match reporting summary, got %s", reconcileResult.stdout)
+	}
+
+	show := runCLI(t, "plan", "show", payload["plan_id"].(string), "--all", "--output", "json")
+	if show.code != 0 {
+		t.Fatalf("show failed: code=%d stdout=%s stderr=%s", show.code, show.stdout, show.stderr)
+	}
+	showPayload := decodeJSONMap(t, []byte(show.stdout))
+	showItems := showPayload["items"].([]any)
+	reportingFound := false
+	for _, raw := range showItems {
+		item := raw.(map[string]any)
+		if item["route_profile"] == "reporting" && item["target_issue"] == "REPORT-1" {
+			reportingFound = true
+			if item["plan_status"] != "skipped" || item["reason_code"] != "exact_match" {
+				t.Fatalf("unexpected reporting show item %#v", item)
+			}
+		}
+	}
+	if !reportingFound {
+		t.Fatalf("expected reporting item in plan show --all, got %s", show.stdout)
+	}
+}
+
+func TestPlanReconcilePushAutoIgnoresSameNamedNonReportingProfiles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := newJiraCloudTestServer(t, map[string][]string{})
+	defer server.Close()
+	writeConfigWithUTCAndJiraCloud(t, map[string]string{"product": server.URL, "ops": server.URL}, map[string]string{
+		"product": "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n          reporting:\n            reporting_targets:\n              AAPP: REPORT-1\n",
+		"ops":     "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - OPS\n          reporting:\n            issue_prefixes:\n              - OPS\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	for _, args := range [][]string{
+		{"worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Build feature", "--output", "json"},
+		{"worklogs", "add", "--issue", "OPS-77", "--started-utc", "2026-04-02T10:00:00Z", "--duration", "30m", "--description", "Ops work", "--output", "json"},
+	} {
+		add := runCLI(t, args...)
+		if add.code != 0 {
+			t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+		}
+	}
+
+	reconcileResult := runCLI(t, "plan", "reconcile", "--push", "--adapter", "jira-cloud", "--from", "2026-04-02", "--to", "2026-04-02", "--output", "json")
+	if reconcileResult.code != 0 {
+		t.Fatalf("reconcile failed: code=%d stdout=%s stderr=%s", reconcileResult.code, reconcileResult.stdout, reconcileResult.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(reconcileResult.stdout))
+	items := payload["items"].([]any)
+	if len(items) != 3 {
+		t.Fatalf("expected product default, product reporting, and ops default items, got %s", reconcileResult.stdout)
+	}
+
+	reportingItems := 0
+	for _, raw := range items {
+		item := raw.(map[string]any)
+		if item["route_profile"] != "reporting" {
+			continue
+		}
+		reportingItems++
+		if item["target_adapter_instance"] != "product" || item["target_issue"] != "REPORT-1" {
+			t.Fatalf("unexpected auto reporting item %s", reconcileResult.stdout)
+		}
+	}
+	if reportingItems != 1 {
+		t.Fatalf("expected exactly one reporting item, got %s", reconcileResult.stdout)
+	}
+}
+
+func TestPlanReconcilePushAutoNoPlanBreakdownKeepsConcreteInstance(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := newJiraCloudTestServer(t, map[string][]string{})
+	defer server.Close()
+	writeConfigWithUTCAndJiraCloud(t, map[string]string{"product": server.URL, "ops": server.URL}, map[string]string{
+		"product": "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n          reporting:\n            reporting_targets:\n              AAPP: REPORT-1\n",
+		"ops":     "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - OPS\n          reporting:\n            issue_prefixes:\n              - OPS\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	reconcileResult := runCLI(t, "plan", "reconcile", "--push", "--adapter", "jira-cloud", "--from", "2026-04-02", "--to", "2026-04-02", "--output", "json")
+	if reconcileResult.code != 0 {
+		t.Fatalf("reconcile failed: code=%d stdout=%s stderr=%s", reconcileResult.code, reconcileResult.stdout, reconcileResult.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(reconcileResult.stdout))
+	if payload["plan_created"] != false {
+		t.Fatalf("expected no-plan payload, got %s", reconcileResult.stdout)
+	}
+
+	breakdown := payload["profile_breakdown"].([]any)
+	reportingFound := false
+	for _, raw := range breakdown {
+		summary := raw.(map[string]any)
+		if summary["route_profile"] != "reporting" {
+			continue
+		}
+		reportingFound = true
+		instances := summary["resolved_target_instances"].([]any)
+		if len(instances) != 1 || instances[0] != "product" {
+			t.Fatalf("expected concrete reporting instance in breakdown, got %s", reconcileResult.stdout)
+		}
+	}
+	if !reportingFound {
+		t.Fatalf("expected reporting breakdown entry, got %s", reconcileResult.stdout)
+	}
+}
+
+func TestPlanReconcilePushAutoReportingOverlapFailsValidation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	server := newJiraCloudTestServer(t, map[string][]string{})
+	defer server.Close()
+	writeConfigWithUTCAndJiraCloud(t, map[string]string{"product": server.URL}, map[string]string{
+		"product": "      routing:\n        profiles:\n          default:\n            issue_prefixes:\n              - AAPP\n          reporting-a:\n            reporting_targets:\n              AAPP: REPORT-1\n          reporting-b:\n            reporting_targets:\n              AAPP: REPORT-2\n",
+	})
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	add := runCLI(t, "worklogs", "add", "--issue", "AAPP-123", "--started-utc", "2026-04-02T08:00:00Z", "--duration", "1h", "--description", "Build feature", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: code=%d stdout=%s stderr=%s", add.code, add.stdout, add.stderr)
+	}
+
+	result := runCLI(t, "plan", "reconcile", "--push", "--adapter", "jira-cloud", "--from", "2026-04-02", "--to", "2026-04-02", "--output", "json")
+	if result.code != 2 {
+		t.Fatalf("expected validation failure, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stdout, "rerun with --route-profile") && !strings.Contains(result.stderr, "rerun with --route-profile") {
+		t.Fatalf("expected overlap guidance, got stdout=%s stderr=%s", result.stdout, result.stderr)
 	}
 }
 
@@ -4411,11 +4926,29 @@ func TestSavedPlanTableWindowsUseEffectiveLocalTimezone(t *testing.T) {
 	}
 }
 
-func TestPlanShowDeleteOnlyScopeReportsZeroLocalRowsAndMatch(t *testing.T) {
+func TestPlanShowRemoteOwnedCleanupScopeReportsZeroLocalRows(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTCAndClockifyPush(t)
 
-	server := newClockifyTestServer(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/user":
+			_, _ = w.Write([]byte(`{"id":"user-1","activeWorkspace":"ws-active","defaultWorkspace":"ws-default"}`))
+		case r.URL.Path == "/v1/workspaces/ws-active/user/user-1/time-entries":
+			w.Header().Set("Last-Page", "true")
+			_, _ = w.Write([]byte(`[
+				{"id":"valid-1","projectId":"proj-1","description":"Remote row","tagIds":["tag-123"],"timeInterval":{"start":"2026-05-01T08:00:00Z","end":"2026-05-01T09:00:00Z"}}
+			]`))
+		case r.URL.Path == "/v1/workspaces/ws-active/tags":
+			w.Header().Set("Last-Page", "true")
+			_, _ = w.Write([]byte(`[{"id":"tag-123","name":"AAPP-123"}]`))
+		case r.URL.Path == "/v1/workspaces/ws-active/projects":
+			w.Header().Set("Last-Page", "true")
+			_, _ = w.Write([]byte(`[{"id":"proj-1","name":"App Project"}]`))
+		default:
+			t.Fatalf("unexpected request path %s", r.URL.Path)
+		}
+	}))
 	defer server.Close()
 	originalBaseURL := clockifyadapter.BaseURL
 	clockifyadapter.BaseURL = server.URL
@@ -4425,7 +4958,6 @@ func TestPlanShowDeleteOnlyScopeReportsZeroLocalRowsAndMatch(t *testing.T) {
 	if result.code != 0 {
 		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
-	seedTombstone(t, "row-1", "AAPP-123", "2026-05-01T08:00:00Z", 3600, "Deleted locally", "2026-05-02T08:00:00Z")
 
 	reconcile := runCLI(t, "plan", "reconcile", "--push", "--adapter", "clockify", "--from", "2026-05-01", "--to", "2026-05-31", "--output", "json")
 	if reconcile.code != 0 {
@@ -4443,10 +4975,10 @@ func TestPlanShowDeleteOnlyScopeReportsZeroLocalRowsAndMatch(t *testing.T) {
 	}
 	item := items[0].(map[string]any)
 	if item["local_row_count"].(float64) != 0 {
-		t.Fatalf("expected tombstone scope local_row_count=0, got %#v", item["local_row_count"])
+		t.Fatalf("expected cleanup scope local_row_count=0, got %#v", item["local_row_count"])
 	}
-	if item["comparison_status"] != "match" || item["reason_code"] != "exact_match" {
-		t.Fatalf("expected tombstone empty remote scope to render as match, got %#v", item)
+	if item["plan_status"] != "ready" || item["planned_action"] != "replace" || item["comparison_status"] != "remote_diff" {
+		t.Fatalf("expected remote-owned cleanup scope, got %#v", item)
 	}
 }
 
@@ -5435,7 +5967,7 @@ func TestTotalsAcceptsMonthShortcutFlags(t *testing.T) {
 	}
 }
 
-func TestPlanReconcilePushTodayPersistsEmptyPlan(t *testing.T) {
+func TestPlanReconcileTodayDefaultsToPush(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTCAndClockifyPush(t)
 
@@ -5450,7 +5982,7 @@ func TestPlanReconcilePushTodayPersistsEmptyPlan(t *testing.T) {
 		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
-	reconcileResult := runCLI(t, "plan", "reconcile", "--push", "--adapter", "clockify", "--today", "--output", "json")
+	reconcileResult := runCLI(t, "plan", "reconcile", "--today", "--output", "json")
 	if reconcileResult.code != 0 {
 		t.Fatalf("push reconcile failed: code=%d stdout=%s stderr=%s", reconcileResult.code, reconcileResult.stdout, reconcileResult.stderr)
 	}
@@ -5469,8 +6001,11 @@ func TestPlanReconcileRejectsOnlyDeletedWithPull(t *testing.T) {
 	writeConfigWithUTCAndClockifyPush(t)
 
 	result := runCLI(t, "plan", "reconcile", "--pull", "--adapter", "clockify", "--today", "--only-deleted", "--output", "json")
-	if result.code != 2 {
-		t.Fatalf("expected validation failure, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	if result.code != 1 {
+		t.Fatalf("expected unknown-flag failure, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	if !strings.Contains(result.stderr, "unknown flag: --only-deleted") {
+		t.Fatalf("expected unknown flag error, got stdout=%s stderr=%s", result.stdout, result.stderr)
 	}
 }
 
@@ -7310,20 +7845,6 @@ func seedIssueMetadata(t *testing.T, issueKey string, maxEstimateSeconds *int64)
 		time.Now().UTC().Format(time.RFC3339),
 	); err != nil {
 		t.Fatalf("seed issue_metadata: %v", err)
-	}
-}
-
-func seedTombstone(t *testing.T, id, issueKey, startedAt string, durationSeconds int, description, deletedAt string) {
-	t.Helper()
-
-	db := openTestDB(t)
-	defer db.Close()
-
-	if _, err := db.Exec(
-		`INSERT INTO worklog_tombstones(worklog_id, issue_key, started_at_utc, duration_seconds, description, deleted_at) VALUES(?, ?, ?, ?, ?, ?)`,
-		id, issueKey, startedAt, durationSeconds, description, deletedAt,
-	); err != nil {
-		t.Fatalf("seed tombstone: %v", err)
 	}
 }
 

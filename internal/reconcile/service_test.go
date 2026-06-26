@@ -646,7 +646,7 @@ func TestApplyPlanJiraCloudAutoReportingSharedTargetPreservesUnion(t *testing.T)
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		targetScope(jiraCloudTarget("product")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -712,7 +712,7 @@ func TestApplyPlanJiraDataAutoReportingSharedTargetPreservesUnion(t *testing.T) 
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		targetScope(jiraDataTarget("internal"), jiraDataTarget("ops")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -782,7 +782,7 @@ func TestReconcileMultiJiraDataAutoExcludesReportingTargetsFromDefaultRemoteOwne
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		targetScope(jiraDataTarget("internal"), jiraDataTarget("ops")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -836,7 +836,7 @@ func TestReconcileMultiJiraCloudAutoExcludesReportingTargetsFromDefaultRemoteOwn
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		targetScope(jiraCloudTarget("product"), jiraCloudTarget("ops")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -885,7 +885,7 @@ func TestReconcileMultiJiraDataAutoReportingDoesNotLoopAfterApply(t *testing.T) 
 	first, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		targetScope(jiraDataTarget("internal")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -905,7 +905,7 @@ func TestReconcileMultiJiraDataAutoReportingDoesNotLoopAfterApply(t *testing.T) 
 	second, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		targetScope(jiraDataTarget("internal")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -1204,7 +1204,7 @@ func TestRetryPlanFailedSharedPushScopeUsesFullGroupReconcileContext(t *testing.
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		targetScope(jiraCloudTarget("product"), jiraCloudTarget("ops")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -2584,7 +2584,7 @@ func TestReconcileMultiPushPlanBuildsSinglePlanAcrossAdapters(t *testing.T) {
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-cloud", "jira-data-center"}},
+		targetScope(jiraCloudTarget("maxima_lt_jira"), jiraDataTarget("ito_jira")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -2650,7 +2650,7 @@ func TestReconcileMultiPushPlanAutoIncludesReportingProfiles(t *testing.T) {
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		testJiraCloudConfig(),
-		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		targetScope(jiraCloudTarget("product"), jiraCloudTarget("ops")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -2708,7 +2708,7 @@ func TestReconcileMultiPushPlanAutoPersistsExactMatchReportingProfilesJiraCloud(
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		testJiraCloudConfig(),
-		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		targetScope(jiraCloudTarget("product")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -2756,7 +2756,7 @@ func TestReconcileMultiPushPlanAutoPersistsExactMatchReportingProfilesJiraData(t
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		testJiraDataConfig(),
-		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		targetScope(jiraDataTarget("internal"), jiraDataTarget("ops")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -2814,7 +2814,7 @@ func TestReconcileMultiPushPlanAutoIgnoresSameNamedNonReportingProfileJiraCloud(
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		targetScope(jiraCloudTarget("product"), jiraCloudTarget("ops")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -2878,7 +2878,7 @@ func TestReconcileMultiPushPlanAutoIgnoresSameNamedNonReportingProfileJiraData(t
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		targetScope(jiraDataTarget("internal"), jiraDataTarget("ops")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -2941,7 +2941,7 @@ func TestReconcileMultiPushPlanExplicitRouteProfileKeepsNameScopedAcrossInstance
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		targetScope(jiraCloudTarget("product"), jiraCloudTarget("ops")),
 		"reporting",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -2991,7 +2991,7 @@ func TestReconcileMultiPushPlanRejectsAmbiguousAutomaticReportingProfiles(t *tes
 	_, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		targetScope(jiraCloudTarget("product")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -3028,7 +3028,7 @@ func TestCreateMultiPullPlanInfersClockifyTargetInstance(t *testing.T) {
 	plan, err := service.CreateMultiPullPlan(
 		context.Background(),
 		testClockifyConfig(true),
-		ReconcileScope{AdapterFamilies: []string{"clockify"}, Instances: []string{config.ClockifyInstanceName}},
+		targetScope(clockifyTarget()),
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
 	)
@@ -3083,7 +3083,7 @@ func TestReconcileMultiPushPlanSkipsClockifyWhenAllowlistExcludesIt(t *testing.T
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"clockify", "jira-cloud"}, Instances: []string{"maxima_lt_jira"}},
+		targetScope(jiraCloudTarget("maxima_lt_jira")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -3144,7 +3144,7 @@ func TestReconcileMultiPushPlanIncludesClockifySummary(t *testing.T) {
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"clockify", "jira-cloud"}},
+		targetScope(clockifyTarget(), jiraCloudTarget("maxima_lt_jira")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -3222,7 +3222,7 @@ func TestReconcileMultiPushPlanPersistsPartialPlanWhenJiraCloudSearchFails(t *te
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"clockify", "jira-cloud"}},
+		targetScope(clockifyTarget(), jiraCloudTarget("product")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -3334,7 +3334,7 @@ func TestReconcileMultiPushPlanAutoSkipsUnreachableJiraCloudInstanceWithoutMatch
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-cloud"}},
+		targetScope(jiraCloudTarget("maxima_lt_jira"), jiraCloudTarget("maxima_ee_jira")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -3412,7 +3412,7 @@ func TestReconcileMultiPushPlanAutoSkipsUnreachableJiraDataInstanceWithoutMatchi
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		cfg,
-		ReconcileScope{AdapterFamilies: []string{"jira-data-center"}},
+		targetScope(jiraDataTarget("ito_jira"), jiraDataTarget("vpn_only_jira")),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -3453,7 +3453,7 @@ func TestReconcileMultiPushPlanClockifyOnlyEmptyPlanStillIncludesSummary(t *test
 	result, err := service.ReconcileMultiPushPlan(
 		context.Background(),
 		testClockifyConfig(true),
-		ReconcileScope{AdapterFamilies: []string{"clockify"}},
+		targetScope(clockifyTarget()),
 		"",
 		mustTime("2026-05-01T00:00:00Z"),
 		mustTime("2026-05-01T23:59:59Z"),
@@ -3913,6 +3913,22 @@ func mustTime(value string) time.Time {
 		panic(err)
 	}
 	return parsed
+}
+
+func targetScope(targets ...ReconcileTarget) ReconcileScope {
+	return ReconcileScope{Targets: targets}
+}
+
+func clockifyTarget() ReconcileTarget {
+	return ReconcileTarget{AdapterFamily: "clockify", Instance: config.ClockifyInstanceName}
+}
+
+func jiraCloudTarget(instance string) ReconcileTarget {
+	return ReconcileTarget{AdapterFamily: "jira-cloud", Instance: instance}
+}
+
+func jiraDataTarget(instance string) ReconcileTarget {
+	return ReconcileTarget{AdapterFamily: "jira-data-center", Instance: instance}
 }
 
 func assertPlanItem(t *testing.T, item PlanItem, wantStatus, wantAction string) {

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -860,118 +859,18 @@ func resolveJiraCloudRouteProfile(cfg config.EffectiveConfig, name string) (jira
 	if cfg.File.JiraCloud == nil || len(cfg.File.JiraCloud.Instances) == 0 {
 		return jiraRouteProfile{}, errors.New("jira_cloud routing is required for push")
 	}
-	profileName := name
-	if profileName == "" {
-		profileName = "default"
-	}
-	routes := make([]jiraResolvedRouteRule, 0)
-	hasRouting := false
-	found := false
+
+	targets := make([]jiraRoutingTarget, 0)
 	for instanceName, instance := range cfg.File.JiraCloud.Instances {
 		if instance.Routing == nil {
 			continue
 		}
-		hasRouting = true
-		profile, ok := instance.Routing.Profiles[profileName]
-		if !ok {
-			continue
-		}
-		found = true
-		for _, prefix := range profile.IssuePrefixes {
-			routes = append(routes, jiraResolvedRouteRule{
-				prefix:         prefix,
-				targetInstance: instanceName,
-			})
-		}
-		for prefix, targetIssue := range profile.ReportingTargets {
-			routes = append(routes, jiraResolvedRouteRule{
-				prefix:         prefix,
-				targetInstance: instanceName,
-				targetIssue:    targetIssue,
-				reporting:      true,
-			})
-		}
+		targets = append(targets, jiraRoutingTarget{
+			target:   ReconcileTarget{AdapterFamily: "jira-cloud", Instance: instanceName},
+			profiles: instance.Routing.Profiles,
+		})
 	}
-	if !hasRouting {
-		return jiraRouteProfile{}, errors.New("jira_cloud routing is required for push")
-	}
-	if !found {
-		return jiraRouteProfile{}, fmt.Errorf("jira_cloud route profile %q is not configured", profileName)
-	}
-	return jiraRouteProfile{routes: routes}, nil
-}
-
-func resolveAutoJiraCloudPushRouteProfiles(cfg config.EffectiveConfig) ([]autoRouteProfileSelection, error) {
-	if cfg.File.JiraCloud == nil || len(cfg.File.JiraCloud.Instances) == 0 {
-		return nil, ValidationError{Message: "jira_cloud routing is required for push"}
-	}
-
-	selections := make([]autoRouteProfileSelection, 0)
-	prefixOwners := map[string][]string{}
-	hasRouting := false
-
-	instanceNames := sortedJiraCloudInstanceNames(cfg.File.JiraCloud.Instances)
-	for _, instanceName := range instanceNames {
-		instance := cfg.File.JiraCloud.Instances[instanceName]
-		if instance.Routing == nil {
-			continue
-		}
-		hasRouting = true
-		if _, ok := instance.Routing.Profiles["default"]; ok {
-			selections = append(selections, autoRouteProfileSelection{
-				AdapterFamily: "jira-cloud",
-				Instance:      instanceName,
-				Profile:       "default",
-				Reporting:     false,
-			})
-		}
-		reportingProfiles := make([]string, 0)
-		for profileName, profile := range instance.Routing.Profiles {
-			if profileName == "default" || len(profile.ReportingTargets) == 0 {
-				continue
-			}
-			reportingProfiles = append(reportingProfiles, profileName)
-			for prefix := range profile.ReportingTargets {
-				prefix = strings.TrimSpace(prefix)
-				if prefix == "" {
-					continue
-				}
-				prefixOwners[prefix] = append(prefixOwners[prefix], instanceName+"/"+profileName)
-			}
-		}
-		sort.Strings(reportingProfiles)
-		for _, profileName := range reportingProfiles {
-			selections = append(selections, autoRouteProfileSelection{
-				AdapterFamily: "jira-cloud",
-				Instance:      instanceName,
-				Profile:       profileName,
-				Reporting:     true,
-			})
-		}
-	}
-
-	if !hasRouting {
-		return nil, ValidationError{Message: "jira_cloud routing is required for push"}
-	}
-
-	ambiguous := make([]string, 0)
-	for prefix, owners := range prefixOwners {
-		uniqueOwners := map[string]struct{}{}
-		for _, owner := range owners {
-			uniqueOwners[owner] = struct{}{}
-		}
-		if len(uniqueOwners) <= 1 {
-			continue
-		}
-		ownerList := sortedSetKeys(uniqueOwners)
-		ambiguous = append(ambiguous, fmt.Sprintf("%s (%s)", prefix, strings.Join(ownerList, ", ")))
-	}
-	if len(ambiguous) > 0 {
-		sort.Strings(ambiguous)
-		return nil, ValidationError{Message: "automatic jira-cloud reporting reconcile is ambiguous for prefixes " + strings.Join(ambiguous, "; ") + "; rerun with --route-profile <name>"}
-	}
-
-	return selections, nil
+	return resolveJiraRouteProfileForTargets("jira-cloud", name, targets)
 }
 
 func (p jiraRouteProfile) isReportingOnly() bool {

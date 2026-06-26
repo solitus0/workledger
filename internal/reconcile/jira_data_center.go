@@ -813,118 +813,18 @@ func resolveJiraDataRouteProfile(cfg config.EffectiveConfig, name string) (jiraR
 	if cfg.File.JiraData == nil || len(cfg.File.JiraData.Instances) == 0 {
 		return jiraRouteProfile{}, errors.New("jira_data_center routing is required for push")
 	}
-	profileName := name
-	if profileName == "" {
-		profileName = "default"
-	}
-	routes := make([]jiraResolvedRouteRule, 0)
-	hasRouting := false
-	found := false
+
+	targets := make([]jiraRoutingTarget, 0)
 	for instanceName, instance := range cfg.File.JiraData.Instances {
 		if instance.Routing == nil {
 			continue
 		}
-		hasRouting = true
-		profile, ok := instance.Routing.Profiles[profileName]
-		if !ok {
-			continue
-		}
-		found = true
-		for _, prefix := range profile.IssuePrefixes {
-			routes = append(routes, jiraResolvedRouteRule{
-				prefix:         prefix,
-				targetInstance: instanceName,
-			})
-		}
-		for prefix, targetIssue := range profile.ReportingTargets {
-			routes = append(routes, jiraResolvedRouteRule{
-				prefix:         prefix,
-				targetInstance: instanceName,
-				targetIssue:    targetIssue,
-				reporting:      true,
-			})
-		}
+		targets = append(targets, jiraRoutingTarget{
+			target:   ReconcileTarget{AdapterFamily: "jira-data-center", Instance: instanceName},
+			profiles: instance.Routing.Profiles,
+		})
 	}
-	if !hasRouting {
-		return jiraRouteProfile{}, errors.New("jira_data_center routing is required for push")
-	}
-	if !found {
-		return jiraRouteProfile{}, fmt.Errorf("jira_data_center route profile %q is not configured", profileName)
-	}
-	return jiraRouteProfile{routes: routes}, nil
-}
-
-func resolveAutoJiraDataPushRouteProfiles(cfg config.EffectiveConfig) ([]autoRouteProfileSelection, error) {
-	if cfg.File.JiraData == nil || len(cfg.File.JiraData.Instances) == 0 {
-		return nil, ValidationError{Message: "jira_data_center routing is required for push"}
-	}
-
-	selections := make([]autoRouteProfileSelection, 0)
-	prefixOwners := map[string][]string{}
-	hasRouting := false
-
-	instanceNames := sortedJiraDataInstanceNames(cfg.File.JiraData.Instances)
-	for _, instanceName := range instanceNames {
-		instance := cfg.File.JiraData.Instances[instanceName]
-		if instance.Routing == nil {
-			continue
-		}
-		hasRouting = true
-		if _, ok := instance.Routing.Profiles["default"]; ok {
-			selections = append(selections, autoRouteProfileSelection{
-				AdapterFamily: "jira-data-center",
-				Instance:      instanceName,
-				Profile:       "default",
-				Reporting:     false,
-			})
-		}
-		reportingProfiles := make([]string, 0)
-		for profileName, profile := range instance.Routing.Profiles {
-			if profileName == "default" || len(profile.ReportingTargets) == 0 {
-				continue
-			}
-			reportingProfiles = append(reportingProfiles, profileName)
-			for prefix := range profile.ReportingTargets {
-				prefix = strings.TrimSpace(prefix)
-				if prefix == "" {
-					continue
-				}
-				prefixOwners[prefix] = append(prefixOwners[prefix], instanceName+"/"+profileName)
-			}
-		}
-		sort.Strings(reportingProfiles)
-		for _, profileName := range reportingProfiles {
-			selections = append(selections, autoRouteProfileSelection{
-				AdapterFamily: "jira-data-center",
-				Instance:      instanceName,
-				Profile:       profileName,
-				Reporting:     true,
-			})
-		}
-	}
-
-	if !hasRouting {
-		return nil, ValidationError{Message: "jira_data_center routing is required for push"}
-	}
-
-	ambiguous := make([]string, 0)
-	for prefix, owners := range prefixOwners {
-		uniqueOwners := map[string]struct{}{}
-		for _, owner := range owners {
-			uniqueOwners[owner] = struct{}{}
-		}
-		if len(uniqueOwners) <= 1 {
-			continue
-		}
-		ownerList := sortedSetKeys(uniqueOwners)
-		ambiguous = append(ambiguous, fmt.Sprintf("%s (%s)", prefix, strings.Join(ownerList, ", ")))
-	}
-	if len(ambiguous) > 0 {
-		sort.Strings(ambiguous)
-		return nil, ValidationError{Message: "automatic jira-data-center reporting reconcile is ambiguous for prefixes " + strings.Join(ambiguous, "; ") + "; rerun with --route-profile <name>"}
-	}
-
-	return selections, nil
+	return resolveJiraRouteProfileForTargets("jira-data-center", name, targets)
 }
 
 func (p jiraRouteProfile) resolve(issueKey string) (jiraResolvedRoute, bool, error) {
