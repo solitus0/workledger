@@ -32,8 +32,8 @@ Allowed command families only:
 ```text
 git branch --show-current
 
-workledger worklogs add --issue KEY --snap DATE_WINDOW --duration DURATION --description "..." --dry --output json
-workledger worklogs add --issue KEY --snap DATE_WINDOW --duration DURATION --description "..." --output json
+workledger worklogs add --issue KEY --fit DATE_WINDOW --duration DURATION --description "..." --dry --output json
+workledger worklogs add --issue KEY --fit DATE_WINDOW --duration DURATION --description "..." --output json
 workledger worklogs add --issue KEY --started LOCAL_TIME --duration DURATION --description "..." --dry --output json
 workledger worklogs add --issue KEY --started LOCAL_TIME --duration DURATION --description "..." --output json
 workledger worklogs add --issue KEY --started-utc UTC_TIME --duration DURATION --description "..." --dry --output json
@@ -54,10 +54,10 @@ workledger worklogs apply --file payload.json --output json
 
 Use `worklogs add` directly only after the user has provided duration. Dry-run first; apply after success.
 
-- Unknown exact start: use `--snap DATE_WINDOW`.
+- Unknown exact start: use `--fit DATE_WINDOW`.
 - Known local start: use `--started`, for example `todayT09:00`.
 - Known UTC start: use `--started-utc`, for example `2026-05-15T07:00:00Z`.
-- Do not run `context` before a `--snap` add.
+- Do not run `context` before a `--fit` add.
 
 ## Multi-entry path
 

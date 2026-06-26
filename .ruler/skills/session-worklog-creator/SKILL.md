@@ -57,7 +57,7 @@ Required fields:
 
 1. Extract date, issue key(s), user-provided duration, and summary from current context.
 2. If one entry is needed, use `workledger worklogs add`:
-   - use `--snap` with a date-window flag when exact start is not required
+   - use `--fit` with a date-window flag when exact start is not required
    - use `--started` or `--started-utc` only when an exact start is supported
    - dry-run first; apply immediately after a clean dry-run
 3. If multiple entries are needed:
