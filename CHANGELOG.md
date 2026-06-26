@@ -8,11 +8,27 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Changed
+- `workledger worklogs add` automatic placement now uses explicit `--fit` and `--fill` modes instead of `--snap`; `--fit` creates one continuous worklog, `--fill` can allocate across gaps, and the session worklog creator skill now uses `--fit` for unknown exact starts.
 - Bare Jira push `workledger plan reconcile` now includes non-default reporting profiles automatically, surfaces per-profile breakdowns in reconcile output, and shows persisted route profiles in `plan show`.
 
 ### Fixed
 - `workledger plan reconcile --route-profile` now fails fast when no Jira target is selected, instead of falling through to unrelated adapters such as Clockify.
 - Implicit all-target reconcile validation now includes the concrete skipped-target reasons when every configured target is invalid.
+
+## [0.1.7] - 2026-06-23
+
+### Added
+- `workledger trash` commands for listing, searching, and showing read-only archived worklogs removed during pull merges or remote cleanup.
+- `workledger plan show` now displays saved diff metrics in compact table output, including `LOCAL`, `REMOTE`, `MATCH`, `CREATE`, and `DELETE` columns.
+
+### Changed
+- `workledger plan apply` push cleanup now archives actually deleted remote rows into trash before creating missing replacement worklogs.
+- `workledger plan apply` pull merges now archive removed local active rows into trash in the same SQLite transaction as the merge.
+- Human-readable `plan apply` success output now reports aggregate trash archive counts without per-scope trash detail lines.
+- Ordinary commands no longer create or repair SQLite schema implicitly; schema bootstrap and repair stay scoped to `workledger init`.
+
+### Fixed
+- Missing or mismatched SQLite stores now fail with clear `sqlite_store_not_ready` or `sqlite_store_schema_mismatch` errors before feature SQL runs.
 
 ## [0.1.6] - 2026-06-02
 
