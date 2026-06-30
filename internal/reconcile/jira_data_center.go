@@ -34,6 +34,10 @@ func (s *Service) buildJiraDataPullPlan(ctx context.Context, cfg config.Effectiv
 	if err != nil {
 		return Plan{}, err
 	}
+	issuePrefixes, err := config.JiraDataIssuePrefixes(cfg, instance.name)
+	if err != nil {
+		return Plan{}, err
+	}
 	fingerprint, err := config.FingerprintEffective(cfg)
 	if err != nil {
 		return Plan{}, err
@@ -96,6 +100,10 @@ func (s *Service) buildJiraDataPullPlan(ctx context.Context, cfg config.Effectiv
 		go func() {
 			defer wg.Done()
 			if _, ok := excluded[issue.Key]; ok {
+				results <- pullResult{}
+				return
+			}
+			if !matchesJiraPullIssuePrefixes(issue.Key, issuePrefixes) {
 				results <- pullResult{}
 				return
 			}
@@ -868,6 +876,18 @@ func filterJiraWorklogsByUserAndWindow(items []jiradatacenter.Worklog, user jira
 		}
 	}
 	return filtered
+}
+
+func matchesJiraPullIssuePrefixes(issueKey string, issuePrefixes []string) bool {
+	if len(issuePrefixes) == 0 {
+		return false
+	}
+	for _, prefix := range issuePrefixes {
+		if strings.HasPrefix(issueKey, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasForeignJiraWorklogs(items []jiradatacenter.Worklog, user jiradatacenter.User, from, to time.Time) bool {

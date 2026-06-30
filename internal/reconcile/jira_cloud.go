@@ -34,6 +34,10 @@ func (s *Service) buildJiraCloudPullPlan(ctx context.Context, cfg config.Effecti
 	if err != nil {
 		return Plan{}, err
 	}
+	issuePrefixes, err := config.JiraCloudIssuePrefixes(cfg, instance.name)
+	if err != nil {
+		return Plan{}, err
+	}
 	fingerprint, err := config.FingerprintEffective(cfg)
 	if err != nil {
 		return Plan{}, err
@@ -101,6 +105,10 @@ func (s *Service) buildJiraCloudPullPlan(ctx context.Context, cfg config.Effecti
 				return
 			}
 			if _, ok := excluded[issueKey]; ok {
+				results <- pullResult{}
+				return
+			}
+			if !matchesJiraPullIssuePrefixes(issueKey, issuePrefixes) {
 				results <- pullResult{}
 				return
 			}

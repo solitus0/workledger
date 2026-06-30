@@ -282,7 +282,7 @@ Placement rule:
 - [ ] FUNC-234: `workledger plan reconcile` shall return a no-plan result when a reporting reconcile finds only non-actionable scopes.
 - [ ] FUNC-234a: A reporting no-plan result with at least one matched scope and zero actionable scopes shall report reason `exact_match`.
 - [ ] FUNC-234b: Automatic multi-profile Jira push reconcile shall include exact-match reporting scopes in the saved merged plan when at least one selected adapter or profile creates a saved plan.
-- [ ] FUNC-235: `workledger plan reconcile --pull --adapter=<family>` shall inspect remote worklogs from the selected adapter family's configured source scope.
+- [ ] FUNC-235: `workledger plan reconcile --pull --adapter=<family>` shall inspect remote worklogs only from the selected adapter family's configured routed `issue_prefixes` source scope.
 - [ ] FUNC-235a: `workledger plan reconcile` shall accept repeated `--instance=<name>` as an adapter-instance allowlist, including the implicit Clockify instance `clockify` and configured Jira instances.
 - [ ] FUNC-235b: explicit `--adapter` without `--instance` shall include the implicit Clockify instance when `clockify` is selected and all configured instances for each explicitly selected Jira adapter family.
 - [ ] FUNC-235c: `workledger plan reconcile --adapter=<family> --instance=<name>` shall fail validation when an instance does not belong to one of the selected adapters.

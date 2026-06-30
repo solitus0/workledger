@@ -1494,6 +1494,31 @@ func TestCreateJiraDataPullPlanImplicitlyExcludesReportingTargets(t *testing.T) 
 	}
 }
 
+func TestCreateJiraDataPullPlanExcludesIssuesOutsideRoutedPrefixes(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	service := NewService(store)
+	service.newJiraDataClient = func(cfg config.JiraDataCenterInstance) jiraDataClient {
+		return &fakeJiraDataClient{
+			user:         jiradatacenter.User{AccountID: "u1"},
+			searchIssues: []jiradatacenter.IssueBrief{{Key: "AAPP-1"}, {Key: "IDVSTL-5"}},
+			worklogsByIssue: map[string][]jiradatacenter.Worklog{
+				"AAPP-1":   {{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "Build feature", Author: jiradatacenter.WorklogUser{AccountID: "u1"}}},
+				"IDVSTL-5": {{ID: "w2", Started: "2026-05-01T09:00:00.000+0000", TimeSpentSeconds: 1800, Comment: "foreign", Author: jiradatacenter.WorklogUser{AccountID: "u1"}}},
+			},
+		}
+	}
+
+	plan, err := service.CreateJiraDataPullPlan(context.Background(), testJiraDataConfig(), "internal", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"))
+	if err != nil {
+		t.Fatalf("CreateJiraDataPullPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 || plan.Items[0].IssueKey != "AAPP-1" {
+		t.Fatalf("expected foreign prefix to be excluded, got %#v", plan.Items)
+	}
+}
+
 func TestCreateJiraDataPushPlanReportingRemoteOwnedGroupCreatesDeleteItem(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
@@ -1755,6 +1780,31 @@ func TestCreateJiraCloudPullPlanImplicitlyExcludesReportingTargets(t *testing.T)
 	}
 	if len(plan.Items) != 1 || plan.Items[0].IssueKey != "AAPP-1" {
 		t.Fatalf("expected reporting target to be excluded, got %#v", plan.Items)
+	}
+}
+
+func TestCreateJiraCloudPullPlanExcludesIssuesOutsideRoutedPrefixes(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient {
+		return &fakeJiraCloudClient{
+			user:         jiracloud.User{AccountID: "u1"},
+			searchIssues: []jiracloud.IssueBrief{{Key: "AAPP-1"}, {Key: "IDVSTL-5"}},
+			worklogsByIssue: map[string][]jiracloud.Worklog{
+				"AAPP-1":   {{ID: "w1", Started: "2026-05-01T08:00:00.000+0000", TimeSpentSeconds: 3600, Comment: "Build feature", Author: jiracloud.WorklogUser{AccountID: "u1"}}},
+				"IDVSTL-5": {{ID: "w2", Started: "2026-05-01T09:00:00.000+0000", TimeSpentSeconds: 1800, Comment: "foreign", Author: jiracloud.WorklogUser{AccountID: "u1"}}},
+			},
+		}
+	}
+
+	plan, err := service.CreateJiraCloudPullPlan(context.Background(), testJiraCloudConfig(), "product", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"))
+	if err != nil {
+		t.Fatalf("CreateJiraCloudPullPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 || plan.Items[0].IssueKey != "AAPP-1" {
+		t.Fatalf("expected foreign prefix to be excluded, got %#v", plan.Items)
 	}
 }
 
