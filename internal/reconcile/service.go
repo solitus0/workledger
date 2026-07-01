@@ -2663,8 +2663,36 @@ func remoteCommentText(value any) string {
 		if body, ok := typed["body"].(string); ok {
 			return body
 		}
+		if content, ok := typed["content"].([]any); ok {
+			parts := make([]string, 0)
+			for _, raw := range content {
+				node, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				collectRemoteCommentText(node, &parts)
+			}
+			return strings.TrimSpace(strings.Join(parts, " "))
+		}
 	}
 	return ""
+}
+
+func collectRemoteCommentText(node map[string]any, parts *[]string) {
+	if text, ok := node["text"].(string); ok && text != "" {
+		*parts = append(*parts, text)
+	}
+	content, ok := node["content"].([]any)
+	if !ok {
+		return
+	}
+	for _, raw := range content {
+		child, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		collectRemoteCommentText(child, parts)
+	}
 }
 
 func hashPayload(payload []byte) string {

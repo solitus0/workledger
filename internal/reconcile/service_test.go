@@ -1964,6 +1964,87 @@ func TestApplyPlanJiraCloudRemoteOwnedCleanupArchivesTrash(t *testing.T) {
 	}
 }
 
+func TestApplyPlanJiraCloudReplaceKeepsADFMatchedRows(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Build feature")
+	seedWorklogRow(t, store, "row-2", "AAPP-1", "2026-05-01T10:00:00Z", 1800, "Review PR")
+
+	client := &fakeJiraCloudClient{
+		user:         jiracloud.User{AccountID: "u1"},
+		searchIssues: []jiracloud.IssueBrief{{Key: "AAPP-1"}},
+		worklogsByIssue: map[string][]jiracloud.Worklog{
+			"AAPP-1": {
+				{
+					ID:               "w1",
+					Started:          "2026-05-01T08:00:00.000+0000",
+					TimeSpentSeconds: 3600,
+					Comment: map[string]any{
+						"type":    "doc",
+						"version": 1,
+						"content": []any{
+							map[string]any{
+								"type": "paragraph",
+								"content": []any{
+									map[string]any{
+										"type": "text",
+										"text": "Build feature",
+									},
+								},
+							},
+						},
+					},
+					Author: jiracloud.WorklogUser{AccountID: "u1"},
+				},
+			},
+		},
+	}
+
+	service := NewService(store)
+	service.newJiraCloudClient = func(cfg config.JiraCloudInstance) jiraCloudClient { return client }
+
+	plan, err := service.CreateJiraCloudPushPlan(context.Background(), testJiraCloudConfig(), "default", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateJiraCloudPushPlan failed: %v", err)
+	}
+	if len(plan.Items) != 1 {
+		t.Fatalf("expected one plan item, got %d", len(plan.Items))
+	}
+	item := plan.Items[0]
+	if item.InspectionSummary.MatchedRowCount != 1 || item.InspectionSummary.CreateRowCount != 1 || item.InspectionSummary.DeleteRowCount != 0 {
+		t.Fatalf("expected append-only replace diff, got %#v", item.InspectionSummary)
+	}
+
+	result, err := service.ApplyPlan(testJiraCloudConfig(), plan.ID)
+	if err != nil {
+		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+	if result.TrashArchivedCount != 0 {
+		t.Fatalf("expected no trash archival for matched ADF rows, got %#v", result)
+	}
+	if got := countTrashRecords(t, store); got != 0 {
+		t.Fatalf("expected no trashed rows, got %d", got)
+	}
+
+	scope := client.worklogsByIssue["AAPP-1"]
+	if len(scope) != 2 {
+		t.Fatalf("expected one preserved row and one created row, got %#v", scope)
+	}
+	foundPreserved := false
+	foundCreated := false
+	for _, worklog := range scope {
+		if worklog.ID == "w1" {
+			foundPreserved = true
+		}
+		if worklog.ID == "created" {
+			foundCreated = true
+		}
+	}
+	if !foundPreserved || !foundCreated {
+		t.Fatalf("expected preserved Jira row and one created row, got %#v", scope)
+	}
+}
+
 func TestCreateJiraCloudPullPlanResolvesIssueIDOnlySearchResults(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
