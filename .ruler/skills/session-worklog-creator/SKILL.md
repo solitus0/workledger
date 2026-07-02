@@ -1,91 +1,63 @@
 ---
 name: session-worklog-creator
-description: create local workledger worklogs from the current chatgpt or coding-agent session only when the user provides an explicit duration. use when the user invokes this skill or asks to create, add, book, or log worklogs for the current session. if duration is missing, stop and ask for duration; never infer it. do not use for setup, diagnostics, totals, search, editing or deleting worklogs, remote sync, reconciliation, artifact rendering, or general workledger cli help.
+description: Create local workledger worklogs from the current ChatGPT or coding-agent session after the user provides explicit duration. Duration is the only mandatory user input. Use the current branch to derive the issue key when needed; ask for issue only when no unambiguous key can be found. Never require started time, log count, date/window, description, or summary unless the user provides those details and they are conflicting or unusable.
 ---
 
 # Session Worklog Creator
 
-Create canonical local `workledger` worklogs from current-session evidence.
+Create canonical local `workledger` worklogs from evidence visible in the current session with minimal user input.
 
-## Contract
+## Boundary
 
-- Treat direct invocation as permission to create local worklogs only after the duration gate and a passing dry-run.
-- Require an explicit user-provided duration in the invocation/request. If absent, stop before all commands and ask for duration.
-- Never infer duration from session length, timestamps, tool history, commits, branch age, calendar gaps, or `workledger` context.
-- Use only current visible context: chat, agent transcript, tool output, issue keys, branch or commit snippets, and user notes.
-- Do not mine unrelated history or broad repository state to fill gaps.
-- If `workledger` is unavailable, stop and report that no worklog was created.
+- Direct invocation, or an explicit request to create/book/log a worklog, is permission to apply local worklogs after duration is explicit, an issue key is available, and dry-run succeeds.
+- Duration is the only mandatory user-provided field. Never infer it.
+- Use only current-session evidence: the request, chat or agent transcript, visible tool output, issue keys, branch/commit/PR snippets, and files or notes uploaded in this conversation.
+- Do not search unrelated conversation history, broad repository state, remote trackers, totals, or prior worklogs to fill gaps.
 - Do not run setup, diagnostics, totals, search, edit/delete, remote sync, reconciliation, or artifact-rendering flows.
-- Load `references/worklog-creation-contract.md` before running `workledger`, choosing placement, building payloads, or reporting CLI failures.
+- Load `references/worklog-creation-contract.md` before choosing placement, building payloads, running `workledger`, or explaining CLI failures.
+- If `workledger` is unavailable, stop and report that no worklog was created.
 
-## Stop gate
+## Gate order
 
-Check duration first. If the user's invocation/request does not include a duration, stop without commands:
+1. **Duration only.** If the request lacks explicit duration, run no commands and ask only:
 
-```text
-Provide the duration to log, for example 45m, 1h30m, or 2h. I won't infer it from the session.
-```
+   ```text
+   Provide the duration to log, for example 45m, 1h30m, or 2h. I won't infer it from the session.
+   ```
 
-After duration is present, classify the remaining context:
+2. **Issue key next.** After duration is known, use a visible issue key from the current session. If none is visible, run only `git branch --show-current` and use an unambiguous Jira-style key from the current branch, such as `PROJ-123`. Ask only for the issue key if neither source works.
+3. **Defaults are not questions.** Do not ask for started time, date/window, log count, description, summary, or split just because they are absent. Default to one log, `--fill --today`, and no description unless the user provided one or the CLI requires one.
+4. **Optional fields stay optional.** Use user-provided started time, date/window, log count, split, and description when present. Ask only when the user provided an optional field but it conflicts, is malformed, or cannot be applied without changing intent.
 
-- **Empty**: no concrete work, issue/task key, or summary. Stop without commands:
-
-```text
-I don't have enough current session context to create a worklog. Provide the issue key(s), date if not today, and a short summary of the work.
-```
-
-- **Incomplete**: some usable evidence exists, but a required field is missing. Ask only for the missing field.
-
-Required fields:
-
-- issue key
-- user-provided duration
-- summary
-- date, defaulting to today only when the other fields are usable
-
-## Extraction rules
-
-- Never invent issue keys, durations, or completed work.
-- Use only durations explicitly supplied by the user; normalizing `90 minutes` to `1h30m` is allowed.
-- If no issue key is visible, run a minimal git branch lookup before asking the user.
-- Use concise, action-oriented descriptions.
-- Do not claim implementation when evidence only supports investigation, planning, or review.
-- Preserve the user's duration. If CLI rules require a different increment or format, ask for the corrected duration unless the conversion is purely syntactic.
-- Prefer fewer issue-level entries over fragmented chat-turn, command, commit, or file-level rows.
+Never invent duration, issue keys, or completed work. Normalize explicit duration syntax only when meaning is unchanged, such as `90 minutes` to `1h30m`.
 
 ## Creation flow
 
-1. Extract date, issue key(s), user-provided duration, and summary from current context.
-2. If one entry is needed, use `workledger worklogs add`:
-   - use `--fit` with a date-window flag when exact start is not required
-   - use `--started` or `--started-utc` only when an exact start is supported
-   - dry-run first; apply immediately after a clean dry-run
-3. If multiple entries are needed:
-   - require explicit per-entry durations, or one explicit total duration plus the user's explicit split instruction
-   - stop and ask for the missing duration/split detail if any entry duration would need inference
-   - run `workledger worklogs context` for the date window
-   - bundle evidence by issue
-   - build one JSON object with top-level `adds`
-   - validate with `workledger worklogs apply --stdin --dry --output json`
-   - apply with `workledger worklogs apply --stdin --output json` after a clean dry-run
-4. If dry-run fails, repair what the context supports and rerun dry-run. Convert duration only when the user supplied it explicitly and the conversion is purely syntactic. Ask before changing increments, totals, or allocation.
-5. Report created entries, IDs, and CLI warnings. If nothing was created, say so.
+1. Extract explicit duration first.
+2. Extract the issue key from current-session evidence, or derive it from `git branch --show-current`; ask only for the issue key if both fail.
+3. Extract optional user-provided started time, date/window, log count, description, and split details. Missing optional fields use defaults rather than prompts.
+4. Follow `references/worklog-creation-contract.md` for allowed commands, placement, payload shape, and failure handling.
+5. Use `worklogs add` for the default single-log path:
+   - use `--fill --today` when no exact start or date/window is supplied
+   - use a supplied date/window with `--fill` when the user provided one but no exact start
+   - use `--fit` only when the user requests one continuous placement or the session clearly calls for a single earliest free slot
+   - use `--started` or `--started-utc` only when the user supplies the exact start
+   - include `--description` only when the user supplied one or dry-run proves the CLI requires it
+6. Use `worklogs apply` with one JSON payload when the user supplies multiple issues, per-entry durations, a log count, explicit split instructions, or payload-shaped evidence. If the user gives one total duration with multiple issues or a log count but no split, divide the explicit total evenly and preserve the exact total.
+7. Dry-run first with `--output json`; apply immediately only after a clean dry-run.
+8. If dry-run fails, repair only evidence-supported command shape, payload shape, timestamp grammar/exclusivity, slot placement, optional-description handling, or allocation math that preserves the explicit total. Ask only when the smallest safe correction needs a missing duration, a missing issue key, or a change to user-provided intent.
+9. If apply fails, do not claim success. Retry once only for a command-shape or transient persistence failure that preserves intent.
 
-## Output style
+## Description and response style
 
-Keep the final response compact:
+Descriptions are optional. When included, keep them concise, action-oriented, and evidence-matched. Use neutral wording such as `current session work` when the CLI requires a description but the session lacks enough detail for something more specific.
+
+For success, report created count, date/window, issue, duration, placement time when available, description only if used, IDs, and CLI warnings. For failure, report whether anything was created, the exact CLI error or warning, and the smallest correction needed.
 
 ```text
-Created 2 local worklogs for 2026-05-15.
+Created 1 local worklog for today.
 
-- PROJ-123: 1h30m, todayT09:00, implement session worklog creation flow
-- PROJ-456: 45m, todayT10:30, validate apply payload handling
+- PROJ-123: 1h30m, filled earliest available slot
 
-Dry-run passed. Applied with IDs: abc, def.
+Dry-run passed. Applied with ID: abc.
 ```
-
-For failures, include only:
-
-- whether a worklog was created
-- the exact CLI error or warning
-- the smallest correction needed

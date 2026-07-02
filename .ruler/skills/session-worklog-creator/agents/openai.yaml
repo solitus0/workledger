@@ -1,4 +1,4 @@
 interface:
   display_name: "Session Worklog Creator"
-  short_description: "Create workledger worklogs from the current agent session"
-  default_prompt: "Use $session-worklog-creator to create local workledger worklogs from the current session context."
+  short_description: "Create local workledger worklogs from the current session with only duration required"
+  default_prompt: "Use $session-worklog-creator to create local workledger worklogs from the current session. Include only the duration, for example 1h30m. The issue can be derived from the current branch when available."
