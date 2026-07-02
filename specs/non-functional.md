@@ -309,11 +309,10 @@ Placement rule:
 - [ ] NFR-270: Single-delete JSON output shall use `id`, `issue_key`, and `deleted_at`.
 - [ ] NFR-271: Filtered batch delete dry-run JSON output shall use `filters`, `dry_run`, `matched`, and `items`.
 - [ ] NFR-272: Executed filtered batch delete JSON output shall use `filters`, `dry_run`, `deleted`, and `items`.
-- [ ] NFR-275: `workledger status --output json` shall use `{"items":[...]}` for bare and filtered status.
-- [ ] NFR-276: Each status `items[]` entry shall include `adapter`, `instance`, `status`, `base_url`, `workspace_id`, `user_id`, and `user`.
-- [ ] NFR-276a: Clockify status rows shall report the implicit runtime instance name `clockify` in `instance`.
-- [ ] NFR-277: Status JSON fields that do not apply to an adapter shall be `null`.
-- [ ] NFR-278: Status table output shall use `ADAPTER`, `INSTANCE`, `STATUS`, `BASE_URL`, and `USER` headers.
+- [ ] NFR-275: `workledger status --output json` shall use `{"items":[...]}`.
+- [ ] NFR-276: Each status `items[]` entry shall include `category`, `target`, `status`, and `message`.
+- [ ] NFR-276a: Successful status connectivity items shall clearly identify the checked target and authenticated principal.
+- [ ] NFR-278: Status table output shall use `CATEGORY`, `TARGET`, `STATUS`, and `MESSAGE` headers.
 - [ ] NFR-279: `workledger totals --output json` explicit adapter output shall contain exactly `filters`, `summary`, and `days`.
 - [ ] NFR-280: `workledger totals --output json` bare output shall render `{"items":[...]}`.
 - [ ] NFR-281: Bare totals `items[]` entries shall include `adapter`, `instance`, `from`, `to`, and `timezone`.
@@ -378,8 +377,8 @@ Placement rule:
 - [ ] NFR-328: `planning.slot_order` shall indicate free slots are ordered by ascending local day and ascending slot start.
 - [ ] NFR-329: `worklogs shift` shall preserve relative spacing between selected worklogs.
 - [ ] NFR-330: `worklogs shift` shall preserve ordering between selected worklogs.
-- [ ] NFR-331: `workledger status` rows shall be ordered by family as `clockify`, `jira-cloud`, then `jira-data-center`.
-- [ ] NFR-332: Jira status rows shall be sorted by instance name ascending.
+- [ ] NFR-331: `workledger status` connectivity rows shall be ordered by family as `clockify`, `jira-cloud`, then `jira-data-center`.
+- [ ] NFR-332: Jira status connectivity rows shall be sorted by instance name ascending.
 - [ ] NFR-333: Bare totals rows shall be ordered by family as `clockify`, `jira-cloud`, then `jira-data-center`.
 - [ ] NFR-334: Bare totals Jira instance rows shall be sorted by instance name ascending.
 - [ ] NFR-335: Totals days shall be ordered chronologically by local date in the effective local timezone.

@@ -36,10 +36,10 @@ go run ./cmd/workledger --help
 
 ```sh
 workledger init
-workledger doctor
+workledger status
 ```
 
-`init` creates the config file when needed and provisions local SQLite storage. `doctor` validates configuration, storage access, environment references, routing, and adapter connectivity.
+`init` creates the config file when needed and provisions local SQLite storage. `status` runs setup diagnostics and shows authenticated identity details for successful remote checks.
 
 ## Daily workflow
 
@@ -115,7 +115,7 @@ Use one date selector per command unless the command accepts an explicit `--from
 
 ## Recommended agent workflow
 
-If you use an agent with `workledger`, install the `workledger-onboarding` skill for guided first-time setup — init, adapter configuration, environment variables, routing checks, and `doctor` diagnostics — before any worklog entry or remote sync workflow.
+If you use an agent with `workledger`, install the `workledger-onboarding` skill for guided first-time setup and `status` diagnostics before any worklog entry or remote sync workflow.
 
 ```sh
 npx skills add solitus0/workledger --skill workledger-onboarding -g

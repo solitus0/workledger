@@ -280,7 +280,6 @@ func (a *app) newRootCommand() *cobra.Command {
 	root.AddCommand(a.newTrashCommand())
 	root.AddCommand(a.newTotalsCommand())
 	root.AddCommand(a.newStatusCommand())
-	root.AddCommand(a.newDoctorCommand())
 	root.AddCommand(a.newRoutingCommand())
 	root.AddCommand(a.newRouteCommand())
 	root.AddCommand(a.newClockifyCommand())
@@ -1350,80 +1349,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	return cmd
 }
 
-func (a *app) newStatusCommand() *cobra.Command {
-	var adapter string
-	var instance string
-
-	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Check adapter status",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			mode := outputMode(cmd)
-			effective, err := config.LoadEffective()
-			if err != nil {
-				if errors.Is(err, config.ErrConfigNotFound) {
-					return a.fail(mode, 2, "validation_error", "config file does not exist; run workledger init", nil)
-				}
-				var validationErr config.ValidationErrors
-				if errors.As(err, &validationErr) {
-					return a.fail(mode, 2, "validation_error", "config validation failed", validationErr.Issues)
-				}
-				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
-			}
-
-			var rows []statusRow
-			exitCode := 0
-			switch adapter {
-			case "":
-				rows, exitCode = a.collectAllStatusRows(cmd.Context(), effective)
-			case "clockify":
-				var err error
-				rows, err = a.collectClockifyStatusRows(cmd.Context(), effective, instance)
-				if err != nil {
-					var requestErr *clockifyadapter.RequestError
-					if errors.As(err, &requestErr) {
-						return a.handleClockifyError(mode, err)
-					}
-					return a.fail(mode, 2, "validation_error", err.Error(), nil)
-				}
-			case "jira-cloud":
-				var err error
-				rows, err = a.collectJiraCloudStatusRows(cmd.Context(), effective, instance)
-				if err != nil {
-					return a.handleJiraCloudError(mode, err)
-				}
-			case "jira-data-center":
-				var err error
-				rows, err = a.collectJiraDataStatusRows(cmd.Context(), effective, instance)
-				if err != nil {
-					return a.handleJiraDataError(mode, err)
-				}
-			default:
-				return a.fail(mode, 2, "validation_error", "supported adapters are clockify, jira-cloud, and jira-data-center", nil)
-			}
-
-			if mode == "json" {
-				if err := a.renderStatusJSON(rows); err != nil {
-					return err
-				}
-			} else {
-				if err := renderTable(a.stdout, statusTableHeaders(), statusTableRows(rows)); err != nil {
-					return err
-				}
-			}
-			if exitCode != 0 {
-				return exitError{code: exitCode}
-			}
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVar(&adapter, "adapter", "", "Adapter family")
-	cmd.Flags().StringVar(&instance, "instance", "", "Adapter instance")
-	return cmd
-}
-
-type statusRow struct {
+type connectivityRow struct {
 	Adapter     string
 	Instance    string
 	Status      string
@@ -1433,35 +1359,35 @@ type statusRow struct {
 	User        string
 }
 
-func (a *app) collectAllStatusRows(ctx context.Context, effective config.EffectiveConfig) ([]statusRow, int) {
-	rows := make([]statusRow, 0)
+func (a *app) collectAllConnectivityRows(ctx context.Context, effective config.EffectiveConfig) ([]connectivityRow, int) {
+	rows := make([]connectivityRow, 0)
 	exitCode := 0
 
-	clockifyRows, err := a.collectClockifyStatusRows(ctx, effective, "")
+	clockifyRows, err := a.collectClockifyConnectivityRows(ctx, effective)
 	if err != nil {
-		rows = append(rows, failedClockifyStatusRow(effective, err))
-		exitCode = firstStatusExitCode(exitCode, statusExitCodeForClockify(err))
+		rows = append(rows, failedClockifyConnectivityRow(effective, err))
+		exitCode = firstNonZeroExitCode(exitCode, connectivityExitCodeForClockify(err))
 	} else {
 		rows = append(rows, clockifyRows...)
 	}
 
-	jiraCloudRows, jiraCloudExitCode := a.collectJiraCloudStatusRowsTolerant(ctx, effective)
+	jiraCloudRows, jiraCloudExitCode := a.collectJiraCloudConnectivityRows(ctx, effective)
 	rows = append(rows, jiraCloudRows...)
-	exitCode = firstStatusExitCode(exitCode, jiraCloudExitCode)
+	exitCode = firstNonZeroExitCode(exitCode, jiraCloudExitCode)
 
-	jiraDataRows, jiraDataExitCode := a.collectJiraDataStatusRowsTolerant(ctx, effective)
+	jiraDataRows, jiraDataExitCode := a.collectJiraDataConnectivityRows(ctx, effective)
 	rows = append(rows, jiraDataRows...)
-	exitCode = firstStatusExitCode(exitCode, jiraDataExitCode)
+	exitCode = firstNonZeroExitCode(exitCode, jiraDataExitCode)
 
 	return rows, exitCode
 }
 
-func (a *app) collectClockifyStatusRows(ctx context.Context, effective config.EffectiveConfig, instanceName string) ([]statusRow, error) {
+func (a *app) collectClockifyConnectivityRows(ctx context.Context, effective config.EffectiveConfig) ([]connectivityRow, error) {
 	if effective.File.Clockify == nil {
 		return nil, nil
 	}
 
-	resolvedInstance, clockifyCfg, err := config.ResolveClockifyInstance(effective, instanceName)
+	resolvedInstance, clockifyCfg, err := config.ResolveClockifyInstance(effective, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1490,7 +1416,7 @@ func (a *app) collectClockifyStatusRows(ctx context.Context, effective config.Ef
 		return nil, err
 	}
 
-	return []statusRow{{
+	return []connectivityRow{{
 		Adapter:     "clockify",
 		Instance:    resolvedInstance,
 		Status:      "OK",
@@ -1499,71 +1425,38 @@ func (a *app) collectClockifyStatusRows(ctx context.Context, effective config.Ef
 	}}, nil
 }
 
-func (a *app) collectJiraCloudStatusRows(ctx context.Context, effective config.EffectiveConfig, instanceName string) ([]statusRow, error) {
-	if effective.File.JiraCloud == nil || len(effective.File.JiraCloud.Instances) == 0 {
-		return nil, nil
-	}
-
-	names, err := resolveJiraCloudStatusInstanceNames(effective, instanceName)
-	if err != nil {
-		return nil, err
-	}
-
-	rows := make([]statusRow, 0, len(names))
-	for _, name := range names {
-		_, instance, err := config.ResolveJiraCloudInstance(effective, name)
-		if err != nil {
-			return nil, err
-		}
-		client := jiracloudadapter.NewClient(instance.BaseURL, instance.Auth.Email, instance.Auth.Token)
-		user, err := client.CurrentUser(ctx)
-		if err != nil {
-			return nil, err
-		}
-		rows = append(rows, statusRow{
-			Adapter:  "jira-cloud",
-			Instance: name,
-			Status:   "OK",
-			BaseURL:  instance.BaseURL,
-			User:     firstNonEmpty(user.DisplayName, user.EmailAddress, user.Name, user.Key, user.AccountID),
-		})
-	}
-
-	return rows, nil
-}
-
-func (a *app) collectJiraCloudStatusRowsTolerant(ctx context.Context, effective config.EffectiveConfig) ([]statusRow, int) {
+func (a *app) collectJiraCloudConnectivityRows(ctx context.Context, effective config.EffectiveConfig) ([]connectivityRow, int) {
 	if effective.File.JiraCloud == nil || len(effective.File.JiraCloud.Instances) == 0 {
 		return nil, 0
 	}
 
 	names := sortedJiraCloudInstanceNames(effective.File.JiraCloud.Instances)
-	rows := make([]statusRow, 0, len(names))
+	rows := make([]connectivityRow, 0, len(names))
 	exitCode := 0
 	for _, name := range names {
 		_, instance, err := config.ResolveJiraCloudInstance(effective, name)
 		if err != nil {
-			rows = append(rows, statusRow{
+			rows = append(rows, connectivityRow{
 				Adapter:  "jira-cloud",
 				Instance: name,
 				Status:   err.Error(),
 			})
-			exitCode = firstStatusExitCode(exitCode, 2)
+			exitCode = firstNonZeroExitCode(exitCode, 2)
 			continue
 		}
 		client := jiracloudadapter.NewClient(instance.BaseURL, instance.Auth.Email, instance.Auth.Token)
 		user, err := client.CurrentUser(ctx)
 		if err != nil {
-			rows = append(rows, statusRow{
+			rows = append(rows, connectivityRow{
 				Adapter:  "jira-cloud",
 				Instance: name,
 				Status:   err.Error(),
 				BaseURL:  instance.BaseURL,
 			})
-			exitCode = firstStatusExitCode(exitCode, statusExitCodeForJiraCloud(err))
+			exitCode = firstNonZeroExitCode(exitCode, connectivityExitCodeForJiraCloud(err))
 			continue
 		}
-		rows = append(rows, statusRow{
+		rows = append(rows, connectivityRow{
 			Adapter:  "jira-cloud",
 			Instance: name,
 			Status:   "OK",
@@ -1575,71 +1468,38 @@ func (a *app) collectJiraCloudStatusRowsTolerant(ctx context.Context, effective 
 	return rows, exitCode
 }
 
-func (a *app) collectJiraDataStatusRows(ctx context.Context, effective config.EffectiveConfig, instanceName string) ([]statusRow, error) {
-	if effective.File.JiraData == nil || len(effective.File.JiraData.Instances) == 0 {
-		return nil, nil
-	}
-
-	names, err := resolveJiraDataStatusInstanceNames(effective, instanceName)
-	if err != nil {
-		return nil, err
-	}
-
-	rows := make([]statusRow, 0, len(names))
-	for _, name := range names {
-		_, instance, err := config.ResolveJiraDataInstance(effective, name)
-		if err != nil {
-			return nil, err
-		}
-		client := jiradcadapter.NewClient(instance.BaseURL, instance.Auth.Bearer.Token)
-		user, err := client.CurrentUser(ctx)
-		if err != nil {
-			return nil, err
-		}
-		rows = append(rows, statusRow{
-			Adapter:  "jira-data-center",
-			Instance: name,
-			Status:   "OK",
-			BaseURL:  instance.BaseURL,
-			User:     firstNonEmpty(user.DisplayName, user.EmailAddress, user.Name, user.Key, user.AccountID),
-		})
-	}
-
-	return rows, nil
-}
-
-func (a *app) collectJiraDataStatusRowsTolerant(ctx context.Context, effective config.EffectiveConfig) ([]statusRow, int) {
+func (a *app) collectJiraDataConnectivityRows(ctx context.Context, effective config.EffectiveConfig) ([]connectivityRow, int) {
 	if effective.File.JiraData == nil || len(effective.File.JiraData.Instances) == 0 {
 		return nil, 0
 	}
 
 	names := sortedJiraDataInstanceNames(effective.File.JiraData.Instances)
-	rows := make([]statusRow, 0, len(names))
+	rows := make([]connectivityRow, 0, len(names))
 	exitCode := 0
 	for _, name := range names {
 		_, instance, err := config.ResolveJiraDataInstance(effective, name)
 		if err != nil {
-			rows = append(rows, statusRow{
+			rows = append(rows, connectivityRow{
 				Adapter:  "jira-data-center",
 				Instance: name,
 				Status:   err.Error(),
 			})
-			exitCode = firstStatusExitCode(exitCode, 2)
+			exitCode = firstNonZeroExitCode(exitCode, 2)
 			continue
 		}
 		client := jiradcadapter.NewClient(instance.BaseURL, instance.Auth.Bearer.Token)
 		user, err := client.CurrentUser(ctx)
 		if err != nil {
-			rows = append(rows, statusRow{
+			rows = append(rows, connectivityRow{
 				Adapter:  "jira-data-center",
 				Instance: name,
 				Status:   err.Error(),
 				BaseURL:  instance.BaseURL,
 			})
-			exitCode = firstStatusExitCode(exitCode, statusExitCodeForJiraData(err))
+			exitCode = firstNonZeroExitCode(exitCode, connectivityExitCodeForJiraData(err))
 			continue
 		}
-		rows = append(rows, statusRow{
+		rows = append(rows, connectivityRow{
 			Adapter:  "jira-data-center",
 			Instance: name,
 			Status:   "OK",
@@ -1649,46 +1509,6 @@ func (a *app) collectJiraDataStatusRowsTolerant(ctx context.Context, effective c
 	}
 
 	return rows, exitCode
-}
-
-func (a *app) renderStatusJSON(rows []statusRow) error {
-	items := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, map[string]any{
-			"adapter":      row.Adapter,
-			"instance":     emptyToNil(row.Instance),
-			"status":       row.Status,
-			"base_url":     emptyToNil(row.BaseURL),
-			"workspace_id": emptyToNil(row.WorkspaceID),
-			"user_id":      emptyToNil(row.UserID),
-			"user":         emptyToNil(row.User),
-		})
-	}
-
-	return a.writeJSON(map[string]any{"items": items})
-}
-
-func statusTableHeaders() []string {
-	return []string{"ADAPTER", "INSTANCE", "BASE_URL", "USER", "STATUS"}
-}
-
-func statusTableRows(rows []statusRow) [][]string {
-	items := make([][]string, 0, len(rows))
-	for _, row := range rows {
-		instance := row.Instance
-		user := row.User
-		if row.Adapter == "clockify" {
-			user = row.UserID
-		}
-		items = append(items, []string{
-			row.Adapter,
-			instance,
-			row.BaseURL,
-			user,
-			row.Status,
-		})
-	}
-	return items
 }
 
 func sortedJiraCloudInstanceNames(instances map[string]config.JiraCloudInstance) []string {
@@ -1709,32 +1529,8 @@ func sortedJiraDataInstanceNames(instances map[string]config.JiraDataCenterInsta
 	return names
 }
 
-func resolveJiraCloudStatusInstanceNames(effective config.EffectiveConfig, instanceName string) ([]string, error) {
-	if instanceName == "" {
-		return sortedJiraCloudInstanceNames(effective.File.JiraCloud.Instances), nil
-	}
-
-	resolved, _, err := config.ResolveJiraCloudInstance(effective, instanceName)
-	if err != nil {
-		return nil, err
-	}
-	return []string{resolved}, nil
-}
-
-func resolveJiraDataStatusInstanceNames(effective config.EffectiveConfig, instanceName string) ([]string, error) {
-	if instanceName == "" {
-		return sortedJiraDataInstanceNames(effective.File.JiraData.Instances), nil
-	}
-
-	resolved, _, err := config.ResolveJiraDataInstance(effective, instanceName)
-	if err != nil {
-		return nil, err
-	}
-	return []string{resolved}, nil
-}
-
-func failedClockifyStatusRow(effective config.EffectiveConfig, err error) statusRow {
-	row := statusRow{
+func failedClockifyConnectivityRow(effective config.EffectiveConfig, err error) connectivityRow {
+	row := connectivityRow{
 		Adapter:  "clockify",
 		Instance: config.ClockifyInstanceName,
 		Status:   err.Error(),
@@ -1746,14 +1542,14 @@ func failedClockifyStatusRow(effective config.EffectiveConfig, err error) status
 	return row
 }
 
-func firstStatusExitCode(current, next int) int {
+func firstNonZeroExitCode(current, next int) int {
 	if current != 0 {
 		return current
 	}
 	return next
 }
 
-func statusExitCodeForClockify(err error) int {
+func connectivityExitCodeForClockify(err error) int {
 	var requestErr *clockifyadapter.RequestError
 	if errors.As(err, &requestErr) {
 		if requestErr.StatusCode == http.StatusUnauthorized || requestErr.StatusCode == http.StatusForbidden {
@@ -1764,7 +1560,7 @@ func statusExitCodeForClockify(err error) int {
 	return 2
 }
 
-func statusExitCodeForJiraData(err error) int {
+func connectivityExitCodeForJiraData(err error) int {
 	var requestErr *jiradcadapter.RequestError
 	if errors.As(err, &requestErr) {
 		switch requestErr.StatusCode {
@@ -1779,7 +1575,7 @@ func statusExitCodeForJiraData(err error) int {
 	return 1
 }
 
-func statusExitCodeForJiraCloud(err error) int {
+func connectivityExitCodeForJiraCloud(err error) int {
 	var requestErr *jiracloudadapter.RequestError
 	if errors.As(err, &requestErr) {
 		switch requestErr.StatusCode {
@@ -2337,19 +2133,19 @@ func (a *app) collectAllTotalsItems(ctx context.Context, effective config.Effect
 	clockifyItem := a.collectClockifyTotalsItem(ctx, effective, service, windowFrom, windowTo)
 	if clockifyItem != nil {
 		items = append(items, *clockifyItem)
-		exitCode = firstStatusExitCode(exitCode, clockifyItem.Code)
+		exitCode = firstNonZeroExitCode(exitCode, clockifyItem.Code)
 	}
 
 	jiraCloudItems := a.collectJiraCloudTotalsItems(ctx, effective, service, windowFrom, windowTo)
 	for _, item := range jiraCloudItems {
 		items = append(items, item)
-		exitCode = firstStatusExitCode(exitCode, item.Code)
+		exitCode = firstNonZeroExitCode(exitCode, item.Code)
 	}
 
 	jiraDataItems := a.collectJiraDataTotalsItems(ctx, effective, service, windowFrom, windowTo)
 	for _, item := range jiraDataItems {
 		items = append(items, item)
-		exitCode = firstStatusExitCode(exitCode, item.Code)
+		exitCode = firstNonZeroExitCode(exitCode, item.Code)
 	}
 
 	return items, exitCode
@@ -2375,7 +2171,7 @@ func (a *app) collectClockifyTotalsItem(ctx context.Context, effective config.Ef
 	client := clockifyadapter.NewClient(clockifyCfg.Auth.APIKey)
 	user, err := client.CurrentUser(ctx)
 	if err != nil {
-		item.Code = statusExitCodeForClockify(err)
+		item.Code = connectivityExitCodeForClockify(err)
 		item.Status = totalsStatusForClockifyError(err)
 		item.Message = err.Error()
 		return &item
@@ -2394,7 +2190,7 @@ func (a *app) collectClockifyTotalsItem(ctx context.Context, effective config.Ef
 	}
 	entries, err := client.ListUserTimeEntries(ctx, clockifyCfg.WorkspaceID, clockifyCfg.UserID, windowFrom, windowTo)
 	if err != nil {
-		item.Code = statusExitCodeForClockify(err)
+		item.Code = connectivityExitCodeForClockify(err)
 		item.Status = totalsStatusForClockifyError(err)
 		item.Message = err.Error()
 		return &item

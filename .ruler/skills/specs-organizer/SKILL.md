@@ -21,7 +21,7 @@ Treat the agent as an alpha tester for the specification workflow.
 
 - Report actual usage of the `workledger` CLI tool when that usage informs the organized specification output.
 - Report bugs, contradictions, missing constraints, or awkward workflow edges discovered while organizing the specs.
-- Prefer `workledger doctor` as the canonical local storage diagnostic instead of adding separate agent-side writability-check workflow requirements.
+- Prefer `workledger status` as the canonical local storage diagnostic instead of adding separate agent-side writability-check workflow requirements.
 - Keep usage notes and bug reports separate from the canonical requirements so the output files stay clean and auditable.
 
 ## Core output contract

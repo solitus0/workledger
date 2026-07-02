@@ -68,22 +68,22 @@ Placement rule:
 - [ ] FUNC-045: `workledger setup jira-cloud` shall accept `--instance`, `--base-url`, `--email`, `--token-env`, and repeated `--issue-prefix`.
 - [ ] FUNC-046: `workledger setup jira-cloud` shall fail when the target instance name already exists.
 - [ ] FUNC-047: `workledger setup jira-cloud` table output shall print an `export <token-env>=...` hint.
-- [ ] FUNC-048: `workledger setup jira-cloud` table output shall print `workledger status --adapter jira-cloud --instance <instance> --explain` after the export hint.
+- [ ] FUNC-048: `workledger setup jira-cloud` table output shall print `workledger status` after the export hint.
 - [ ] FUNC-049: `workledger setup jira-data-center` shall append one Jira Data Center instance block to an existing valid local config.
 - [ ] FUNC-050: `workledger setup jira-data-center` shall accept `--instance`, `--base-url`, `--token-env`, and repeated `--issue-prefix`.
 - [ ] FUNC-051: `workledger setup jira-data-center` shall write `jira_data_center.instances.<instance>.auth.bearer.token_env`.
 - [ ] FUNC-052: `workledger setup jira-data-center` shall write `jira_data_center.instances.<instance>.routing.profiles.default.issue_prefixes`.
 - [ ] FUNC-053: `workledger setup jira-data-center` table output shall print an `export <token-env>=...` hint.
-- [ ] FUNC-054: `workledger setup jira-data-center` table output shall print `workledger status --adapter jira-data-center --instance <instance> --explain` after the export hint.
+- [ ] FUNC-054: `workledger setup jira-data-center` table output shall print `workledger status` after the export hint.
 - [ ] FUNC-055: `workledger setup clockify` shall append one active Clockify block to an existing valid local config.
 - [ ] FUNC-056: `workledger setup clockify` shall accept `--workspace-id`, `--user-id`, `--api-key-env`, and repeated `--project-map PREFIX=PROJECT`.
 - [ ] FUNC-057: `workledger setup clockify` shall default `--api-key-env` to `CLOCKIFY_API_KEY`.
 - [ ] FUNC-058: `workledger setup clockify` shall fail when an active `clockify` block already exists.
 - [ ] FUNC-059: `workledger setup clockify` shall write `clockify.auth.api_key_env`.
 - [ ] FUNC-060: `workledger setup clockify` may write `clockify.project_mapping.issue_prefixes`.
-- [ ] FUNC-061: `workledger doctor` shall run local config validation, env-var checks, routing checks, and adapter connectivity checks by default.
-- [ ] FUNC-070a: Local `doctor` checks shall validate the effective `storage.sqlite_path`, including DB-file writability when present, parent-directory writability, and whether SQLite sidecar files can be created.
-- [ ] FUNC-070b: Bare `workledger doctor` shall include the local storage writability check.
+- [ ] FUNC-061: `workledger status` shall run local config validation, env-var checks, routing checks, and adapter connectivity checks by default.
+- [ ] FUNC-070a: Local `status` checks shall validate the effective `storage.sqlite_path`, including DB-file writability when present, parent-directory writability, and whether SQLite sidecar files can be created.
+- [ ] FUNC-070b: Bare `workledger status` shall include the local storage writability check.
 
 ## Routing Commands
 - [ ] FUNC-071: `workledger routing list` shall emit configured Jira routing inventory across all configured Jira families and instances.
@@ -98,20 +98,16 @@ Placement rule:
 - [ ] FUNC-080: `workledger clockify mappings validate` shall validate configured mapping prefixes against known Jira routing inventory.
 - [ ] FUNC-081: `workledger clockify mappings validate` shall validate mapped project names against live Clockify projects in the configured workspace.
 
-## Status Commands
+## Status Connectivity
 - [ ] FUNC-082: `workledger status` shall inspect every configured adapter family and configured adapter instance owned by each family.
-- [ ] FUNC-083: `workledger status --adapter=<family>` shall limit inspection to one adapter family.
-- [ ] FUNC-084: `workledger status --adapter=<family>` shall support `clockify`, `jira-cloud`, and `jira-data-center`.
-- [ ] FUNC-084a: Clockify shall expose one implicit configured adapter instance named `clockify` at runtime without changing the YAML `clockify:` block shape.
-- [ ] FUNC-085: `workledger status --adapter=jira-cloud --instance <name>` shall inspect only the selected configured Jira Cloud instance.
-- [ ] FUNC-086: `workledger status --adapter=jira-data-center --instance <name>` shall inspect only the selected configured Jira Data Center instance.
-- [ ] FUNC-086a: `workledger status --adapter=clockify --instance clockify` shall inspect the implicit configured Clockify instance.
-- [ ] FUNC-087: `workledger status --adapter=clockify` shall verify Clockify API reachability and credential acceptance.
-- [ ] FUNC-088: `workledger status --adapter=clockify` shall confirm the authenticated Clockify user `id` exactly matches configured `clockify.user_id`.
-- [ ] FUNC-089: `workledger status --adapter=clockify` shall confirm the configured `clockify.workspace_id` is visible through `activeWorkspace` or `defaultWorkspace`.
-- [ ] FUNC-090: `workledger status --adapter=clockify` shall confirm the configured Clockify workspace and user are readable.
-- [ ] FUNC-091: `workledger status` shall return an empty result set when no adapter families are configured.
-- [ ] FUNC-092: `workledger status --adapter=<family>` shall return an empty result set when the selected family has zero configured targets.
+- [ ] FUNC-083: `workledger status` connectivity checks shall cover `clockify`, `jira-cloud`, and `jira-data-center`.
+- [ ] FUNC-084: Clockify connectivity checks shall expose one implicit configured adapter instance named `clockify` at runtime without changing the YAML `clockify:` block shape.
+- [ ] FUNC-087: `workledger status` shall verify Clockify API reachability and credential acceptance when Clockify is configured.
+- [ ] FUNC-088: `workledger status` shall confirm the authenticated Clockify user `id` exactly matches configured `clockify.user_id`.
+- [ ] FUNC-089: `workledger status` shall confirm the configured `clockify.workspace_id` is visible through `activeWorkspace` or `defaultWorkspace`.
+- [ ] FUNC-090: `workledger status` shall confirm configured Clockify workspaces and configured Jira targets are readable.
+- [ ] FUNC-091: `workledger status` shall return no connectivity rows when no adapter families are configured.
+- [ ] FUNC-092: `workledger status` shall skip connectivity rows for adapter families with zero configured targets.
 
 ## Totals Commands
 - [ ] FUNC-093: `workledger totals` shall compare canonical local booked time against every configured adapter target for one selected date window.

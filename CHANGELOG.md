@@ -10,6 +10,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Changed
 - `workledger worklogs add` automatic placement now uses explicit `--fit` and `--fill` modes instead of `--snap`; `--fit` creates one continuous worklog, `--fill` can allocate across gaps, and the session worklog creator skill now uses `--fit` for unknown exact starts.
 - Bare Jira push `workledger plan reconcile` now includes non-default reporting profiles automatically, surfaces per-profile breakdowns in reconcile output, and shows persisted route profiles in `plan show`.
+- `workledger status` now owns config, storage, env, routing, and adapter connectivity diagnostics; `workledger doctor` has been removed, and successful connectivity rows now show the authenticated user identity in `MESSAGE`.
 
 ### Fixed
 - `workledger plan reconcile --route-profile` now fails fast when no Jira target is selected, instead of falling through to unrelated adapters such as Clockify.

@@ -268,20 +268,17 @@ func (a *app) renderSetupResult(mode string, payload map[string]any) error {
 	adapter, _ := payload["adapter"].(string)
 	switch adapter {
 	case "jira-cloud", "jira-data-center":
-		instance, _ := payload["instance"].(string)
 		tokenEnv, _ := payload["token_env"].(string)
 		_, _ = fmt.Fprintf(
 			a.stdout,
-			"Add this environment variable before running adapter commands:\n\nexport %s=...\n\nThen verify:\n  workledger status --adapter %s --instance %s --explain\n",
+			"Add this environment variable before running adapter commands:\n\nexport %s=...\n\nThen verify:\n  workledger status\n",
 			tokenEnv,
-			adapter,
-			instance,
 		)
 	case "clockify":
 		apiKeyEnv, _ := payload["api_key_env"].(string)
 		_, _ = fmt.Fprintf(
 			a.stdout,
-			"Add this environment variable before running Clockify commands:\n\nexport %s=...\n\nThen verify:\n  workledger status --adapter clockify --explain\n",
+			"Add this environment variable before running Clockify commands:\n\nexport %s=...\n\nThen verify:\n  workledger status\n",
 			apiKeyEnv,
 		)
 	default:
@@ -290,14 +287,14 @@ func (a *app) renderSetupResult(mode string, payload map[string]any) error {
 	return nil
 }
 
-func (a *app) newDoctorCommand() *cobra.Command {
+func (a *app) newStatusCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "doctor",
-		Short: "Run local onboarding diagnostics",
+		Use:   "status",
+		Short: "Run local status diagnostics",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 
-			items := make([]doctorItem, 0)
+			items := make([]statusItem, 0)
 			exitCode := 0
 			effective, issues, err := config.ValidateExisting()
 			if err != nil {
@@ -306,20 +303,20 @@ func (a *app) newDoctorCommand() *cobra.Command {
 
 			configValid := len(issues) == 0
 			if configValid {
-				items = append(items, doctorItem{Category: "local", Target: "config", Status: "ok", Message: "config is valid"})
-				if err := checkLocalStorageWritable(effective.SQLitePath, "doctor"); err != nil {
-					items = append(items, doctorItem{Category: "local", Target: "storage", Status: "error", Message: err.Error()})
-					exitCode = firstStatusExitCode(exitCode, 1)
+				items = append(items, statusItem{Category: "local", Target: "config", Status: "ok", Message: "config is valid"})
+				if err := checkLocalStorageWritable(effective.SQLitePath, "status"); err != nil {
+					items = append(items, statusItem{Category: "local", Target: "storage", Status: "error", Message: err.Error()})
+					exitCode = firstNonZeroExitCode(exitCode, 1)
 				} else {
-					items = append(items, doctorItem{Category: "local", Target: "storage", Status: "ok", Message: "local SQLite storage is writable"})
+					items = append(items, statusItem{Category: "local", Target: "storage", Status: "ok", Message: "local SQLite storage is writable"})
 				}
 			} else {
-				items = append(items, doctorItem{Category: "local", Target: "config", Status: "error", Message: "config validation failed"})
+				items = append(items, statusItem{Category: "local", Target: "config", Status: "error", Message: "config validation failed"})
 				exitCode = 2
 			}
 
 			if !configValid {
-				items = append(items, doctorItem{Category: "env", Target: "config", Status: "skipped", Message: "config validation failed"})
+				items = append(items, statusItem{Category: "env", Target: "config", Status: "skipped", Message: "config validation failed"})
 			} else {
 				refs := config.EnvReferences(effective)
 				missing := 0
@@ -331,7 +328,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 						message = "missing"
 						missing++
 					}
-					items = append(items, doctorItem{Category: "env", Target: ref.Name, Status: status, Message: message})
+					items = append(items, statusItem{Category: "env", Target: ref.Name, Status: status, Message: message})
 				}
 				if missing > 0 && exitCode == 0 {
 					exitCode = 2
@@ -339,27 +336,27 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			}
 
 			if !configValid {
-				items = append(items, doctorItem{Category: "routing", Target: "config", Status: "skipped", Message: "config validation failed"})
+				items = append(items, statusItem{Category: "routing", Target: "config", Status: "skipped", Message: "config validation failed"})
 			} else {
 				rules := config.RouteRules(effective)
 				if len(rules) == 0 {
-					items = append(items, doctorItem{Category: "routing", Target: "rules", Status: "ok", Message: "no routing rules configured"})
+					items = append(items, statusItem{Category: "routing", Target: "rules", Status: "ok", Message: "no routing rules configured"})
 				} else {
-					items = append(items, doctorItem{Category: "routing", Target: "rules", Status: "ok", Message: fmt.Sprintf("%d routing rules configured", len(rules))})
+					items = append(items, statusItem{Category: "routing", Target: "rules", Status: "ok", Message: fmt.Sprintf("%d routing rules configured", len(rules))})
 				}
 				audit := config.AuditClockifyMappings(effective)
 				for _, prefix := range audit.MissingPrefixes {
-					items = append(items, doctorItem{Category: "routing", Target: prefix, Status: "warning", Message: "routed prefix has no Clockify project mapping"})
+					items = append(items, statusItem{Category: "routing", Target: prefix, Status: "warning", Message: "routed prefix has no Clockify project mapping"})
 				}
 				for _, prefix := range audit.OrphanedPrefixes {
-					items = append(items, doctorItem{Category: "routing", Target: prefix, Status: "warning", Message: "Clockify project mapping is not referenced by Jira routing"})
+					items = append(items, statusItem{Category: "routing", Target: prefix, Status: "warning", Message: "Clockify project mapping is not referenced by Jira routing"})
 				}
 			}
 
 			if !configValid {
-				items = append(items, doctorItem{Category: "connectivity", Target: "config", Status: "skipped", Message: "config validation failed"})
+				items = append(items, statusItem{Category: "connectivity", Target: "config", Status: "skipped", Message: "config validation failed"})
 			} else {
-				rows, code := a.collectAllStatusRows(cmd.Context(), effective)
+				rows, code := a.collectAllConnectivityRows(cmd.Context(), effective)
 				for _, row := range rows {
 					target := row.Adapter
 					if row.Instance != "" {
@@ -369,12 +366,17 @@ func (a *app) newDoctorCommand() *cobra.Command {
 						target = row.Adapter + ":" + row.WorkspaceID
 					}
 					status := "ok"
+					message := row.User
+					if row.Adapter == "clockify" {
+						message = row.UserID
+					}
 					if row.Status != "OK" {
 						status = "error"
+						message = row.Status
 					}
-					items = append(items, doctorItem{Category: "connectivity", Target: target, Status: status, Message: row.Status})
+					items = append(items, statusItem{Category: "connectivity", Target: target, Status: status, Message: message})
 				}
-				exitCode = firstStatusExitCode(exitCode, code)
+				exitCode = firstNonZeroExitCode(exitCode, code)
 			}
 
 			if mode == "json" {
@@ -390,7 +392,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				if err := a.writeJSON(map[string]any{"items": rows}); err != nil {
 					return err
 				}
-			} else if err := renderTable(a.stdout, []string{"CATEGORY", "TARGET", "STATUS", "MESSAGE"}, doctorRows(items)); err != nil {
+			} else if err := renderTable(a.stdout, []string{"CATEGORY", "TARGET", "STATUS", "MESSAGE"}, statusRows(items)); err != nil {
 				return err
 			}
 
@@ -612,7 +614,7 @@ func (a *app) newClockifyMappingsValidateCommand() *cobra.Command {
 	}
 }
 
-type doctorItem struct {
+type statusItem struct {
 	Category string
 	Target   string
 	Status   string
@@ -626,7 +628,7 @@ type clockifyMappingRow struct {
 	Message string
 }
 
-func doctorRows(items []doctorItem) [][]string {
+func statusRows(items []statusItem) [][]string {
 	rows := make([][]string, 0, len(items))
 	for _, item := range items {
 		rows = append(rows, []string{item.Category, item.Target, item.Status, item.Message})

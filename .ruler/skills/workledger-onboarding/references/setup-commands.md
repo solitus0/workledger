@@ -7,10 +7,10 @@ Use this reference for onboarding, configuration, and diagnostics only.
 ```text
 workledger init
 workledger config
-workledger doctor
+workledger status
 ```
 
-`workledger config` validates the effective local config and reports the current configuration summary. `workledger doctor` runs config, local storage, env-var, routing, and adapter connectivity diagnostics.
+`workledger config` validates the effective local config and reports the current configuration summary. `workledger status` runs config, local storage, env-var, routing, and adapter connectivity diagnostics.
 
 ## Configure adapters
 
@@ -53,10 +53,10 @@ For user-facing setup instructions, use placeholders instead of real token value
 ## Diagnostics
 
 ```text
-workledger doctor
+workledger status
 ```
 
-`workledger doctor` is the single onboarding diagnostic command. It reports:
+`workledger status` is the single onboarding diagnostic command. It reports:
 
 - local storage validation for `storage.sqlite_path`, DB-file writability, parent-directory writability, and SQLite sidecar creation viability.
 - missing or malformed environment variables.
@@ -78,11 +78,11 @@ Use routing commands when the target adapter, instance, route profile, issue pre
 | Symptom | Likely layer | First follow-up command |
 | --- | --- | --- |
 | Config file exists but setup seems ignored | config | `workledger config` |
-| Command complains about missing token | env | `workledger doctor` |
+| Command complains about missing token | env | `workledger status` |
 | Issue prefix goes to wrong adapter | routing | `workledger route explain PROJ-123` |
 | Clockify project not selected | routing | `workledger clockify mappings validate` |
-| SQLite or local DB write failure | storage | `workledger doctor` |
-| Auth or remote API failure | connectivity | `workledger doctor` |
+| SQLite or local DB write failure | storage | `workledger status` |
+| Auth or remote API failure | connectivity | `workledger status` |
 
 ## Boundaries
 

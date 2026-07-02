@@ -30,9 +30,10 @@ Do not add or preserve trivial, self-evident spec detail that does not protect a
 
 ## Skill Alignment
 
-Future CLI work around local worklogs, planning, status, or reconcile flows must use the supporting skill at `.ruler/skills/session-worklog-creator/SKILL.md`.
-Do not let the skill drift from `specs/`.
-If one changes, update the other in the same task.
+Future CLI work around local worklog creation from the current session must use `.ruler/skills/session-worklog-creator/SKILL.md`.
+Future CLI work around setup or status diagnostics must use `.ruler/skills/workledger-onboarding/SKILL.md`.
+Do not let the skills drift from `specs/`.
+If one changes, update the relevant skill and spec in the same task.
 
 ## Commit & Pull Request Guidelines
 

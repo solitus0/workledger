@@ -1,6 +1,6 @@
 ---
 name: workledger-onboarding
-description: guide users through first-time workledger cli setup and tool configuration. use when chatgpt needs to help initialize workledger, configure yaml settings, create jira cloud, jira data center, or clockify adapter instances, prepare token environment variables, validate configuration, explain routing setup, run doctor diagnostics, or troubleshoot onboarding before any worklog entry or remote sync workflow.
+description: guide users through first-time workledger cli setup and tool configuration. use when chatgpt needs to help initialize workledger, configure yaml settings, create jira cloud, jira data center, or clockify adapter instances, prepare token environment variables, validate configuration, explain routing setup, run status diagnostics, or troubleshoot onboarding before any worklog entry or remote sync workflow.
 ---
 
 # Workledger Onboarding
@@ -16,7 +16,7 @@ Use this skill for:
 - Environment-variable/token setup for Jira Cloud, Jira Data Center, and Clockify.
 - Adapter setup commands.
 - Routing and Clockify project mapping checks.
-- Local storage and connectivity diagnostics with `doctor`.
+- Local storage and connectivity diagnostics with `status`.
 - Explaining what the next setup command should be.
 
 Do not use this skill for normal worklog CRUD, coding-session worklog drafting, totals comparison, issue metadata refresh, or saved reconcile-plan execution.
@@ -29,8 +29,8 @@ Do not use this skill for normal worklog CRUD, coding-session worklog drafting, 
 4. Run or propose `workledger init` if no config exists.
 5. Generate the narrowest `workledger setup ...` command for the chosen adapter.
 6. Inspect the effective configuration with `workledger config`.
-7. Run comprehensive setup diagnostics with `workledger doctor` to cover config, storage, env vars, routing, and connectivity.
-8. Use the diagnostic rows from `workledger doctor` to identify missing environment variables, routing issues, storage failures, or remote connectivity failures.
+7. Run comprehensive setup diagnostics with `workledger status`.
+8. Use the diagnostic rows from `workledger status` and the canonical boundaries in `references/setup-commands.md` to identify missing environment variables, routing issues, storage failures, or remote connectivity failures.
 9. End with the current setup status and the next concrete command.
 
 Load `references/setup-commands.md` when exact command syntax, selectors, or diagnostic boundaries matter.
@@ -38,10 +38,10 @@ Load `references/setup-commands.md` when exact command syntax, selectors, or dia
 ## Safety rules
 
 - Keep secrets out of chat and command history wherever possible. Refer to token variable names such as `JIRA_TOKEN`, not token values.
-- Use `workledger config` for effective configuration inspection. Use `workledger doctor` for diagnostics, including env-var and connectivity checks.
+- Use `workledger config` for effective configuration inspection. Use `workledger status` for onboarding diagnostics; treat `references/setup-commands.md` as the canonical diagnostic boundary.
 - Treat YAML config as operator-managed. Explain changes before editing config files.
 - Keep stdout clean when asking for JSON or machine-readable output; logs and progress belong on stderr.
-- Read `workledger doctor` rows by category instead of rerunning removed targeted diagnostic flags.
+- Read `workledger status` rows by category instead of rerunning removed targeted diagnostic flags.
 - When the environment is sandboxed, check local storage paths and parent-directory writability before blaming adapter configuration.
 
 ## Response shape

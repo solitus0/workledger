@@ -204,15 +204,15 @@ func TestWorklogsContextRejectsInvalidDayStartWithExample(t *testing.T) {
 	}
 }
 
-func TestStatusWithoutConfigSuggestsInit(t *testing.T) {
+func TestStatusWithoutConfigReportsValidationFailure(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	result := runCLI(t, "status")
 	if result.code != 2 {
 		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
-	if !strings.Contains(result.stdout, "config file does not exist; run workledger init") {
-		t.Fatalf("expected init hint in stdout, got stdout=%s stderr=%s", result.stdout, result.stderr)
+	if !strings.Contains(result.stdout, "config validation failed") {
+		t.Fatalf("expected validation failure in stdout, got stdout=%s stderr=%s", result.stdout, result.stderr)
 	}
 }
 
@@ -722,7 +722,7 @@ func TestSetupJiraCloudTableOutputShowsEnvVarAndVerifyHint(t *testing.T) {
 		t.Fatalf("setup failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
-	expected := "Add this environment variable before running adapter commands:\n\nexport WORKLEDGER_JIRA_TOKEN=...\n\nThen verify:\n  workledger status --adapter jira-cloud --instance product --explain\n"
+	expected := "Add this environment variable before running adapter commands:\n\nexport WORKLEDGER_JIRA_TOKEN=...\n\nThen verify:\n  workledger status\n"
 	if result.stdout != expected {
 		t.Fatalf("unexpected setup stdout\nexpected:\n%s\ngot:\n%s", expected, result.stdout)
 	}
@@ -789,7 +789,7 @@ func TestSetupJiraDataCenterTableOutputShowsEnvVarAndVerifyHint(t *testing.T) {
 		t.Fatalf("setup failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
-	expected := "Add this environment variable before running adapter commands:\n\nexport WORKLEDGER_JIRA_DC_ITO_TOKEN=...\n\nThen verify:\n  workledger status --adapter jira-data-center --instance ito --explain\n"
+	expected := "Add this environment variable before running adapter commands:\n\nexport WORKLEDGER_JIRA_DC_ITO_TOKEN=...\n\nThen verify:\n  workledger status\n"
 	if result.stdout != expected {
 		t.Fatalf("unexpected setup stdout\nexpected:\n%s\ngot:\n%s", expected, result.stdout)
 	}
@@ -1000,11 +1000,12 @@ func TestRemovedDebugCommandsAndFlagsAreRejected(t *testing.T) {
 		{"config", "validate"},
 		{"config", "env"},
 		{"config", "summary"},
-		{"doctor", "--all"},
-		{"doctor", "--local"},
-		{"doctor", "--env"},
-		{"doctor", "--routing"},
-		{"doctor", "--connectivity"},
+		{"doctor"},
+		{"status", "--all"},
+		{"status", "--local"},
+		{"status", "--env"},
+		{"status", "--routing"},
+		{"status", "--connectivity"},
 	} {
 		result := runCLI(t, args...)
 		if result.code == 0 {
@@ -1049,7 +1050,7 @@ func TestRoutingListAndRouteExplainJSON(t *testing.T) {
 	}
 }
 
-func TestDoctorDefaultRunsConnectivity(t *testing.T) {
+func TestStatusDefaultRunsConnectivity(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	setClockifyTestEnv(t)
 	server := newClockifyTestServer(t)
@@ -1061,35 +1062,35 @@ func TestDoctorDefaultRunsConnectivity(t *testing.T) {
 	sqlitePath := filepath.Join(os.Getenv("HOME"), ".local", "share", "workledger", "worklogs.db")
 	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\nclockify:\n  workspace_id: ws-active\n  user_id: user-1\n  auth:\n    api_key_env: WORKLEDGER_TEST_CLOCKIFY_API_KEY\n")
 
-	result := runCLI(t, "doctor", "--output", "json")
+	result := runCLI(t, "status", "--output", "json")
 	if result.code != 0 {
-		t.Fatalf("doctor failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+		t.Fatalf("status failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 	items := statusItems(t, result.stdout)
 	found := false
 	for _, item := range items {
 		if item["category"] == "connectivity" && item["target"] == "clockify:ws-active" {
 			found = true
-			if item["status"] != "ok" {
+			if item["status"] != "ok" || item["message"] != "user-1" {
 				t.Fatalf("expected connectivity ok, got %v", item)
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("expected connectivity item in bare doctor: %s", result.stdout)
+		t.Fatalf("expected connectivity item in bare status: %s", result.stdout)
 	}
 }
 
-func TestDoctorReportsWritableLocalStorage(t *testing.T) {
+func TestStatusReportsWritableLocalStorage(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
 		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
-	result := runCLI(t, "doctor", "--output", "json")
+	result := runCLI(t, "status", "--output", "json")
 	if result.code != 0 {
-		t.Fatalf("doctor failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+		t.Fatalf("status failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
 	items := statusItems(t, result.stdout)
@@ -1103,11 +1104,11 @@ func TestDoctorReportsWritableLocalStorage(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("expected local storage doctor item, got %s", result.stdout)
+		t.Fatalf("expected local storage status item, got %s", result.stdout)
 	}
 }
 
-func TestDoctorReportsUnwritableLocalStorage(t *testing.T) {
+func TestStatusReportsUnwritableLocalStorage(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
@@ -1117,7 +1118,7 @@ func TestDoctorReportsUnwritableLocalStorage(t *testing.T) {
 	sqlitePath := filepath.Join(os.Getenv("HOME"), ".local", "share", "workledger", "worklogs.db")
 	setReadOnly(t, filepath.Dir(sqlitePath), 0o500)
 
-	result := runCLI(t, "doctor", "--output", "json")
+	result := runCLI(t, "status", "--output", "json")
 	if result.code != 1 {
 		t.Fatalf("expected storage failure, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
@@ -1633,7 +1634,7 @@ func TestConfigValidateAllowsUnsetOptionalAdapterSecretEnv(t *testing.T) {
 	}
 }
 
-func TestStatusBareJSONReturnsNormalizedRowsAcrossConfiguredFamilies(t *testing.T) {
+func TestStatusConnectivityReturnsIdentityMessagesAcrossConfiguredFamilies(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	clockifyServer := newClockifyTestServer(t)
 	defer clockifyServer.Close()
@@ -1648,46 +1649,45 @@ func TestStatusBareJSONReturnsNormalizedRowsAcrossConfiguredFamilies(t *testing.
 	clockifyadapter.BaseURL = clockifyServer.URL
 	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
 
-	status := runCLI(t, "status", "--output", "json")
-	if status.code != 0 {
-		t.Fatalf("status failed: code=%d stdout=%s stderr=%s", status.code, status.stdout, status.stderr)
+	result := runCLI(t, "status", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("status failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
-	items := statusItems(t, status.stdout)
-	if len(items) != 3 {
-		t.Fatalf("expected 3 status items, got %s", status.stdout)
+	connectivity := connectivityItems(statusItems(t, result.stdout))
+	if len(connectivity) != 3 {
+		t.Fatalf("expected 3 connectivity items, got %s", result.stdout)
 	}
-
-	if items[0]["adapter"] != "clockify" || items[0]["instance"] != "clockify" || items[0]["status"] != "OK" || items[0]["workspace_id"] != "ws-active" || items[0]["user_id"] != "user-1" || items[0]["base_url"] != nil || items[0]["user"] != nil {
-		t.Fatalf("unexpected clockify item %v", items[0])
+	if connectivity[0]["target"] != "clockify:ws-active" || connectivity[0]["status"] != "ok" || connectivity[0]["message"] != "user-1" {
+		t.Fatalf("unexpected clockify item %v", connectivity[0])
 	}
-	if items[1]["adapter"] != "jira-cloud" || items[1]["instance"] != "product" || items[1]["status"] != "OK" || items[1]["base_url"] != jiraCloudServer.URL || items[1]["user"] != "User One" || items[1]["workspace_id"] != nil || items[1]["user_id"] != nil {
-		t.Fatalf("unexpected jira cloud item %v", items[1])
+	if connectivity[1]["target"] != "jira-cloud:product" || connectivity[1]["status"] != "ok" || connectivity[1]["message"] != "User One" {
+		t.Fatalf("unexpected jira cloud item %v", connectivity[1])
 	}
-	if items[2]["adapter"] != "jira-data-center" || items[2]["instance"] != "internal" || items[2]["status"] != "OK" || items[2]["base_url"] != jiraDataServer.URL || items[2]["user"] != "User One" || items[2]["workspace_id"] != nil || items[2]["user_id"] != nil {
-		t.Fatalf("unexpected jira data item %v", items[2])
+	if connectivity[2]["target"] != "jira-data-center:internal" || connectivity[2]["status"] != "ok" || connectivity[2]["message"] != "User One" {
+		t.Fatalf("unexpected jira data item %v", connectivity[2])
 	}
 }
 
-func TestStatusBareSkipsUnconfiguredFamilies(t *testing.T) {
+func TestStatusConnectivitySkipsUnconfiguredFamilies(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	server := newJiraCloudTestServer(t, map[string][]string{})
 	defer server.Close()
 	writeConfigWithUTCAndStatusAdapters(t, false, map[string]string{"product": server.URL}, nil)
 
-	status := runCLI(t, "status", "--output", "json")
-	if status.code != 0 {
-		t.Fatalf("status failed: code=%d stdout=%s stderr=%s", status.code, status.stdout, status.stderr)
+	result := runCLI(t, "status", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("status failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
-	items := statusItems(t, status.stdout)
-	if len(items) != 1 || items[0]["adapter"] != "jira-cloud" || items[0]["instance"] != "product" {
-		t.Fatalf("unexpected filtered bare status %s", status.stdout)
+	connectivity := connectivityItems(statusItems(t, result.stdout))
+	if len(connectivity) != 1 || connectivity[0]["target"] != "jira-cloud:product" || connectivity[0]["message"] != "User One" {
+		t.Fatalf("unexpected status connectivity %s", result.stdout)
 	}
 }
 
-func TestStatusBareContinuesRenderingWhenOneAdapterFails(t *testing.T) {
+func TestStatusConnectivityContinuesRenderingWhenOneAdapterFails(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	clockifyServer := newClockifyTestServer(t)
@@ -1708,87 +1708,54 @@ func TestStatusBareContinuesRenderingWhenOneAdapterFails(t *testing.T) {
 	clockifyadapter.BaseURL = clockifyServer.URL
 	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
 
-	status := runCLI(t, "status", "--output", "json")
-	if status.code != 4 {
-		t.Fatalf("expected auth exit 4 with rendered output, got code=%d stdout=%s stderr=%s", status.code, status.stdout, status.stderr)
+	result := runCLI(t, "status", "--output", "json")
+	if result.code != 4 {
+		t.Fatalf("expected auth exit 4 with rendered output, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
-	items := statusItems(t, status.stdout)
-	if len(items) != 3 {
-		t.Fatalf("expected 3 status items, got %s", status.stdout)
+	connectivity := connectivityItems(statusItems(t, result.stdout))
+	if len(connectivity) != 3 {
+		t.Fatalf("expected 3 connectivity items, got %s", result.stdout)
 	}
-	if items[0]["adapter"] != "clockify" || items[0]["status"] != "OK" {
-		t.Fatalf("unexpected clockify item %v", items[0])
+	if connectivity[0]["target"] != "clockify:ws-active" || connectivity[0]["status"] != "ok" || connectivity[0]["message"] != "user-1" {
+		t.Fatalf("unexpected clockify item %v", connectivity[0])
 	}
-	if items[1]["adapter"] != "jira-cloud" || items[1]["instance"] != "product" || items[1]["status"] != "jira cloud request failed: 401 Unauthorized" || items[1]["base_url"] != jiraCloudServer.URL || items[1]["user"] != nil {
-		t.Fatalf("unexpected failed jira cloud item %v", items[1])
+	if connectivity[1]["target"] != "jira-cloud:product" || connectivity[1]["status"] != "error" || connectivity[1]["message"] != "jira cloud request failed: 401 Unauthorized" {
+		t.Fatalf("unexpected failed jira cloud item %v", connectivity[1])
 	}
-	if items[2]["adapter"] != "jira-data-center" || items[2]["status"] != "OK" {
-		t.Fatalf("unexpected jira data item %v", items[2])
+	if connectivity[2]["target"] != "jira-data-center:internal" || connectivity[2]["status"] != "ok" || connectivity[2]["message"] != "User One" {
+		t.Fatalf("unexpected jira data item %v", connectivity[2])
 	}
 }
 
-func TestStatusReturnsEmptyItemsWhenNoAdaptersConfigured(t *testing.T) {
+func TestStatusConnectivityReturnsNoItemsWhenNoAdaptersConfigured(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTC(t)
 
-	status := runCLI(t, "status", "--output", "json")
-	if status.code != 0 {
-		t.Fatalf("status failed: code=%d stdout=%s stderr=%s", status.code, status.stdout, status.stderr)
+	result := runCLI(t, "status", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("status failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
-	items := statusItems(t, status.stdout)
-	if len(items) != 0 {
-		t.Fatalf("expected empty items, got %s", status.stdout)
+	connectivity := connectivityItems(statusItems(t, result.stdout))
+	if len(connectivity) != 0 {
+		t.Fatalf("expected no connectivity items, got %s", result.stdout)
 	}
 }
 
-func TestStatusAdapterFiltersAllowZeroConfiguredTargets(t *testing.T) {
+func TestDoctorCommandIsRejected(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	writeConfigWithUTC(t)
 
-	for _, adapter := range []string{"clockify", "jira-cloud", "jira-data-center"} {
-		status := runCLI(t, "status", "--adapter", adapter, "--output", "json")
-		if status.code != 0 {
-			t.Fatalf("status failed for %s: code=%d stdout=%s stderr=%s", adapter, status.code, status.stdout, status.stderr)
-		}
-		items := statusItems(t, status.stdout)
-		if len(items) != 0 {
-			t.Fatalf("expected empty items for %s, got %s", adapter, status.stdout)
-		}
+	result := runCLI(t, "doctor")
+	if result.code == 0 {
+		t.Fatalf("expected removed doctor command to fail")
+	}
+	if !strings.Contains(result.stderr, "unknown command") && !strings.Contains(result.stdout, "unknown command") {
+		t.Fatalf("expected unknown command output, got stdout=%s stderr=%s", result.stdout, result.stderr)
 	}
 }
 
-func TestStatusClockifyValidationFailureAndUnsupportedAdapter(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	writeConfigWithUTCAndClockify(t)
-
-	server := newClockifyTestServer(t)
-	defer server.Close()
-	originalBaseURL := clockifyadapter.BaseURL
-	clockifyadapter.BaseURL = server.URL
-	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
-
-	unsupported := runCLI(t, "status", "--adapter", "jira_cloud", "--output", "json")
-	if unsupported.code != 2 {
-		t.Fatalf("expected unsupported adapter validation, got code=%d stdout=%s stderr=%s", unsupported.code, unsupported.stdout, unsupported.stderr)
-	}
-	if !strings.Contains(unsupported.stdout, "supported adapters are clockify, jira-cloud, and jira-data-center") &&
-		!strings.Contains(unsupported.stderr, "supported adapters are clockify, jira-cloud, and jira-data-center") {
-		t.Fatalf("unexpected unsupported adapter message stdout=%s stderr=%s", unsupported.stdout, unsupported.stderr)
-	}
-
-	writeBrokenClockifyConfig(t)
-	failed := runCLI(t, "status", "--adapter", "clockify", "--output", "json")
-	if failed.code != 2 {
-		t.Fatalf("expected validation failure, got code=%d stdout=%s stderr=%s", failed.code, failed.stdout, failed.stderr)
-	}
-	if !strings.Contains(failed.stdout, "config validation failed") && !strings.Contains(failed.stderr, "config validation failed") {
-		t.Fatalf("expected config validation message, got stdout=%s stderr=%s", failed.stdout, failed.stderr)
-	}
-}
-
-func TestStatusJiraRowsAreSortedByInstanceName(t *testing.T) {
+func TestStatusConnectivityJiraRowsAreSortedByInstanceName(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	jiraCloudServer := newJiraCloudTestServer(t, map[string][]string{})
@@ -1798,76 +1765,30 @@ func TestStatusJiraRowsAreSortedByInstanceName(t *testing.T) {
 
 	writeConfigWithUTCAndStatusAdapters(t, false, map[string]string{"zeta": jiraCloudServer.URL, "alpha": jiraCloudServer.URL}, map[string]string{"ops": jiraDataServer.URL, "core": jiraDataServer.URL})
 
-	jiraCloudStatus := runCLI(t, "status", "--adapter", "jira-cloud", "--output", "json")
-	if jiraCloudStatus.code != 0 {
-		t.Fatalf("jira cloud status failed: code=%d stdout=%s stderr=%s", jiraCloudStatus.code, jiraCloudStatus.stdout, jiraCloudStatus.stderr)
-	}
-	jiraCloudItems := statusItems(t, jiraCloudStatus.stdout)
-	if len(jiraCloudItems) != 2 || jiraCloudItems[0]["instance"] != "alpha" || jiraCloudItems[1]["instance"] != "zeta" {
-		t.Fatalf("expected sorted jira cloud instances, got %s", jiraCloudStatus.stdout)
+	result := runCLI(t, "status", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("status failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 
-	jiraDataStatus := runCLI(t, "status", "--adapter", "jira-data-center", "--output", "json")
-	if jiraDataStatus.code != 0 {
-		t.Fatalf("jira data status failed: code=%d stdout=%s stderr=%s", jiraDataStatus.code, jiraDataStatus.stdout, jiraDataStatus.stderr)
+	connectivity := connectivityItems(statusItems(t, result.stdout))
+	targets := []any{
+		connectivity[0]["target"],
+		connectivity[1]["target"],
+		connectivity[2]["target"],
+		connectivity[3]["target"],
 	}
-	jiraDataItems := statusItems(t, jiraDataStatus.stdout)
-	if len(jiraDataItems) != 2 || jiraDataItems[0]["instance"] != "core" || jiraDataItems[1]["instance"] != "ops" {
-		t.Fatalf("expected sorted jira data instances, got %s", jiraDataStatus.stdout)
+	expected := []any{
+		"jira-cloud:alpha",
+		"jira-cloud:zeta",
+		"jira-data-center:core",
+		"jira-data-center:ops",
 	}
-}
-
-func TestStatusJiraAdapterAcceptsInstanceFilter(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-
-	jiraCloudServer := newJiraCloudTestServer(t, map[string][]string{})
-	defer jiraCloudServer.Close()
-	jiraDataServer := newJiraDataTotalsTestServer(t, map[string][]string{})
-	defer jiraDataServer.Close()
-
-	writeConfigWithUTCAndStatusAdapters(t, false, map[string]string{"zeta": jiraCloudServer.URL, "alpha": jiraCloudServer.URL}, map[string]string{"ops": jiraDataServer.URL, "core": jiraDataServer.URL})
-
-	jiraCloudStatus := runCLI(t, "status", "--adapter", "jira-cloud", "--instance", "zeta", "--output", "json")
-	if jiraCloudStatus.code != 0 {
-		t.Fatalf("jira cloud status failed: code=%d stdout=%s stderr=%s", jiraCloudStatus.code, jiraCloudStatus.stdout, jiraCloudStatus.stderr)
-	}
-	jiraCloudItems := statusItems(t, jiraCloudStatus.stdout)
-	if len(jiraCloudItems) != 1 || jiraCloudItems[0]["instance"] != "zeta" {
-		t.Fatalf("expected one filtered jira cloud instance, got %s", jiraCloudStatus.stdout)
-	}
-
-	jiraDataStatus := runCLI(t, "status", "--adapter", "jira-data-center", "--instance", "ops", "--output", "json")
-	if jiraDataStatus.code != 0 {
-		t.Fatalf("jira data status failed: code=%d stdout=%s stderr=%s", jiraDataStatus.code, jiraDataStatus.stdout, jiraDataStatus.stderr)
-	}
-	jiraDataItems := statusItems(t, jiraDataStatus.stdout)
-	if len(jiraDataItems) != 1 || jiraDataItems[0]["instance"] != "ops" {
-		t.Fatalf("expected one filtered jira data instance, got %s", jiraDataStatus.stdout)
+	if !reflect.DeepEqual(targets, expected) {
+		t.Fatalf("expected sorted jira connectivity targets, got %v", targets)
 	}
 }
 
-func TestStatusClockifyAcceptsImplicitInstanceName(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-
-	clockifyServer := newClockifyTestServer(t)
-	defer clockifyServer.Close()
-	writeConfigWithUTCAndClockify(t)
-
-	originalBaseURL := clockifyadapter.BaseURL
-	clockifyadapter.BaseURL = clockifyServer.URL
-	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
-
-	status := runCLI(t, "status", "--adapter", "clockify", "--instance", "clockify", "--output", "json")
-	if status.code != 0 {
-		t.Fatalf("clockify status failed: code=%d stdout=%s stderr=%s", status.code, status.stdout, status.stderr)
-	}
-	items := statusItems(t, status.stdout)
-	if len(items) != 1 || items[0]["instance"] != "clockify" || items[0]["status"] != "OK" {
-		t.Fatalf("expected one filtered clockify instance, got %s", status.stdout)
-	}
-}
-
-func TestStatusClockifyFailsWhenTagsReadFails(t *testing.T) {
+func TestStatusConnectivityClockifyFailsWhenTagsReadFails(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTCAndClockify(t)
 
@@ -1890,59 +1811,14 @@ func TestStatusClockifyFailsWhenTagsReadFails(t *testing.T) {
 	clockifyadapter.BaseURL = server.URL
 	defer func() { clockifyadapter.BaseURL = originalBaseURL }()
 
-	status := runCLI(t, "status", "--adapter", "clockify", "--output", "json")
-	if status.code != 4 {
-		t.Fatalf("expected auth failure, got code=%d stdout=%s stderr=%s", status.code, status.stdout, status.stderr)
+	result := runCLI(t, "status", "--output", "json")
+	if result.code != 4 {
+		t.Fatalf("expected auth failure, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
-	if !strings.Contains(status.stdout, "401 Unauthorized") && !strings.Contains(status.stderr, "401 Unauthorized") {
-		t.Fatalf("expected tags auth failure, got stdout=%s stderr=%s", status.stdout, status.stderr)
-	}
-}
 
-func TestStatusTableHeaders(t *testing.T) {
-	headers := statusTableHeaders()
-	expected := []string{"ADAPTER", "INSTANCE", "BASE_URL", "USER", "STATUS"}
-	if len(headers) != len(expected) {
-		t.Fatalf("unexpected header count %v", headers)
-	}
-	for i := range expected {
-		if headers[i] != expected[i] {
-			t.Fatalf("unexpected headers %v", headers)
-		}
-	}
-}
-
-func TestStatusTableRowsMapClockifyFields(t *testing.T) {
-	rows := statusTableRows([]statusRow{
-		{
-			Adapter:     "clockify",
-			Instance:    "clockify",
-			Status:      "OK",
-			WorkspaceID: "ws-active",
-			UserID:      "user-1",
-		},
-		{
-			Adapter:  "jira-cloud",
-			Instance: "product",
-			Status:   "jira cloud request failed: 401 Unauthorized",
-			BaseURL:  "https://example.atlassian.net",
-			User:     "User One",
-		},
-	})
-
-	expected := [][]string{
-		{"clockify", "clockify", "", "user-1", "OK"},
-		{"jira-cloud", "product", "https://example.atlassian.net", "User One", "jira cloud request failed: 401 Unauthorized"},
-	}
-	if len(rows) != len(expected) {
-		t.Fatalf("unexpected row count %v", rows)
-	}
-	for i := range expected {
-		for j := range expected[i] {
-			if rows[i][j] != expected[i][j] {
-				t.Fatalf("unexpected rows %v", rows)
-			}
-		}
+	connectivity := connectivityItems(statusItems(t, result.stdout))
+	if len(connectivity) != 1 || connectivity[0]["status"] != "error" || !strings.Contains(connectivity[0]["message"].(string), "401 Unauthorized") {
+		t.Fatalf("expected tags auth failure, got %s", result.stdout)
 	}
 }
 
@@ -4752,13 +4628,13 @@ func TestPlanReconcileRejectsJiraCloudSnakeCaseAndUnsupportedCommandsStayDetermi
 		t.Fatalf("expected adapter validation message, got stdout=%s stderr=%s", invalid.stdout, invalid.stderr)
 	}
 
-	status := runCLI(t, "status", "--adapter", "jira-cloud", "--output", "json")
+	status := runCLI(t, "status", "--output", "json")
 	if status.code != 0 {
-		t.Fatalf("expected jira-cloud status success, got code=%d stdout=%s stderr=%s", status.code, status.stdout, status.stderr)
+		t.Fatalf("expected status success, got code=%d stdout=%s stderr=%s", status.code, status.stdout, status.stderr)
 	}
-	items := statusItems(t, status.stdout)
+	items := connectivityItems(statusItems(t, status.stdout))
 	if len(items) != 2 {
-		t.Fatalf("expected two jira-cloud status rows, got %s", status.stdout)
+		t.Fatalf("expected two jira-cloud connectivity rows, got %s", status.stdout)
 	}
 
 	missingInstance := runCLI(t, "issue-metadata", "refresh", "--adapter", "jira-cloud", "--field", "max-estimate", "--today", "--output", "json")
@@ -7233,6 +7109,16 @@ func statusItems(t *testing.T, raw string) []map[string]any {
 	}
 
 	return items
+}
+
+func connectivityItems(items []map[string]any) []map[string]any {
+	filtered := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if item["category"] == "connectivity" {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 func totalsItems(t *testing.T, raw string) []map[string]any {
