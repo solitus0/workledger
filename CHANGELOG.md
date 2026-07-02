@@ -5,16 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.8] - 2026-07-02
 
 ### Changed
+- Diagnostics commands are now consolidated: `workledger config` replaces `config validate`, `config env`, and `config summary`, while `workledger status` replaces `workledger doctor`, runs config/storage/env/routing/connectivity diagnostics by default, and shows authenticated identity details on successful remote checks.
 - `workledger worklogs add` automatic placement now uses explicit `--fit` and `--fill` modes instead of `--snap`; `--fit` creates one continuous worklog, `--fill` can allocate across gaps, and the session worklog creator skill now uses `--fit` for unknown exact starts.
-- Bare Jira push `workledger plan reconcile` now includes non-default reporting profiles automatically, surfaces per-profile breakdowns in reconcile output, and shows persisted route profiles in `plan show`.
-- `workledger status` now owns config, storage, env, routing, and adapter connectivity diagnostics; `workledger doctor` has been removed, and successful connectivity rows now show the authenticated user identity in `MESSAGE`.
+- `workledger plan reconcile` now defaults to push, can target all configured reconcile-capable targets when no `--adapter` or `--instance` is supplied, includes non-default Jira reporting profiles automatically in bare push runs, surfaces per-profile breakdowns in reconcile output, and shows persisted route profiles in `plan show`.
+- `workledger worklogs delete` now permanently removes active local worklogs, and push reconcile now discovers owned remote rows directly from the selected remote scope instead of relying on local tombstones for remote cleanup planning.
+
+### Removed
+- `workledger doctor` has been removed in favor of `workledger status`.
+- `workledger tombstones` commands and tombstone-backed restore flows have been removed.
 
 ### Fixed
 - `workledger plan reconcile --route-profile` now fails fast when no Jira target is selected, instead of falling through to unrelated adapters such as Clockify.
 - Implicit all-target reconcile validation now includes the concrete skipped-target reasons when every configured target is invalid.
+- Jira pull reconcile now filters remote worklogs to configured routed `issue_prefixes` instead of importing unrelated issues from the selected instance.
+- Jira Cloud push/apply now preserves already-matched ADF worklogs instead of deleting and recreating them during replace flows.
 
 ## [0.1.7] - 2026-06-23
 
