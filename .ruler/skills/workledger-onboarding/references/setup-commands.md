@@ -1,8 +1,8 @@
 # Workledger setup command reference
 
-Use this reference for onboarding, configuration, and diagnostics only.
+Use only for onboarding, configuration, routing checks, and diagnostics.
 
-## Initialize and inspect configuration
+## Core commands
 
 ```text
 workledger init
@@ -10,9 +10,9 @@ workledger config
 workledger status
 ```
 
-`workledger config` validates the effective local config and reports the current configuration summary. `workledger status` runs config, local storage, env-var, routing, and adapter connectivity diagnostics.
+`workledger config` validates the effective config. `workledger status` checks config, local storage, env vars, routing, and adapter connectivity.
 
-## Configure adapters
+## Adapter setup
 
 ### Jira Cloud
 
@@ -20,7 +20,7 @@ workledger status
 workledger setup jira-cloud --instance main --base-url https://example.atlassian.net --email user@example.com --token-env JIRA_TOKEN --issue-prefix PROJ
 ```
 
-Use Jira Cloud when the base URL is an Atlassian Cloud site and authentication uses email plus API token.
+Use for Atlassian Cloud with email + API token.
 
 ### Jira Data Center
 
@@ -28,7 +28,7 @@ Use Jira Cloud when the base URL is an Atlassian Cloud site and authentication u
 workledger setup jira-data-center --instance dc --base-url https://jira.example.com --token-env JIRA_DC_TOKEN --issue-prefix OPS
 ```
 
-Use Jira Data Center when the organization hosts Jira itself and authentication is token-based without the Jira Cloud email/API-token pairing.
+Use for self-hosted Jira with token auth and no Cloud email/API-token pairing.
 
 ### Clockify
 
@@ -36,11 +36,11 @@ Use Jira Data Center when the organization hosts Jira itself and authentication 
 workledger setup clockify --workspace-id <workspace-id> --user-id <user-id> --api-key-env CLOCKIFY_API_KEY --project-map PROJ=Engineering
 ```
 
-Repeat or extend project mappings according to the CLI's supported syntax when multiple issue prefixes must route to Clockify projects. Validate mappings before any push workflow.
+Validate project mappings before any push workflow.
 
-## Environment variable guidance
+## Environment variables
 
-Prefer commands that reference env var names:
+Use placeholders, never real token values:
 
 ```text
 export JIRA_TOKEN=...
@@ -48,22 +48,7 @@ export JIRA_DC_TOKEN=...
 export CLOCKIFY_API_KEY=...
 ```
 
-For user-facing setup instructions, use placeholders instead of real token values. For shell-specific output, write explicit placeholder exports for the env var names configured through setup commands.
-
-## Diagnostics
-
-```text
-workledger status
-```
-
-`workledger status` is the single onboarding diagnostic command. It reports:
-
-- local storage validation for `storage.sqlite_path`, DB-file writability, parent-directory writability, and SQLite sidecar creation viability.
-- missing or malformed environment variables.
-- adapter routes, instance resolution, issue-prefix routing, and project mapping shape.
-- credential and remote reachability checks.
-
-## Routing inspection
+## Routing checks
 
 ```text
 workledger routing list
@@ -71,19 +56,19 @@ workledger route explain PROJ-123
 workledger clockify mappings validate
 ```
 
-Use routing commands when the target adapter, instance, route profile, issue prefix, or Clockify project mapping is unclear. Use a real issue key for `route explain` when possible.
+Use a real issue key for `route explain` when possible.
 
 ## Troubleshooting map
 
-| Symptom | Likely layer | First follow-up command |
+| Symptom | Layer | First command |
 | --- | --- | --- |
-| Config file exists but setup seems ignored | config | `workledger config` |
-| Command complains about missing token | env | `workledger status` |
-| Issue prefix goes to wrong adapter | routing | `workledger route explain PROJ-123` |
+| Config exists but setup seems ignored | config | `workledger config` |
+| Missing token error | env | `workledger status` |
+| Issue prefix routes incorrectly | routing | `workledger route explain PROJ-123` |
 | Clockify project not selected | routing | `workledger clockify mappings validate` |
-| SQLite or local DB write failure | storage | `workledger status` |
-| Auth or remote API failure | connectivity | `workledger status` |
+| SQLite/local DB write failure | storage | `workledger status` |
+| Auth or API failure | connectivity | `workledger status` |
 
-## Boundaries
+## Boundary
 
-Do not use onboarding commands as a shortcut for worklog creation or remote sync. After onboarding succeeds, hand off to the broader worklog workflow for local entries, totals, issue metadata, or reconcile plans.
+After onboarding succeeds, hand off to the worklog workflow for entries, totals, metadata, reconcile plans, or sync.

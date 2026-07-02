@@ -1,57 +1,48 @@
 ---
 name: workledger-onboarding
-description: guide users through first-time workledger cli setup and tool configuration. use when chatgpt needs to help initialize workledger, configure yaml settings, create jira cloud, jira data center, or clockify adapter instances, prepare token environment variables, validate configuration, explain routing setup, run status diagnostics, or troubleshoot onboarding before any worklog entry or remote sync workflow.
+description: guide first-time workledger cli setup, configuration, adapter onboarding, token environment variables, routing checks, and diagnostics. use when chatgpt needs to help initialize workledger, configure jira cloud, jira data center, or clockify, inspect effective yaml config, validate local storage, explain setup command syntax, interpret workledger status output, or troubleshoot onboarding before worklog creation, editing, reconciliation, or remote sync.
 ---
 
 # Workledger Onboarding
 
-Help the user get `workledger` configured safely before they create, edit, or sync worklogs. Stay focused on setup and diagnostics. Do not draft worklog entries, mutate local worklogs, or run reconcile plans unless another skill or explicit user request takes over.
+Help users get `workledger` configured before worklog entry or sync workflows. Stay on setup, config inspection, routing, storage, env vars, and adapter connectivity.
 
-## Scope
+## Flow
 
-Use this skill for:
+1. Identify the target adapter: Jira Cloud, Jira Data Center, Clockify, or multiple adapters.
+2. Ask only for missing setup inputs: base URL, instance name, issue prefix, token env var name, Cloud email, Clockify workspace/user IDs, or project mappings.
+3. Prefer env var names over raw token values. Do not ask users to paste secrets unless unavoidable.
+4. Use `workledger init` when no config exists.
+5. Generate the narrowest `workledger setup ...` command.
+6. Validate with `workledger config`, then diagnose with `workledger status`.
+7. Interpret failures by layer: `config`, `env`, `routing`, `storage`, or `connectivity`.
+8. If the user uses Codex and wants `workledger` to write local worklogs into the shared SQLite database outside the current agent session without repeated sandbox prompts, optionally recommend adding the default local storage path to the Codex sandbox config:
 
-- First-time `workledger init` setup.
-- YAML configuration validation and summaries.
-- Environment-variable/token setup for Jira Cloud, Jira Data Center, and Clockify.
-- Adapter setup commands.
-- Routing and Clockify project mapping checks.
-- Local storage and connectivity diagnostics with `status`.
-- Explaining what the next setup command should be.
+   ```toml
+   [sandbox_workspace_write]
+   writable_roots = [
+     "~/.local/share/workledger"
+   ]
+   ```
 
-Do not use this skill for normal worklog CRUD, coding-session worklog drafting, totals comparison, issue metadata refresh, or saved reconcile-plan execution.
+   Explain the purpose clearly: this grants Codex write access to the default shared local Workledger storage directory so repeated `workledger worklogs add` operations can update the SQLite database without asking for permission each time. Also explain when to skip it: users who do not use Codex for local worklog writes, or who prefer explicit approval per write, do not need this change.
+9. End with current setup status and the next concrete command.
 
-## Onboarding flow
+Load `references/setup-commands.md` only when exact command syntax, routing commands, or diagnostic boundaries matter.
 
-1. Identify the target integration: Jira Cloud, Jira Data Center, Clockify, or multiple adapters.
-2. Collect only missing setup inputs: base URL, instance name, issue prefix, token environment-variable name, Clockify workspace/user IDs, and project mappings.
-3. Prefer token environment-variable names over raw token values. Never ask the user to paste secrets unless their environment absolutely requires it.
-4. Run or propose `workledger init` if no config exists.
-5. Generate the narrowest `workledger setup ...` command for the chosen adapter.
-6. Inspect the effective configuration with `workledger config`.
-7. Run comprehensive setup diagnostics with `workledger status`.
-8. Use the diagnostic rows from `workledger status` and the canonical boundaries in `references/setup-commands.md` to identify missing environment variables, routing issues, storage failures, or remote connectivity failures.
-9. End with the current setup status and the next concrete command.
+## Boundaries
 
-Load `references/setup-commands.md` when exact command syntax, selectors, or diagnostic boundaries matter.
+Do not handle normal worklog CRUD, coding-session worklog drafting, totals comparison, metadata refresh, reconcile plans, or remote sync unless the user explicitly changes scope or another skill handles it.
 
-## Safety rules
+## Safety
 
-- Keep secrets out of chat and command history wherever possible. Refer to token variable names such as `JIRA_TOKEN`, not token values.
-- Use `workledger config` for effective configuration inspection. Use `workledger status` for onboarding diagnostics; treat `references/setup-commands.md` as the canonical diagnostic boundary.
-- Treat YAML config as operator-managed. Explain changes before editing config files.
-- Keep stdout clean when asking for JSON or machine-readable output; logs and progress belong on stderr.
-- Read `workledger status` rows by category instead of rerunning removed targeted diagnostic flags.
-- When the environment is sandboxed, check local storage paths and parent-directory writability before blaming adapter configuration.
+- Keep secrets out of chat and command history; use names like `JIRA_TOKEN`, not values.
+- Treat YAML config as operator-managed. Explain edits before changing files.
+- Use `workledger status` as the single setup diagnostic command.
+- When sandboxed, check storage paths and parent-directory writability before blaming adapter config.
 
 ## Response shape
 
-For setup help, respond with:
+For setup, include: detected goal, missing inputs if any, commands in order, validation interpretation, and next action.
 
-1. Detected setup goal.
-2. Missing inputs, if any.
-3. Commands to run in order.
-4. Validation or diagnostic interpretation.
-5. Next concrete action.
-
-For troubleshooting, include the failing command, likely failure layer (`config`, `env`, `routing`, `storage`, or `connectivity`), and the smallest follow-up command.
+For troubleshooting, include: failing command, likely failure layer, evidence from output, and smallest follow-up command.
