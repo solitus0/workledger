@@ -88,6 +88,7 @@ type app struct {
 type dateWindowFlagValues struct {
 	Today        *bool
 	Yesterday    *bool
+	Tomorrow     *bool
 	Monday       *bool
 	Tuesday      *bool
 	Wednesday    *bool
@@ -107,6 +108,7 @@ type dateWindowFlagValues struct {
 type dateWindowHelpSet struct {
 	Today           string
 	Yesterday       string
+	Tomorrow        string
 	WeekdayTemplate string
 	CurrentWeek     string
 	LastWeek        string
@@ -115,13 +117,14 @@ type dateWindowHelpSet struct {
 }
 
 var (
-	dateFilterFlagNames    = []string{"today", "yesterday", "current-week", "last-week", "current-month", "last-month", "from", "to"}
+	dateFilterFlagNames    = []string{"today", "yesterday", "tomorrow", "current-week", "last-week", "current-month", "last-month", "from", "to"}
 	weekdayFilterFlagNames = []string{"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 	dateModifierFlagNames  = []string{"week-offset"}
 
 	filterDateWindowHelp = dateWindowHelpSet{
 		Today:           "Filter to today",
 		Yesterday:       "Filter to yesterday",
+		Tomorrow:        "Filter to tomorrow",
 		WeekdayTemplate: "Filter to %s in the selected week",
 		CurrentWeek:     "Filter to the current week",
 		LastWeek:        "Filter to the previous week",
@@ -131,6 +134,7 @@ var (
 	useDateWindowHelp = dateWindowHelpSet{
 		Today:           "Use today",
 		Yesterday:       "Use yesterday",
+		Tomorrow:        "Use tomorrow",
 		WeekdayTemplate: "Use %s in the selected week",
 		CurrentWeek:     "Use the current week",
 		LastWeek:        "Use the previous week",
@@ -140,6 +144,7 @@ var (
 	addDateWindowHelp = dateWindowHelpSet{
 		Today:           "Use the current local day",
 		Yesterday:       "Use the previous local day",
+		Tomorrow:        "Use the next local day",
 		WeekdayTemplate: "Use %s in the selected week",
 		CurrentWeek:     "Use the current local week",
 		LastWeek:        "Use the previous local week",
@@ -169,6 +174,7 @@ func applyGroupedDateFlagUsage(cmd *cobra.Command) {
 func addDateWindowFlags(cmd *cobra.Command, values dateWindowFlagValues, help dateWindowHelpSet) {
 	cmd.Flags().BoolVar(values.Today, "today", false, help.Today)
 	cmd.Flags().BoolVar(values.Yesterday, "yesterday", false, help.Yesterday)
+	cmd.Flags().BoolVar(values.Tomorrow, "tomorrow", false, help.Tomorrow)
 	cmd.Flags().BoolVar(values.Monday, "mon", false, fmt.Sprintf(help.WeekdayTemplate, "Monday"))
 	cmd.Flags().BoolVar(values.Tuesday, "tue", false, fmt.Sprintf(help.WeekdayTemplate, "Tuesday"))
 	cmd.Flags().BoolVar(values.Wednesday, "wed", false, fmt.Sprintf(help.WeekdayTemplate, "Wednesday"))
@@ -495,6 +501,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 	var issuePrefix string
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -530,6 +537,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 				IssuePrefix:   issuePrefix,
 				Today:         today,
 				Yesterday:     yesterday,
+				Tomorrow:      tomorrow,
 				Monday:        monday,
 				Tuesday:       tuesday,
 				Wednesday:     wednesday,
@@ -572,6 +580,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -596,6 +605,7 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 	var issuePrefix string
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -632,6 +642,7 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 				IssuePrefix:   issuePrefix,
 				Today:         today,
 				Yesterday:     yesterday,
+				Tomorrow:      tomorrow,
 				Monday:        monday,
 				Tuesday:       tuesday,
 				Wednesday:     wednesday,
@@ -677,6 +688,7 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -700,6 +712,7 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 	var issues []string
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -736,6 +749,7 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 				Issues:        issues,
 				Today:         today,
 				Yesterday:     yesterday,
+				Tomorrow:      tomorrow,
 				Monday:        monday,
 				Tuesday:       tuesday,
 				Wednesday:     wednesday,
@@ -765,6 +779,7 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 					Issues:        issues,
 					Today:         today,
 					Yesterday:     yesterday,
+					Tomorrow:      tomorrow,
 					Monday:        monday,
 					Tuesday:       tuesday,
 					Wednesday:     wednesday,
@@ -795,6 +810,7 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -822,6 +838,7 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 	var issuePrefix string
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -857,6 +874,7 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 				IssuePrefix:   issuePrefix,
 				Today:         today,
 				Yesterday:     yesterday,
+				Tomorrow:      tomorrow,
 				Monday:        monday,
 				Tuesday:       tuesday,
 				Wednesday:     wednesday,
@@ -883,6 +901,7 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 					IssuePrefix:   issuePrefix,
 					Today:         today,
 					Yesterday:     yesterday,
+					Tomorrow:      tomorrow,
 					Monday:        monday,
 					Tuesday:       tuesday,
 					Wednesday:     wednesday,
@@ -914,6 +933,7 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -999,6 +1019,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	var fill bool
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -1043,6 +1064,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 				Fill:          fill,
 				Today:         today,
 				Yesterday:     yesterday,
+				Tomorrow:      tomorrow,
 				Monday:        monday,
 				Tuesday:       tuesday,
 				Wednesday:     wednesday,
@@ -1118,6 +1140,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -1208,6 +1231,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	var issuePrefix string
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -1269,6 +1293,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 				IssuePrefix:   issuePrefix,
 				Today:         today,
 				Yesterday:     yesterday,
+				Tomorrow:      tomorrow,
 				Monday:        monday,
 				Tuesday:       tuesday,
 				Wednesday:     wednesday,
@@ -1295,6 +1320,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 					IssuePrefix:   issuePrefix,
 					Today:         today,
 					Yesterday:     yesterday,
+					Tomorrow:      tomorrow,
 					Monday:        monday,
 					Tuesday:       tuesday,
 					Wednesday:     wednesday,
@@ -1329,6 +1355,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -1403,7 +1430,7 @@ func (a *app) collectClockifyConnectivityRows(ctx context.Context, effective con
 	if clockifyCfg.WorkspaceID != user.ActiveWorkspace && clockifyCfg.WorkspaceID != user.DefaultWorkspace {
 		return nil, errors.New("configured clockify.workspace_id is not visible for the authenticated user")
 	}
-	windowFrom, windowTo, err := parsePlanWindow(effective, false, false, false, false, false, false, false, false, false, true, false, false, false, "", "", 0, false)
+	windowFrom, windowTo, err := parsePlanWindow(effective, false, false, false, false, false, false, false, false, false, false, true, false, false, false, "", "", 0, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1677,6 +1704,7 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 	var issuePrefix string
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -1710,6 +1738,7 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 				IssuePrefix:   issuePrefix,
 				Today:         today,
 				Yesterday:     yesterday,
+				Tomorrow:      tomorrow,
 				Monday:        monday,
 				Tuesday:       tuesday,
 				Wednesday:     wednesday,
@@ -1766,6 +1795,7 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -1792,6 +1822,7 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 	var issuePrefix string
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -1828,6 +1859,7 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 				IssuePrefix:   issuePrefix,
 				Today:         today,
 				Yesterday:     yesterday,
+				Tomorrow:      tomorrow,
 				Monday:        monday,
 				Tuesday:       tuesday,
 				Wednesday:     wednesday,
@@ -1964,6 +1996,7 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -1986,6 +2019,7 @@ func (a *app) newTotalsCommand() *cobra.Command {
 	var adapter string
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -2019,7 +2053,7 @@ func (a *app) newTotalsCommand() *cobra.Command {
 			defer cleanup()
 
 			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet)
+			windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet)
 			if err != nil {
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
@@ -2092,7 +2126,7 @@ func (a *app) newTotalsCommand() *cobra.Command {
 			}
 
 			if mode == "json" {
-				return a.renderTotalsJSON(selectedAdapter, resolvedInstance, routeProfile, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet, effective, windowFrom, windowTo, result)
+				return a.renderTotalsJSON(selectedAdapter, resolvedInstance, routeProfile, today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet, effective, windowFrom, windowTo, result)
 			}
 			return a.renderTotalsTable(selectedAdapter, resolvedInstance, routeProfile, details, effective, windowFrom, windowTo, result)
 		},
@@ -2104,6 +2138,7 @@ func (a *app) newTotalsCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -2326,6 +2361,7 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 	var routeProfile string
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -2363,7 +2399,7 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 			defer cleanup()
 
 			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet)
+			windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet)
 			if err != nil {
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
@@ -2459,6 +2495,7 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -2523,6 +2560,7 @@ func (a *app) newPlanShowCommand() *cobra.Command {
 func (a *app) newPlanListCommand() *cobra.Command {
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -2555,8 +2593,8 @@ func (a *app) newPlanListCommand() *cobra.Command {
 				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
 			}
 			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			if hasPlanWindowSelection(today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to) {
-				windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet)
+			if hasPlanWindowSelection(today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to) {
+				windowFrom, windowTo, err := parsePlanWindow(effective, today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet)
 				if err != nil {
 					return a.fail(mode, 2, "validation_error", err.Error(), nil)
 				}
@@ -2587,6 +2625,7 @@ func (a *app) newPlanListCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -2918,18 +2957,19 @@ func matchesAnyIssuePrefix(issueKey string, issuePrefixes []string) bool {
 	return false
 }
 
-func parsePlanWindow(cfg config.EffectiveConfig, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, weekOffset int, weekOffsetSet bool) (time.Time, time.Time, error) {
-	return parsePlanWindowAt(cfg, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet, time.Now)
+func parsePlanWindow(cfg config.EffectiveConfig, today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, weekOffset int, weekOffsetSet bool) (time.Time, time.Time, error) {
+	return parsePlanWindowAt(cfg, today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth, from, to, weekOffset, weekOffsetSet, time.Now)
 }
 
-func hasPlanWindowSelection(today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string) bool {
-	return today || yesterday || monday || tuesday || wednesday || thursday || friday || saturday || sunday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != ""
+func hasPlanWindowSelection(today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string) bool {
+	return today || yesterday || tomorrow || monday || tuesday || wednesday || thursday || friday || saturday || sunday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != ""
 }
 
-func parsePlanWindowAt(cfg config.EffectiveConfig, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, weekOffset int, weekOffsetSet bool, now func() time.Time) (time.Time, time.Time, error) {
+func parsePlanWindowAt(cfg config.EffectiveConfig, today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, weekOffset int, weekOffsetSet bool, now func() time.Time) (time.Time, time.Time, error) {
 	windowStart, windowEnd, err := worklogs.ResolveDateWindowSelectionAt(cfg, worklogs.DateWindowSelection{
 		Today:         today,
 		Yesterday:     yesterday,
+		Tomorrow:      tomorrow,
 		Monday:        monday,
 		Tuesday:       tuesday,
 		Wednesday:     wednesday,
@@ -2950,7 +2990,7 @@ func parsePlanWindowAt(cfg config.EffectiveConfig, today, yesterday, monday, tue
 		return time.Time{}, time.Time{}, err
 	}
 	if windowStart == nil || windowEnd == nil {
-		return time.Time{}, time.Time{}, errors.New("either --from and --to or exactly one of --today/--yesterday/--mon/--tue/--wed/--thu/--fri/--sat/--sun/--current-week/--last-week/--current-month/--last-month is required")
+		return time.Time{}, time.Time{}, errors.New("either --from and --to or exactly one of --today/--yesterday/--tomorrow/--mon/--tue/--wed/--thu/--fri/--sat/--sun/--current-week/--last-week/--current-month/--last-month is required")
 	}
 	return windowStart.UTC(), windowEnd.UTC(), nil
 }
@@ -3436,11 +3476,12 @@ func (a *app) handleReconcileAdapterError(mode, adapter string, err error) error
 	return a.fail(mode, 2, "validation_error", err.Error(), nil)
 }
 
-func (a *app) renderTotalsJSON(adapter, instance, routeProfile string, today, yesterday, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, weekOffset int, weekOffsetSet bool, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, result totals.Result) error {
+func (a *app) renderTotalsJSON(adapter, instance, routeProfile string, today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday, currentWeek, lastWeek, currentMonth, lastMonth bool, from, to string, weekOffset int, weekOffsetSet bool, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, result totals.Result) error {
 	rawFilters := map[string]any{
 		"adapter":       emptyToNil(adapter),
 		"today":         today,
 		"yesterday":     yesterday,
+		"tomorrow":      tomorrow,
 		"mon":           monday,
 		"tue":           tuesday,
 		"wed":           wednesday,
@@ -3660,6 +3701,7 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 				"issue_prefix":  emptyToNil(raw.IssuePrefix),
 				"today":         raw.Today,
 				"yesterday":     raw.Yesterday,
+				"tomorrow":      raw.Tomorrow,
 				"mon":           raw.Monday,
 				"tue":           raw.Tuesday,
 				"wed":           raw.Wednesday,
@@ -3717,6 +3759,7 @@ func (a *app) renderSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw 
 				"issue_prefix":  emptyToNil(raw.IssuePrefix),
 				"today":         raw.Today,
 				"yesterday":     raw.Yesterday,
+				"tomorrow":      raw.Tomorrow,
 				"mon":           raw.Monday,
 				"tue":           raw.Tuesday,
 				"wed":           raw.Wednesday,
@@ -3772,6 +3815,7 @@ func (a *app) renderContextJSON(raw worklogs.ContextInput, result worklogs.Conte
 			"issue":         nilIfEmpty(raw.Issues),
 			"today":         raw.Today,
 			"yesterday":     raw.Yesterday,
+			"tomorrow":      raw.Tomorrow,
 			"mon":           raw.Monday,
 			"tue":           raw.Tuesday,
 			"wed":           raw.Wednesday,
@@ -3913,6 +3957,7 @@ func selectorFiltersJSON(raw worklogs.ListFilters, effective worklogs.EffectiveF
 			"issue_prefix":  emptyToNil(raw.IssuePrefix),
 			"today":         raw.Today,
 			"yesterday":     raw.Yesterday,
+			"tomorrow":      raw.Tomorrow,
 			"mon":           raw.Monday,
 			"tue":           raw.Tuesday,
 			"wed":           raw.Wednesday,
@@ -3952,6 +3997,7 @@ func (a *app) renderShiftJSON(raw worklogs.ListFilters, result worklogs.ShiftRes
 			"issue":         emptyToNil(raw.Issue),
 			"today":         raw.Today,
 			"yesterday":     raw.Yesterday,
+			"tomorrow":      raw.Tomorrow,
 			"mon":           raw.Monday,
 			"tue":           raw.Tuesday,
 			"wed":           raw.Wednesday,
@@ -4208,7 +4254,7 @@ func splitFields(value string) []string {
 }
 
 func hasSelector(raw worklogs.ListFilters) bool {
-	return raw.Today || raw.Yesterday || raw.Monday || raw.Tuesday || raw.Wednesday || raw.Thursday || raw.Friday || raw.Saturday || raw.Sunday || raw.CurrentWeek || raw.LastWeek || raw.CurrentMonth || raw.LastMonth || raw.From != "" || raw.To != ""
+	return raw.Today || raw.Yesterday || raw.Tomorrow || raw.Monday || raw.Tuesday || raw.Wednesday || raw.Thursday || raw.Friday || raw.Saturday || raw.Sunday || raw.CurrentWeek || raw.LastWeek || raw.CurrentMonth || raw.LastMonth || raw.From != "" || raw.To != ""
 }
 
 func worklogRecordJSON(item worklogs.LocalWorklog, location *time.Location) map[string]any {

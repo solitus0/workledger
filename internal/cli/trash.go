@@ -29,6 +29,7 @@ func (a *app) newTrashListCommand() *cobra.Command {
 	var issuePrefix string
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -61,6 +62,7 @@ func (a *app) newTrashListCommand() *cobra.Command {
 				IssuePrefix:   issuePrefix,
 				Today:         today,
 				Yesterday:     yesterday,
+				Tomorrow:      tomorrow,
 				Monday:        monday,
 				Tuesday:       tuesday,
 				Wednesday:     wednesday,
@@ -97,6 +99,7 @@ func (a *app) newTrashListCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,
@@ -120,6 +123,7 @@ func (a *app) newTrashSearchCommand() *cobra.Command {
 	var issuePrefix string
 	var today bool
 	var yesterday bool
+	var tomorrow bool
 	var monday bool
 	var tuesday bool
 	var wednesday bool
@@ -153,6 +157,7 @@ func (a *app) newTrashSearchCommand() *cobra.Command {
 				IssuePrefix:   issuePrefix,
 				Today:         today,
 				Yesterday:     yesterday,
+				Tomorrow:      tomorrow,
 				Monday:        monday,
 				Tuesday:       tuesday,
 				Wednesday:     wednesday,
@@ -192,6 +197,7 @@ func (a *app) newTrashSearchCommand() *cobra.Command {
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
+		Tomorrow:     &tomorrow,
 		Monday:       &monday,
 		Tuesday:      &tuesday,
 		Wednesday:    &wednesday,

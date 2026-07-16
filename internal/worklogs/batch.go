@@ -313,7 +313,7 @@ func parseShiftDelta(value string) (int, error) {
 }
 
 func hasExplicitSelector(filters ListFilters) bool {
-	return filters.Issue != "" || filters.Today || filters.Yesterday || filters.From != "" || filters.To != ""
+	return filters.Issue != "" || filters.Today || filters.Yesterday || filters.Tomorrow || filters.From != "" || filters.To != ""
 }
 
 func validateShiftSet(finalSet []LocalWorklog, shiftedByID map[string]LocalWorklog, location *time.Location) error {

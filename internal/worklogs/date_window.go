@@ -16,6 +16,7 @@ func WeekOffsetRequiresWeekdayMessage() string {
 type DateWindowSelection struct {
 	Today         bool
 	Yesterday     bool
+	Tomorrow      bool
 	Monday        bool
 	Tuesday       bool
 	Wednesday     bool
@@ -36,6 +37,7 @@ type DateWindowSelection struct {
 func HasDateWindowSelection(selection DateWindowSelection) bool {
 	return selection.Today ||
 		selection.Yesterday ||
+		selection.Tomorrow ||
 		selection.Monday ||
 		selection.Tuesday ||
 		selection.Wednesday ||
@@ -63,6 +65,10 @@ func ResolveDateWindowSelectionAt(cfg config.EffectiveConfig, selection DateWind
 		return &from, &to, nil
 	case selection.Yesterday:
 		current := now().In(cfg.Location).AddDate(0, 0, -1)
+		from, to := dayBounds(current, cfg.Location)
+		return &from, &to, nil
+	case selection.Tomorrow:
+		current := now().In(cfg.Location).AddDate(0, 0, 1)
 		from, to := dayBounds(current, cfg.Location)
 		return &from, &to, nil
 	case selection.Monday:
@@ -122,7 +128,7 @@ func ResolveDateWindowSelectionAt(cfg config.EffectiveConfig, selection DateWind
 func validateDateWindowSelection(selection DateWindowSelection) error {
 	if selection.WeekOffsetSet {
 		if hasNonWeekdayDateWindowSelection(selection) {
-			return errors.New("--week-offset only modifies weekday filters and cannot be combined with --today, --yesterday, --current-week, --last-week, --current-month, --last-month, --from, or --to")
+			return errors.New("--week-offset only modifies weekday filters and cannot be combined with --today, --yesterday, --tomorrow, --current-week, --last-week, --current-month, --last-month, --from, or --to")
 		}
 		if countWeekdaySelections(selection) != 1 {
 			return errors.New(weekOffsetRequiresWeekdayMessage)
@@ -133,6 +139,7 @@ func validateDateWindowSelection(selection DateWindowSelection) error {
 	for _, selected := range []bool{
 		selection.Today,
 		selection.Yesterday,
+		selection.Tomorrow,
 		selection.Monday,
 		selection.Tuesday,
 		selection.Wednesday,
@@ -150,10 +157,10 @@ func validateDateWindowSelection(selection DateWindowSelection) error {
 		}
 	}
 	if shortcuts > 1 {
-		return errors.New("today, yesterday, mon, tue, wed, thu, fri, sat, sun, current-week, last-week, current-month, and last-month are mutually exclusive")
+		return errors.New("today, yesterday, tomorrow, mon, tue, wed, thu, fri, sat, sun, current-week, last-week, current-month, and last-month are mutually exclusive")
 	}
 	if shortcuts > 0 && (selection.From != "" || selection.To != "") {
-		return errors.New("today, yesterday, mon, tue, wed, thu, fri, sat, sun, current-week, last-week, current-month, and last-month cannot be combined with from or to")
+		return errors.New("today, yesterday, tomorrow, mon, tue, wed, thu, fri, sat, sun, current-week, last-week, current-month, and last-month cannot be combined with from or to")
 	}
 	return nil
 }
@@ -179,6 +186,7 @@ func countWeekdaySelections(selection DateWindowSelection) int {
 func hasNonWeekdayDateWindowSelection(selection DateWindowSelection) bool {
 	return selection.Today ||
 		selection.Yesterday ||
+		selection.Tomorrow ||
 		selection.CurrentWeek ||
 		selection.LastWeek ||
 		selection.CurrentMonth ||

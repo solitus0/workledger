@@ -28,6 +28,7 @@ type ContextInput struct {
 	Issues        []string
 	Today         bool
 	Yesterday     bool
+	Tomorrow      bool
 	Monday        bool
 	Tuesday       bool
 	Wednesday     bool
@@ -357,6 +358,7 @@ func normalizeContextFiltersAt(cfg config.EffectiveConfig, input ContextInput, n
 	from, to, err := ResolveDateWindowSelectionAt(cfg, DateWindowSelection{
 		Today:         input.Today,
 		Yesterday:     input.Yesterday,
+		Tomorrow:      input.Tomorrow,
 		Monday:        input.Monday,
 		Tuesday:       input.Tuesday,
 		Wednesday:     input.Wednesday,

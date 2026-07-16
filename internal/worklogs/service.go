@@ -63,6 +63,7 @@ type ListFilters struct {
 	IssuePrefix   string
 	Today         bool
 	Yesterday     bool
+	Tomorrow      bool
 	Monday        bool
 	Tuesday       bool
 	Wednesday     bool
@@ -103,6 +104,7 @@ type AddInput struct {
 	Fill          bool
 	Today         bool
 	Yesterday     bool
+	Tomorrow      bool
 	Monday        bool
 	Tuesday       bool
 	Wednesday     bool
@@ -344,6 +346,7 @@ func (s *Service) prepareAutomaticAddCandidates(cfg config.EffectiveConfig, inpu
 	filters, err := normalizeContextFiltersAt(cfg, ContextInput{
 		Today:         input.Today,
 		Yesterday:     input.Yesterday,
+		Tomorrow:      input.Tomorrow,
 		Monday:        input.Monday,
 		Tuesday:       input.Tuesday,
 		Wednesday:     input.Wednesday,
@@ -633,6 +636,7 @@ func placementCount(input AddInput) int {
 func hasAutomaticPlacementOnlyAddFlags(input AddInput) bool {
 	return input.Today ||
 		input.Yesterday ||
+		input.Tomorrow ||
 		input.Monday ||
 		input.Tuesday ||
 		input.Wednesday ||
@@ -810,6 +814,7 @@ func normalizeListFiltersAt(cfg config.EffectiveConfig, filters ListFilters, all
 	from, to, err := ResolveDateWindowSelectionAt(cfg, DateWindowSelection{
 		Today:         filters.Today,
 		Yesterday:     filters.Yesterday,
+		Tomorrow:      filters.Tomorrow,
 		Monday:        filters.Monday,
 		Tuesday:       filters.Tuesday,
 		Wednesday:     filters.Wednesday,
@@ -870,6 +875,7 @@ func hasListTimeSelector(filters ListFilters) bool {
 	return HasDateWindowSelection(DateWindowSelection{
 		Today:        filters.Today,
 		Yesterday:    filters.Yesterday,
+		Tomorrow:     filters.Tomorrow,
 		Monday:       filters.Monday,
 		Tuesday:      filters.Tuesday,
 		Wednesday:    filters.Wednesday,

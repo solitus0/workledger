@@ -103,6 +103,7 @@ Use one date selector per command unless the command accepts an explicit `--from
 | --- | --- |
 | `--today` | Current local day. |
 | `--yesterday` | Previous local day. |
+| `--tomorrow` | Next local day. |
 | `--mon` through `--sun` | One day in the current local Monday-through-Sunday week. |
 | `--current-week` | Current local Monday-through-Sunday week. |
 | `--last-week` | Previous local Monday-through-Sunday week. |

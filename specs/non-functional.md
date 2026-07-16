@@ -142,7 +142,7 @@ Placement rule:
 - [ ] NFR-114: `started_at_utc` shall be a default field in active-worklog JSON output.
 - [ ] NFR-115: Active-worklog JSON `started_at` values shall render in the effective local timezone as RFC3339 with an explicit offset.
 - [ ] NFR-116: `local_timezone` shall affect local `started_at` input resolution for worklog writes.
-- [ ] NFR-117: `local_timezone` shall affect date-based filters such as `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--from`, and `--to`.
+- [ ] NFR-117: `local_timezone` shall affect date-based filters such as `--today`, `--yesterday`, `--tomorrow`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--from`, and `--to`.
 - [ ] NFR-118: `local_timezone` shall affect active-worklog JSON `started_at` rendering and table `WINDOW` rendering.
 - [ ] NFR-119: Date-window selector shortcut flags shall be mutually exclusive with each other.
 - [ ] NFR-120: Date-window selector shortcut flags shall be mutually exclusive with `--from` and `--to`.

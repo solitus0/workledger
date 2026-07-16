@@ -44,7 +44,7 @@ Prefer stdin for `apply`; use files only for debugging or when requested.
 
 ## Date and timestamp grammar
 
-`DATE_WINDOW` is one supported selector: `--today`, `--yesterday`, `--mon` through `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, or `--from DATE --to DATE`. `--week-offset N` is valid only with a weekday selector.
+`DATE_WINDOW` is one supported selector: `--today`, `--yesterday`, `--tomorrow`, `--mon` through `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, or `--from DATE --to DATE`. `--week-offset N` is valid only with a weekday selector.
 
 `DATE` may be `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, `+Nd`, or `-Nd`.
 

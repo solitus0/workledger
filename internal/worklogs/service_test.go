@@ -45,6 +45,27 @@ func TestNormalizeListFiltersAtWeekShortcuts(t *testing.T) {
 	}
 }
 
+func TestNormalizeListFiltersAtRelativeDayShortcuts(t *testing.T) {
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	fixedNow := func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	}
+
+	tomorrow, err := normalizeListFiltersAt(cfg, ListFilters{Tomorrow: true}, false, fixedNow)
+	if err != nil {
+		t.Fatalf("tomorrow filters failed: %v", err)
+	}
+	if tomorrow.From == nil || tomorrow.To == nil {
+		t.Fatal("expected tomorrow bounds")
+	}
+	if got := tomorrow.From.Format(time.RFC3339); got != "2026-05-07T00:00:00Z" {
+		t.Fatalf("unexpected tomorrow from %s", got)
+	}
+	if got := tomorrow.To.Format(time.RFC3339); got != "2026-05-07T23:59:59Z" {
+		t.Fatalf("unexpected tomorrow to %s", got)
+	}
+}
+
 func TestNormalizeListFiltersAtWeekdayShortcuts(t *testing.T) {
 	cfg := config.EffectiveConfig{Location: time.UTC}
 	fixedNow := func() time.Time {
@@ -280,6 +301,7 @@ func TestNormalizeListFiltersAtRejectsInvalidWeekOffsetUsage(t *testing.T) {
 		{WeekOffset: -1, WeekOffsetSet: true},
 		{Monday: true, Tuesday: true, WeekOffset: -1, WeekOffsetSet: true},
 		{Today: true, WeekOffset: -1, WeekOffsetSet: true},
+		{Tomorrow: true, WeekOffset: -1, WeekOffsetSet: true},
 		{From: "2026-05-01", To: "2026-05-01", WeekOffset: -1, WeekOffsetSet: true},
 	}
 
@@ -301,6 +323,9 @@ func TestNormalizeListFiltersAtAcceptsMonthSelectorAsExplicitTimeSelector(t *tes
 	}
 	if !hasListTimeSelector(ListFilters{Friday: true}) {
 		t.Fatal("expected friday to count as explicit selector")
+	}
+	if !hasListTimeSelector(ListFilters{Tomorrow: true}) {
+		t.Fatal("expected tomorrow to count as explicit selector")
 	}
 	_, err := normalizeListFiltersAt(cfg, ListFilters{CurrentMonth: true, From: "2026-05-01"}, false, time.Now)
 	if err == nil {

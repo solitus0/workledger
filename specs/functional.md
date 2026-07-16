@@ -129,9 +129,9 @@ Placement rule:
 - [ ] FUNC-104: `workledger totals --details` shall not change JSON output.
 
 ## Worklog Selectors
-- [ ] FUNC-105: Date-window selectors shall support `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
+- [ ] FUNC-105: Date-window selectors shall support `--today`, `--yesterday`, `--tomorrow`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
 - [ ] FUNC-105a: Shared date-window selectors shall support `--week-offset <int>` only as a modifier for exactly one selected weekday selector from `--mon` through `--sun`.
-- [ ] FUNC-106: Active-worklog selectors shall support `--issue`, `--issue-prefix`, `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
+- [ ] FUNC-106: Active-worklog selectors shall support `--issue`, `--issue-prefix`, `--today`, `--yesterday`, `--tomorrow`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, and `--to`.
 - [ ] FUNC-107: Active-worklog selectors shall support at most one `--issue` filter value per invocation.
 - [ ] FUNC-107a: Active-worklog selectors shall support at most one `--issue-prefix` filter value per invocation.
 - [ ] FUNC-109: `--fields` shall accept a comma-separated ordered subset of the selected record shape.
@@ -165,7 +165,7 @@ Placement rule:
 - [ ] FUNC-141: `workledger worklogs add --force` shall allow the operator to bypass duplicate or overlap rejection explicitly.
 - [ ] FUNC-141a: `workledger worklogs add --dry` shall validate and preview one would-be local worklog without writing it.
 - [ ] FUNC-141b: `workledger worklogs add --dry` shall use the same normalization, duplicate validation, overlap validation, and `--force` behavior as executed `worklogs add`.
-- [ ] FUNC-141c: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall reuse the `worklogs context` date-window selectors and workday-analysis inputs: `--today`, `--yesterday`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, `--to`, `--day-start`, `--day-end`, `--lunch`, and `--no-lunch`.
+- [ ] FUNC-141c: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall reuse the `worklogs context` date-window selectors and workday-analysis inputs: `--today`, `--yesterday`, `--tomorrow`, `--mon`, `--tue`, `--wed`, `--thu`, `--fri`, `--sat`, `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, `--from`, `--to`, `--day-start`, `--day-end`, `--lunch`, and `--no-lunch`.
 - [ ] FUNC-141d: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall apply `--week-offset` with the same weekday-only validation and week-shift semantics as `worklogs context`.
 - [ ] FUNC-141e: `workledger worklogs add --fit` and `workledger worklogs add --fill` without an explicit date selector shall search the current local day.
 - [ ] FUNC-141f: `workledger worklogs add --fit` shall search selected dates in ascending order, choose the earliest continuous free slot that contains the full requested duration, and create exactly one worklog.
