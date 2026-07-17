@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `--tomorrow` as a shared date-window selector for CLI workflows, resolving to the next day in the configured local timezone.
+
 ## [0.1.8] - 2026-07-02
 
 ### Changed
