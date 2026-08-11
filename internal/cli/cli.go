@@ -36,14 +36,14 @@ const listDescriptionMaxWidth = 80
 var Version = "dev"
 
 const (
-	dateSelectorHelp       = "Date selector: YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd"
+	dateSelectorHelp       = "Date selector: YYYY-MM-DD, today, yesterday, tomorrow, mon, tue, wed, thu, fri, sat, sun, +Nd, or -Nd"
 	fromDateHelp           = "From " + dateSelectorHelp + ", e.g. 2026-05-14 or -7d"
 	toDateHelp             = "To " + dateSelectorHelp + ", e.g. 2026-05-14 or today"
-	localTimestampHelp     = "Local started timestamp: YYYY-MM-DDTHH:MM, todayTHH:MM, yesterdayTHH:MM, tomorrowTHH:MM, +NdTHH:MM, or -NdTHH:MM"
+	localTimestampHelp     = "Local started timestamp: YYYY-MM-DDTHH:MM, todayTHH:MM, yesterdayTHH:MM, tomorrowTHH:MM, monTHH:MM, tueTHH:MM, wedTHH:MM, thuTHH:MM, friTHH:MM, satTHH:MM, sunTHH:MM, +NdTHH:MM, or -NdTHH:MM"
 	utcTimestampHelp       = "UTC started timestamp in RFC3339, e.g. 2026-05-14T09:00:00Z"
 	clockHelp              = "Clock time in HH:MM, e.g. 09:00"
 	lunchWindowHelp        = "Lunch exclusion window in HH:MM-HH:MM, e.g. 12:00-13:00"
-	worklogsAddExample     = "  workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started-utc 2026-05-14T09:00:00Z --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --fit --today --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --fill --today --duration 2h --description \"Implement reconciliation\""
+	worklogsAddExample     = "  workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started monT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started-utc 2026-05-14T09:00:00Z --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --fit --today --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --fill --today --duration 2h --description \"Implement reconciliation\""
 	worklogsUpdateExample  = "  workledger worklogs update <id> --started 2026-05-14T09:00 --duration 1h30m\n  workledger worklogs update <id> --started-utc 2026-05-14T09:00:00Z"
 	worklogsContextExample = "  workledger worklogs context --today --day-start 09:00 --day-end 17:30\n  workledger worklogs context --from 2026-05-14 --to 2026-05-14 --lunch 12:00-13:00"
 	worklogsApplyExample   = "  workledger worklogs apply --file payload.json\n  workledger worklogs apply --stdin\n\nPayload timestamps:\n  started_at uses the same local timestamp grammar as --started\n  started_at_utc uses RFC3339 UTC, e.g. 2026-05-14T09:00:00Z"

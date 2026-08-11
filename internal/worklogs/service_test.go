@@ -10,6 +10,150 @@ import (
 	sqlitestore "github.com/solitus0/workledger/internal/store/sqlite"
 )
 
+func TestParseDateSelectorAtSupportsSemanticWeekdays(t *testing.T) {
+	fixedNow := func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	}
+	tests := []struct {
+		selector string
+		want     string
+	}{
+		{selector: "mon", want: "2026-05-04T00:00:00Z"},
+		{selector: "tue", want: "2026-05-05T00:00:00Z"},
+		{selector: "wed", want: "2026-05-06T00:00:00Z"},
+		{selector: "thu", want: "2026-05-07T00:00:00Z"},
+		{selector: "fri", want: "2026-05-08T00:00:00Z"},
+		{selector: "sat", want: "2026-05-09T00:00:00Z"},
+		{selector: "sun", want: "2026-05-10T00:00:00Z"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.selector, func(t *testing.T) {
+			got, err := parseDateSelectorAt(tc.selector, time.UTC, fixedNow)
+			if err != nil {
+				t.Fatalf("parse date selector: %v", err)
+			}
+			if formatted := got.Format(time.RFC3339); formatted != tc.want {
+				t.Fatalf("expected %s, got %s", tc.want, formatted)
+			}
+		})
+	}
+}
+
+func TestParseSemanticWeekdayUsesEffectiveLocalWeek(t *testing.T) {
+	location, err := time.LoadLocation("Europe/Vilnius")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	fixedNow := func() time.Time {
+		return time.Date(2026, 5, 10, 22, 30, 0, 0, time.UTC)
+	}
+
+	date, err := parseDateSelectorAt("sun", location, fixedNow)
+	if err != nil {
+		t.Fatalf("parse date selector: %v", err)
+	}
+	if got := date.Format(time.RFC3339); got != "2026-05-17T00:00:00+03:00" {
+		t.Fatalf("expected Sunday in the Vilnius local week, got %s", got)
+	}
+
+	started, err := parseLocalTimestampAt("sunT08:00", location, fixedNow)
+	if err != nil {
+		t.Fatalf("parse local timestamp: %v", err)
+	}
+	if got := started.Format(time.RFC3339); got != "2026-05-17T05:00:00Z" {
+		t.Fatalf("expected local Sunday timestamp in UTC, got %s", got)
+	}
+}
+
+func TestParseLocalTimestampPreservesDSTValidation(t *testing.T) {
+	location, err := time.LoadLocation("Europe/Vilnius")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+
+	if _, err := parseLocalTimestampAt("2026-03-29T03:30", location, time.Now); err == nil || err.Error() != "local time does not exist in the effective timezone" {
+		t.Fatalf("expected nonexistent local time error, got %v", err)
+	}
+	if _, err := parseLocalTimestampAt("2026-10-25T03:30", location, time.Now); err == nil || err.Error() != "local time is ambiguous in the effective timezone" {
+		t.Fatalf("expected ambiguous local time error, got %v", err)
+	}
+}
+
+func TestParseDateSelectorAtUsesCanonicalFormatError(t *testing.T) {
+	want := "date must use YYYY-MM-DD, today, yesterday, tomorrow, mon, tue, wed, thu, fri, sat, sun, +Nd, or -Nd"
+	for _, value := range []string{"monday", "Mon", "+xd", "2026-02-30"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := parseDateSelectorAt(value, time.UTC, time.Now)
+			if err == nil || err.Error() != want {
+				t.Fatalf("expected %q, got %v", want, err)
+			}
+		})
+	}
+}
+
+func TestNormalizeListFiltersAtSupportsSemanticWeekdayRange(t *testing.T) {
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	fixedNow := func() time.Time {
+		return time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	}
+
+	effective, err := normalizeListFiltersAt(cfg, ListFilters{From: "mon", To: "fri"}, false, fixedNow)
+	if err != nil {
+		t.Fatalf("normalize weekday range: %v", err)
+	}
+	if got := effective.From.Format(time.RFC3339); got != "2026-05-04T00:00:00Z" {
+		t.Fatalf("unexpected range start %s", got)
+	}
+	if got := effective.To.Format(time.RFC3339); got != "2026-05-08T23:59:59Z" {
+		t.Fatalf("unexpected range end %s", got)
+	}
+}
+
+func TestSemanticWeekdayTimestampWorksAcrossWritePaths(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{Location: time.UTC, MinimumDurationSeconds: 900}
+
+	added, err := service.Add(cfg, AddInput{
+		IssueKey:    "ABC-123",
+		Started:     "monT08:00",
+		Duration:    "30m",
+		Description: "Semantic add",
+	})
+	if err != nil {
+		t.Fatalf("add with semantic weekday: %v", err)
+	}
+	if got := added.Records[0].StartedAtUTC; got.Weekday() != time.Monday || got.Format("15:04") != "08:00" {
+		t.Fatalf("unexpected add timestamp %s", got.Format(time.RFC3339))
+	}
+
+	updatedStarted := "monT09:00"
+	updated, err := service.Update(cfg, added.Records[0].ID, PatchInput{Started: &updatedStarted})
+	if err != nil {
+		t.Fatalf("update with semantic weekday: %v", err)
+	}
+	if got := updated.StartedAtUTC; got.Weekday() != time.Monday || got.Format("15:04") != "09:00" {
+		t.Fatalf("unexpected update timestamp %s", got.Format(time.RFC3339))
+	}
+
+	batchStarted := "monT10:00"
+	durationSeconds := 1800
+	applied, err := service.Apply(cfg, RawApplyPayload{Adds: []RawApplyAdd{{
+		IssueKey:        "ABC-124",
+		StartedAt:       &batchStarted,
+		DurationSeconds: &durationSeconds,
+		Description:     "Semantic batch",
+	}}}, false, true)
+	if err != nil {
+		t.Fatalf("apply with semantic weekday: %v", err)
+	}
+	if got := applied.Records[0].StartedAtUTC; got.Weekday() != time.Monday || got.Format("15:04") != "10:00" {
+		t.Fatalf("unexpected batch timestamp %s", got.Format(time.RFC3339))
+	}
+}
+
 func TestNormalizeListFiltersAtWeekShortcuts(t *testing.T) {
 	cfg := config.EffectiveConfig{Location: time.UTC}
 	fixedNow := func() time.Time {

@@ -146,7 +146,7 @@ Placement rule:
 - [ ] NFR-118: `local_timezone` shall affect active-worklog JSON `started_at` rendering and table `WINDOW` rendering.
 - [ ] NFR-119: Date-window selector shortcut flags shall be mutually exclusive with each other.
 - [ ] NFR-120: Date-window selector shortcut flags shall be mutually exclusive with `--from` and `--to`.
-- [ ] NFR-121: `--from` and `--to` shall accept `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, and signed day offsets in `+Nd` or `-Nd` form.
+- [ ] NFR-121: `--from` and `--to` shall accept `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun`, and signed day offsets in `+Nd` or `-Nd` form.
 - [ ] NFR-122: Week ranges shall be Monday-through-Sunday calendar weeks in the effective local timezone.
 - [ ] NFR-123: `--current-week` shall expand to the start of the current local Monday and the end of the current local Sunday.
 - [ ] NFR-124: `--last-week` shall expand to the start of the previous local Monday and the end of the previous local Sunday.
@@ -160,7 +160,7 @@ Placement rule:
 - [ ] NFR-130: Explicit range option order shall be ignored.
 - [ ] NFR-131: When both `--from` and `--to` are set, the earlier expanded bound shall be the effective start and the later expanded bound shall be the effective end.
 - [ ] NFR-132: Expanded date windows shall convert to canonical UTC query boundaries before querying storage.
-- [ ] NFR-133: Local worklog `--started` shall accept `YYYY-MM-DDTHH:MM`, `todayTHH:MM`, `yesterdayTHH:MM`, `tomorrowTHH:MM`, and signed day offsets in `+NdTHH:MM` or `-NdTHH:MM` form.
+- [ ] NFR-133: Local worklog `--started` shall accept `YYYY-MM-DDTHH:MM`, `todayTHH:MM`, `yesterdayTHH:MM`, `tomorrowTHH:MM`, `monTHH:MM`, `tueTHH:MM`, `wedTHH:MM`, `thuTHH:MM`, `friTHH:MM`, `satTHH:MM`, `sunTHH:MM`, and signed day offsets in `+NdTHH:MM` or `-NdTHH:MM` form.
 - [ ] NFR-134: Local worklog `--started` shall resolve local civil time in `local_timezone` when configured.
 - [ ] NFR-135: Local worklog `--started` shall resolve local civil time in the system local timezone when `local_timezone` is absent.
 - [ ] NFR-136: `--started-utc` shall accept an explicit UTC RFC3339 timestamp only.

@@ -88,6 +88,7 @@ func TestHelpShowsAcceptedDateFormatsAndExamples(t *testing.T) {
 			args: []string{"worklogs", "add", "--help"},
 			contains: []string{
 				"Local started timestamp: YYYY-MM-DDTHH:MM",
+				"monTHH:MM, tueTHH:MM, wedTHH:MM",
 				"UTC started timestamp in RFC3339",
 				"workledger worklogs add --issue PROJ-123 --started todayT09:00",
 				"Date filter modifiers:",
@@ -99,6 +100,7 @@ func TestHelpShowsAcceptedDateFormatsAndExamples(t *testing.T) {
 			args: []string{"worklogs", "context", "--help"},
 			contains: []string{
 				"From Date selector: YYYY-MM-DD",
+				"mon, tue, wed, thu, fri, sat, sun",
 				"Clock time in HH:MM, e.g. 09:00",
 				"Lunch exclusion window in HH:MM-HH:MM",
 				"Weekday filters:",
@@ -184,6 +186,46 @@ func TestWorklogsAddRejectsFullISOLocalTimestampWithExplicitFormatHint(t *testin
 	}
 	if !strings.Contains(result.stdout, "time must use HH:MM, e.g. 09:00") {
 		t.Fatalf("expected explicit HH:MM hint, got stdout=%s stderr=%s", result.stdout, result.stderr)
+	}
+}
+
+func TestWorklogsAddSupportsSemanticWeekdayStarted(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	result := runCLI(t, "worklogs", "add", "--issue", "APPS-993", "--started", "monT08:00", "--duration", "60m", "--description", "daily gcp metrics / logs monitor", "--output", "json")
+	if result.code != 0 {
+		t.Fatalf("semantic weekday add failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(result.stdout))
+	startedAt, err := time.Parse(time.RFC3339, payload["started_at"].(string))
+	if err != nil {
+		t.Fatalf("parse started_at: %v", err)
+	}
+	if startedAt.Weekday() != time.Monday || startedAt.Format("15:04") != "08:00" {
+		t.Fatalf("unexpected semantic weekday timestamp %s", startedAt.Format(time.RFC3339))
+	}
+}
+
+func TestWorklogsAddSemanticWeekdayErrorListsAcceptedGrammar(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+
+	result := runCLI(t, "worklogs", "add", "--issue", "APPS-993", "--started", "nondayT08:00", "--duration", "60m", "--description", "Invalid weekday", "--output", "json")
+	if result.code != 2 {
+		t.Fatalf("expected validation error, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	want := "date must use YYYY-MM-DD, today, yesterday, tomorrow, mon, tue, wed, thu, fri, sat, sun, +Nd, or -Nd"
+	if !strings.Contains(result.stdout, want) {
+		t.Fatalf("expected semantic date grammar %q, got stdout=%s stderr=%s", want, result.stdout, result.stderr)
 	}
 }
 

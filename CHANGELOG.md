@@ -9,6 +9,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 - `--tomorrow` as a shared date-window selector for CLI workflows, resolving to the next day in the configured local timezone.
+- Semantic weekday date values from `mon` through `sun` for local timestamps and explicit date ranges, resolving inside the current local Monday-through-Sunday week.
 
 ## [0.1.8] - 2026-07-02
 

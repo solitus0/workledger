@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,8 +27,8 @@ var (
 )
 
 const (
-	dateSelectorFormatMessage   = "date must use YYYY-MM-DD, today, yesterday, tomorrow, +Nd, or -Nd"
-	localTimestampFormatMessage = "started must use YYYY-MM-DDTHH:MM, todayTHH:MM, yesterdayTHH:MM, tomorrowTHH:MM, +NdTHH:MM, or -NdTHH:MM (time must use HH:MM, e.g. 09:00)"
+	dateSelectorFormatMessage   = "date must use YYYY-MM-DD, today, yesterday, tomorrow, mon, tue, wed, thu, fri, sat, sun, +Nd, or -Nd"
+	localTimestampFormatMessage = "started must use YYYY-MM-DDTHH:MM, todayTHH:MM, yesterdayTHH:MM, tomorrowTHH:MM, monTHH:MM, tueTHH:MM, wedTHH:MM, thuTHH:MM, friTHH:MM, satTHH:MM, sunTHH:MM, +NdTHH:MM, or -NdTHH:MM (time must use HH:MM, e.g. 09:00)"
 	timeClockFormatMessage      = "time must use HH:MM, e.g. 09:00"
 	startedUTCFormatMessage     = "started_utc must use RFC3339 UTC, e.g. 2026-05-14T09:00:00Z"
 )
@@ -947,12 +948,16 @@ func parseStartedAt(cfg config.EffectiveConfig, localValue, utcValue string) (ti
 }
 
 func parseLocalTimestamp(value string, location *time.Location) (time.Time, error) {
+	return parseLocalTimestampAt(value, location, time.Now)
+}
+
+func parseLocalTimestampAt(value string, location *time.Location, now func() time.Time) (time.Time, error) {
 	parts := strings.Split(value, "T")
 	if len(parts) != 2 {
 		return time.Time{}, errors.New(localTimestampFormatMessage)
 	}
 
-	dateValue, err := parseDateSelector(parts[0], location)
+	dateValue, err := parseDateSelectorAt(parts[0], location, now)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -994,10 +999,6 @@ func matchingLocalCandidates(year int, month time.Month, day, hour, minute int, 
 	return candidates
 }
 
-func parseDateSelector(value string, location *time.Location) (time.Time, error) {
-	return parseDateSelectorAt(value, location, time.Now)
-}
-
 func parseDateSelectorAt(value string, location *time.Location, now func() time.Time) (time.Time, error) {
 	switch value {
 	case "today":
@@ -1007,11 +1008,15 @@ func parseDateSelectorAt(value string, location *time.Location, now func() time.
 	case "tomorrow":
 		return now().In(location).AddDate(0, 0, 1), nil
 	}
+	if weekday, ok := semanticWeekday(value); ok {
+		start, _ := weekdayBounds(now().In(location), weekday, location)
+		return start, nil
+	}
 
 	if strings.HasSuffix(value, "d") && (strings.HasPrefix(value, "+") || strings.HasPrefix(value, "-")) {
-		offset := 0
-		if _, err := fmt.Sscanf(strings.TrimSuffix(value, "d"), "%d", &offset); err != nil {
-			return time.Time{}, errors.New("invalid relative day offset")
+		offset, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
+		if err != nil {
+			return time.Time{}, errors.New(dateSelectorFormatMessage)
 		}
 		return now().In(location).AddDate(0, 0, offset), nil
 	}
@@ -1022,6 +1027,27 @@ func parseDateSelectorAt(value string, location *time.Location, now func() time.
 	}
 
 	return parsed, nil
+}
+
+func semanticWeekday(value string) (time.Weekday, bool) {
+	switch value {
+	case "mon":
+		return time.Monday, true
+	case "tue":
+		return time.Tuesday, true
+	case "wed":
+		return time.Wednesday, true
+	case "thu":
+		return time.Thursday, true
+	case "fri":
+		return time.Friday, true
+	case "sat":
+		return time.Saturday, true
+	case "sun":
+		return time.Sunday, true
+	default:
+		return 0, false
+	}
 }
 
 func dayBounds(date time.Time, location *time.Location) (time.Time, time.Time) {

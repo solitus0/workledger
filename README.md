@@ -67,7 +67,7 @@ workledger worklogs add --issue PROJ-123 --fill --tue --duration 3h --descriptio
 
 ![Worklog placement modes: --fit vs --fill](docs/images/fill_v_fit.png)
 
-`--started` accepts local timestamps such as `2026-05-14T09:00`, `todayT09:00`, `yesterdayT09:00`, `tomorrowT09:00`, `+2dT09:00`, and `-3dT09:00`.
+`--started` accepts local timestamps such as `2026-05-14T09:00`, `todayT09:00`, `yesterdayT09:00`, `tomorrowT09:00`, `monT09:00`, `+2dT09:00`, and `-3dT09:00`. Weekday names `mon` through `sun` resolve inside the current local Monday-through-Sunday week.
 
 Inspect the current local day:
 
@@ -112,7 +112,7 @@ Use one date selector per command unless the command accepts an explicit `--from
 | `--from <date> --to <date>` | Explicit inclusive local date range. |
 | `--week-offset <n>` | Shift one weekday selector by whole weeks; valid only with `--mon` through `--sun`. |
 
-`--from` and `--to` accept `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, and signed day offsets such as `+2d` or `-3d`.
+`--from` and `--to` accept `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, weekdays `mon` through `sun` in the current local week, and signed day offsets such as `+2d` or `-3d`.
 
 ## Recommended agent workflow
 
