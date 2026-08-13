@@ -144,7 +144,7 @@ func (a *app) newSetupJiraCloudCommand() *cobra.Command {
 	cmd.Flags().StringVar(&params.BaseURL, "base-url", "", "Base URL")
 	cmd.Flags().StringVar(&params.Email, "email", "", "Account email")
 	cmd.Flags().StringVar(&params.TokenEnv, "token-env", "", "Token env var name")
-	cmd.Flags().StringArrayVar(&params.IssuePrefixes, "issue-prefix", nil, "Owned issue prefix")
+	cmd.Flags().StringArrayVar(&params.IssuePrefixes, "issue-prefix", nil, "Jira project key used to route issues to this instance (for example, PROJ for PROJ-123)")
 	return cmd
 }
 
@@ -190,7 +190,7 @@ func (a *app) newSetupJiraDataCommand() *cobra.Command {
 	cmd.Flags().StringVar(&params.Instance, "instance", "", "Instance name")
 	cmd.Flags().StringVar(&params.BaseURL, "base-url", "", "Base URL")
 	cmd.Flags().StringVar(&params.TokenEnv, "token-env", "", "Token env var name")
-	cmd.Flags().StringArrayVar(&params.IssuePrefixes, "issue-prefix", nil, "Owned issue prefix")
+	cmd.Flags().StringArrayVar(&params.IssuePrefixes, "issue-prefix", nil, "Jira project key used to route issues to this instance (for example, OPS for OPS-42)")
 	return cmd
 }
 

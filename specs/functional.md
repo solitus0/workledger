@@ -66,6 +66,9 @@ Placement rule:
 - [ ] FUNC-043: `workledger config` shall return a JSON error payload with all discovered validation errors on failure in JSON output.
 - [ ] FUNC-044: `workledger setup jira-cloud` shall append one Jira Cloud instance block to an existing valid local config.
 - [ ] FUNC-045: `workledger setup jira-cloud` shall accept `--instance`, `--base-url`, `--email`, `--token-env`, and repeated `--issue-prefix`.
+- [ ] FUNC-045a: Jira Cloud and Jira Data Center setup shall require at least one `--issue-prefix`, where each value is the project-key portion before the dash in an issue key, such as `PROJ` in `PROJ-123`.
+- [ ] FUNC-045b: Jira setup documentation and command help shall explain in plain language that `--issue-prefix` creates the default routing rule used to decide which configured Jira instance owns an issue; it is not a setup-time filter or display label.
+- [ ] FUNC-045c: Jira Cloud setup shall write every `--issue-prefix` value to `jira_cloud.instances.<instance>.routing.profiles.default.issue_prefixes`.
 - [ ] FUNC-046: `workledger setup jira-cloud` shall fail when the target instance name already exists.
 - [ ] FUNC-047: `workledger setup jira-cloud` table output shall print an `export <token-env>=...` hint.
 - [ ] FUNC-048: `workledger setup jira-cloud` table output shall print `workledger status` after the export hint.

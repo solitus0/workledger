@@ -142,15 +142,25 @@ writable_roots = [
 Run setup commands to add adapters to the local YAML config:
 
 ```sh
-workledger setup jira-cloud
-workledger setup jira-data-center
+workledger setup jira-cloud --instance main --base-url https://example.atlassian.net --email user@example.com --token-env JIRA_TOKEN --issue-prefix PROJ
+workledger setup jira-data-center --instance internal --base-url https://jira.example.com --token-env JIRA_DC_TOKEN --issue-prefix OPS
 workledger setup clockify
 ```
+
+For Jira, `--issue-prefix` is the project key at the start of an issue key: use `PROJ` for issues such as `PROJ-123`. Workledger needs it for routing—it tells Workledger which configured Jira instance owns those issues. Without that mapping, Workledger cannot safely decide where a local worklog for `PROJ-123` should be read from or sent.
+
+Pass `--issue-prefix` once for each Jira project handled by the instance:
+
+```sh
+workledger setup jira-cloud ... --issue-prefix PROJ --issue-prefix APP
+```
+
+This does not filter Jira during setup and it is not a display label. It creates the instance's default routing rules. Choose only prefixes that belong to that instance; the same prefix cannot be owned by two instances in the same Jira family.
 
 Each setup command can prompt interactively or accept flags. Use command help for exact inputs:
 
 ```sh
-workledger setup clockify --help
+workledger setup jira-cloud --help
 ```
 
 ## Output and failure model

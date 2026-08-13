@@ -22,6 +22,14 @@ workledger setup jira-cloud --instance main --base-url https://example.atlassian
 
 Use for Atlassian Cloud with email + API token.
 
+`--issue-prefix` is required for routing. It is the project key before the dash in a Jira issue key: `PROJ` for `PROJ-123`. It tells Workledger that issues beginning with `PROJ-` belong to the `main` Jira instance, so later reads, totals, and sync plans can select the correct Jira destination. It does not filter anything during setup and is not a display label.
+
+If one instance handles several Jira projects, repeat the flag:
+
+```text
+workledger setup jira-cloud --instance main --base-url https://example.atlassian.net --email user@example.com --token-env JIRA_TOKEN --issue-prefix PROJ --issue-prefix APP
+```
+
 ### Jira Data Center
 
 ```text
@@ -29,6 +37,8 @@ workledger setup jira-data-center --instance dc --base-url https://jira.example.
 ```
 
 Use for self-hosted Jira with token auth and no Cloud email/API-token pairing.
+
+The same routing rule applies: `--issue-prefix OPS` tells Workledger that issue keys such as `OPS-42` belong to the `dc` Jira instance. Repeat `--issue-prefix` for every Jira project owned by that instance.
 
 ### Clockify
 
@@ -57,6 +67,14 @@ workledger clockify mappings validate
 ```
 
 Use a real issue key for `route explain` when possible.
+
+After Jira setup, explain the expected result in plain language and verify it:
+
+```text
+workledger route explain PROJ-123
+```
+
+The result should identify the Jira family and instance configured with `--issue-prefix PROJ`. If it is unmatched, add the missing project prefix to the correct instance. If it is ambiguous, remove the duplicate ownership rather than guessing which instance should receive worklogs.
 
 ## Troubleshooting map
 
