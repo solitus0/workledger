@@ -420,6 +420,8 @@ Placement rule:
 ## Architecture
 - [ ] NFR-365: The CLI implementation shall use Cobra for root, group, and leaf command construction.
 - [ ] NFR-366: The root command shall not expose Cobra's default `completion` command.
+- [ ] NFR-366a: Workledger-owned completion generation and callbacks shall use Cobra's native completion APIs.
+- [ ] NFR-366b: Dynamic completion shall be bounded, local-only, read-only, non-interactive, and shall never contact remote adapters or create or repair SQLite storage.
 - [ ] NFR-367: Business logic shall remain outside Cobra commands.
 - [ ] NFR-368: `cmd/workledger` shall be used for process startup and dependency wiring only.
 - [ ] NFR-369: `internal/cli` shall own flag parsing helpers, rendering, confirmation, and exit code mapping.

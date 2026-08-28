@@ -27,6 +27,11 @@ Placement rule:
 - [ ] FUNC-011: `workledger version` shall return the application version without requiring config presence.
 - [ ] FUNC-012: `workledger --version` shall behave like `workledger version`.
 - [ ] FUNC-013: `workledger -v` shall behave like `workledger version`.
+- [ ] FUNC-013a: Root help shall expose a Workledger-owned `completion` command.
+- [ ] FUNC-013b: `workledger completion` shall generate scripts only for `bash`, `zsh`, and `fish`; PowerShell shall not be supported or advertised.
+- [ ] FUNC-013c: Completion script generation shall write the generated script to stdout and shall not require config or initialized SQLite storage.
+- [ ] FUNC-013e: Shell completion shall suggest fixed CLI enum values plus locally known worklog IDs, plan IDs, issue keys, configured adapter instances, and configured Jira route profiles where relevant.
+- [ ] FUNC-013f: Missing or invalid local config or storage shall suppress only affected dynamic completion candidates without emitting an operator-facing error.
 
 ## Workspace Bootstrap
 - [ ] FUNC-014: `workledger init` shall prepare the local config path.

@@ -276,7 +276,7 @@ func (a *app) newRootCommand() *cobra.Command {
 
 	root.PersistentFlags().String("output", "", "Output mode: table or json")
 	root.Flags().BoolVarP(&showVersion, "version", "v", false, "Print version")
-	root.CompletionOptions.HiddenDefaultCmd = true
+	root.CompletionOptions.DisableDefaultCmd = true
 
 	root.AddCommand(a.newVersionCommand())
 	root.AddCommand(a.newInitCommand())
@@ -291,6 +291,8 @@ func (a *app) newRootCommand() *cobra.Command {
 	root.AddCommand(a.newClockifyCommand())
 	root.AddCommand(a.newIssueMetadataCommand())
 	root.AddCommand(a.newPlanCommand())
+	root.AddCommand(a.newCompletionCommand())
+	a.configureCompletions(root)
 
 	return root
 }

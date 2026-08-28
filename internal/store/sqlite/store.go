@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,6 +242,37 @@ func OpenExisting(path string) (*Store, error) {
 		return nil, wrapOpenExistingError(path, err)
 	}
 
+	if err := store.validateSchemaCompatibility(); err != nil {
+		_ = db.Close()
+		return nil, wrapOpenExistingError(path, err)
+	}
+
+	return store, nil
+}
+
+// OpenExistingReadOnly opens and validates an existing store without allowing
+// schema repair or data mutation. It is intended for advisory readers such as
+// shell completion.
+func OpenExistingReadOnly(path string) (*Store, error) {
+	if !fileExists(path) {
+		return nil, os.ErrNotExist
+	}
+
+	dsn := (&url.URL{
+		Scheme:   "file",
+		Path:     path,
+		RawQuery: "mode=ro",
+	}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	store := &Store{db: db}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, wrapOpenExistingError(path, err)
+	}
 	if err := store.validateSchemaCompatibility(); err != nil {
 		_ = db.Close()
 		return nil, wrapOpenExistingError(path, err)

@@ -256,6 +256,63 @@ func TestOpenExistingRejectsSchemaMissingSavedPlanItemDeliveryKey(t *testing.T) 
 	}
 }
 
+func TestOpenExistingReadOnlyAllowsQueriesAndRejectsWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+	store, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	if _, err := store.DB().Exec(`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES('one', 'APP-1', '2026-05-01T09:00:00Z', 900, 'seed', '2026-05-01T09:00:00Z', '2026-05-01T09:00:00Z')`); err != nil {
+		store.Close()
+		t.Fatalf("seed worklog: %v", err)
+	}
+	_ = store.Close()
+
+	readOnly, err := OpenExistingReadOnly(path)
+	if err != nil {
+		t.Fatalf("open read-only: %v", err)
+	}
+	defer readOnly.Close()
+
+	var count int
+	if err := readOnly.DB().QueryRow(`SELECT COUNT(*) FROM worklogs`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("read through read-only store: count=%d err=%v", count, err)
+	}
+	if _, err := readOnly.DB().Exec(`DELETE FROM worklogs`); err == nil {
+		t.Fatal("expected read-only store to reject writes")
+	}
+}
+
+func TestOpenExistingReadOnlyDoesNotCreateOrRepairStorage(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing.db")
+	if _, err := OpenExistingReadOnly(missing); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected missing-file error, got %v", err)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatal("read-only open created a missing database")
+	}
+
+	legacy := filepath.Join(dir, "legacy.db")
+	seedLegacyStoreMissingSavedPlanItemDeliveryKey(t, legacy)
+	if _, err := OpenExistingReadOnly(legacy); err == nil {
+		t.Fatal("expected schema mismatch from read-only open")
+	}
+
+	db, err := sql.Open("sqlite", legacy)
+	if err != nil {
+		t.Fatalf("reopen legacy store: %v", err)
+	}
+	defer db.Close()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('saved_plan_items') WHERE name = 'delivery_key'`).Scan(&count); err != nil {
+		t.Fatalf("inspect legacy schema: %v", err)
+	}
+	if count != 0 {
+		t.Fatal("read-only open repaired the legacy schema")
+	}
+}
+
 func seedLegacyStoreMissingTrashTable(t *testing.T, path string) {
 	t.Helper()
 

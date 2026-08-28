@@ -8,6 +8,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
+- Bash, Zsh, and Fish completion script generation with local, read-only suggestions for command values, configured targets, issue keys, worklog IDs, and saved plan IDs.
 - `--tomorrow` as a shared date-window selector for CLI workflows, resolving to the next day in the configured local timezone.
 - Semantic weekday date values from `mon` through `sun` for local timestamps and explicit date ranges, resolving inside the current local Monday-through-Sunday week.
 

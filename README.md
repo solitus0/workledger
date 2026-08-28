@@ -32,6 +32,40 @@ For local development:
 go run ./cmd/workledger --help
 ```
 
+## Shell completion
+
+Workledger generates completion scripts for Bash, Zsh, and Fish. PowerShell is not supported.
+
+For Zsh, generate the script once:
+
+```sh
+mkdir -p ~/.zfunc
+workledger completion zsh > ~/.zfunc/_workledger
+```
+
+Then ensure `~/.zshrc` initializes that completion directory before `compinit`:
+
+```zsh
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit
+compinit
+```
+
+For Bash, load completion in the current session:
+
+```bash
+source <(workledger completion bash)
+```
+
+For Fish, install the generated script permanently:
+
+```fish
+mkdir -p ~/.config/fish/completions
+workledger completion fish > ~/.config/fish/completions/workledger.fish
+```
+
+Regenerate installed scripts after upgrading to a release that changes commands or flags.
+
 ## First run
 
 ```sh

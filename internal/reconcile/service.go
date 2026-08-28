@@ -1526,7 +1526,20 @@ func (s *Service) LoadPlan(id string) (Plan, error) {
 }
 
 func (s *Service) ListPlans() ([]ListEntry, error) {
-	rows, err := s.store.DB().Query(`
+	return s.listPlansByIDPrefix("", 0)
+}
+
+// ListPlansByIDPrefix returns recent saved plans whose IDs start with prefix.
+// The bounded query is suitable for latency-sensitive advisory readers.
+func (s *Service) ListPlansByIDPrefix(prefix string, limit int) ([]ListEntry, error) {
+	if limit <= 0 {
+		return []ListEntry{}, nil
+	}
+	return s.listPlansByIDPrefix(strings.TrimSpace(prefix), limit)
+}
+
+func (s *Service) listPlansByIDPrefix(prefix string, limit int) ([]ListEntry, error) {
+	query := `
 		SELECT
 			p.id,
 			p.plan_direction,
@@ -1542,8 +1555,21 @@ func (s *Service) ListPlans() ([]ListEntry, error) {
 			COALESCE(SUM(CASE WHEN i.applied_state = 'succeeded' THEN 1 ELSE 0 END), 0)
 		FROM saved_plans p
 		LEFT JOIN saved_plan_items i ON i.plan_id = p.id
+	`
+	args := []any{}
+	if prefix != "" {
+		query += ` WHERE instr(lower(p.id), lower(?)) = 1`
+		args = append(args, prefix)
+	}
+	query += `
 		GROUP BY p.id, p.plan_direction, p.adapter_family, p.adapter_families_json, p.target_instances_json, p.created_at, p.aggregate_status
-		ORDER BY p.created_at DESC, p.id DESC`)
+		ORDER BY p.created_at DESC, p.id DESC`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+
+	rows, err := s.store.DB().Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
