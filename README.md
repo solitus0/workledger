@@ -97,6 +97,12 @@ workledger worklogs add --issue PROJ-123 --fill --from 2026-05-14 --to 2026-05-1
 workledger worklogs add --issue PROJ-123 --fill --tue --duration 3h --description "Prepare release notes"
 ```
 
+Automatic placement starts each worklog before the configured workday end by default, although a worklog that starts before the boundary may finish afterward. Use `--overtime` with `--fit` or `--fill` to allow placement to start at or after the workday end:
+
+```sh
+workledger worklogs add --issue PROJ-123 --fill --today --overtime --duration 2h --description "Handle release follow-up"
+```
+
 ### `--fit` vs `--fill`
 
 ![Worklog placement modes: --fit vs --fill](docs/images/fill_v_fit.png)

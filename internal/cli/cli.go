@@ -43,7 +43,7 @@ const (
 	utcTimestampHelp       = "UTC started timestamp in RFC3339, e.g. 2026-05-14T09:00:00Z"
 	clockHelp              = "Clock time in HH:MM, e.g. 09:00"
 	lunchWindowHelp        = "Lunch exclusion window in HH:MM-HH:MM, e.g. 12:00-13:00"
-	worklogsAddExample     = "  workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started monT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started-utc 2026-05-14T09:00:00Z --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --fit --today --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --fill --today --duration 2h --description \"Implement reconciliation\""
+	worklogsAddExample     = "  workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started monT09:00 --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --started-utc 2026-05-14T09:00:00Z --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --fit --today --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --fill --today --duration 2h --description \"Implement reconciliation\"\n  workledger worklogs add --issue PROJ-123 --fill --today --overtime --duration 2h --description \"Implement reconciliation\""
 	worklogsUpdateExample  = "  workledger worklogs update <id> --started 2026-05-14T09:00 --duration 1h30m\n  workledger worklogs update <id> --started-utc 2026-05-14T09:00:00Z"
 	worklogsContextExample = "  workledger worklogs context --today --day-start 09:00 --day-end 17:30\n  workledger worklogs context --from 2026-05-14 --to 2026-05-14 --lunch 12:00-13:00"
 	worklogsApplyExample   = "  workledger worklogs apply --file payload.json\n  workledger worklogs apply --stdin\n\nPayload timestamps:\n  started_at uses the same local timestamp grammar as --started\n  started_at_utc uses RFC3339 UTC, e.g. 2026-05-14T09:00:00Z"
@@ -1019,6 +1019,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	var startedUTC string
 	var fit bool
 	var fill bool
+	var overtime bool
 	var today bool
 	var yesterday bool
 	var tomorrow bool
@@ -1064,6 +1065,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 				StartedUTC:    startedUTC,
 				Fit:           fit,
 				Fill:          fill,
+				Overtime:      overtime,
 				Today:         today,
 				Yesterday:     yesterday,
 				Tomorrow:      tomorrow,
@@ -1139,6 +1141,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	cmd.Flags().StringVar(&startedUTC, "started-utc", "", utcTimestampHelp)
 	cmd.Flags().BoolVar(&fit, "fit", false, "Place the full duration in the earliest continuous free slot")
 	cmd.Flags().BoolVar(&fill, "fill", false, "Fill the duration across earliest free slots")
+	cmd.Flags().BoolVar(&overtime, "overtime", false, "Allow automatic placement to start at or after workday end")
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,

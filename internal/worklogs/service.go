@@ -103,6 +103,7 @@ type AddInput struct {
 	StartedUTC    string
 	Fit           bool
 	Fill          bool
+	Overtime      bool
 	Today         bool
 	Yesterday     bool
 	Tomorrow      bool
@@ -313,6 +314,9 @@ func (s *Service) prepareAdd(cfg config.EffectiveConfig, input AddInput) (AddRes
 }
 
 func (s *Service) prepareAddCandidates(cfg config.EffectiveConfig, input AddInput) ([]LocalWorklog, error) {
+	if input.Overtime && !input.Fit && !input.Fill {
+		return nil, ValidationError{Issues: []ValidationIssue{{Field: "placement", Message: "overtime requires fit or fill"}}}
+	}
 	if placementCount(input) != 1 {
 		return nil, ValidationError{Issues: []ValidationIssue{{Field: "placement", Message: "provide exactly one of started, started_utc, fit, or fill"}}}
 	}
@@ -383,21 +387,14 @@ func (s *Service) prepareAutomaticAddCandidates(cfg config.EffectiveConfig, inpu
 	}
 
 	selectedDates := selectedContextDates(filters.From, filters.To, cfg.Location)
-	if input.Fit {
-		for _, selectedDate := range selectedDates {
-			plan := buildFitPlanForDate(cfg, selectedDate, window, active, candidateBase)
-			if len(plan) > 0 {
-				return plan, nil
-			}
-		}
-		return nil, noAutomaticPlacementError()
+	plan := buildAutomaticAddPlan(cfg, selectedDates, window, active, candidateBase, input.Fit, input.Overtime)
+	if len(plan) > 0 {
+		return plan, nil
 	}
-
-	plan := buildFillPlanAcrossDates(cfg, selectedDates, window, active, candidateBase)
-	if len(plan) == 0 {
-		return nil, noAutomaticPlacementError()
+	if !input.Overtime && len(buildAutomaticAddPlan(cfg, selectedDates, window, active, candidateBase, input.Fit, true)) > 0 {
+		return nil, noAutomaticPlacementError(true)
 	}
-	return plan, nil
+	return nil, noAutomaticPlacementError(false)
 }
 
 func (s *Service) Update(cfg config.EffectiveConfig, id string, patch PatchInput) (LocalWorklog, error) {
@@ -1113,8 +1110,20 @@ func normalizeDescription(value string) (string, error) {
 	return normalized, nil
 }
 
-func buildFitPlanForDate(cfg config.EffectiveConfig, selectedDate time.Time, window workdayWindow, active []LocalWorklog, base LocalWorklog) []LocalWorklog {
-	freeSlots := buildAddPlacementFreeSlots(cfg, selectedDate, window, active)
+func buildAutomaticAddPlan(cfg config.EffectiveConfig, selectedDates []time.Time, window workdayWindow, active []LocalWorklog, base LocalWorklog, fit bool, overtime bool) []LocalWorklog {
+	if fit {
+		for _, selectedDate := range selectedDates {
+			if plan := buildFitPlanForDate(cfg, selectedDate, window, active, base, overtime); len(plan) > 0 {
+				return plan
+			}
+		}
+		return nil
+	}
+	return buildFillPlanAcrossDates(cfg, selectedDates, window, active, base, overtime)
+}
+
+func buildFitPlanForDate(cfg config.EffectiveConfig, selectedDate time.Time, window workdayWindow, active []LocalWorklog, base LocalWorklog, overtime bool) []LocalWorklog {
+	freeSlots := buildAddPlacementFreeSlots(cfg, selectedDate, window, active, overtime)
 	for _, slot := range freeSlots {
 		if slot.DurationSeconds < base.DurationSeconds {
 			continue
@@ -1129,10 +1138,10 @@ func buildFitPlanForDate(cfg config.EffectiveConfig, selectedDate time.Time, win
 	return nil
 }
 
-func buildFillPlanAcrossDates(cfg config.EffectiveConfig, selectedDates []time.Time, window workdayWindow, active []LocalWorklog, base LocalWorklog) []LocalWorklog {
+func buildFillPlanAcrossDates(cfg config.EffectiveConfig, selectedDates []time.Time, window workdayWindow, active []LocalWorklog, base LocalWorklog, overtime bool) []LocalWorklog {
 	slots := make([]ContextFreeSlot, 0)
 	for _, selectedDate := range selectedDates {
-		slots = append(slots, buildAddPlacementFreeSlots(cfg, selectedDate, window, active)...)
+		slots = append(slots, buildAddPlacementFreeSlots(cfg, selectedDate, window, active, overtime)...)
 	}
 	if totalSlotDuration(slots) < base.DurationSeconds {
 		return nil
@@ -1193,9 +1202,10 @@ func totalSlotDuration(slots []ContextFreeSlot) int {
 	return total
 }
 
-func buildAddPlacementFreeSlots(cfg config.EffectiveConfig, selectedDate time.Time, window workdayWindow, active []LocalWorklog) []ContextFreeSlot {
+func buildAddPlacementFreeSlots(cfg config.EffectiveConfig, selectedDate time.Time, window workdayWindow, active []LocalWorklog, overtime bool) []ContextFreeSlot {
 	dayStart := time.Date(selectedDate.Year(), selectedDate.Month(), selectedDate.Day(), 0, 0, 0, 0, cfg.Location)
-	dayEnd := dayStart.Add(24 * time.Hour)
+	dayEnd := dayStart.AddDate(0, 0, 1)
+	workdayEnd := applyClock(selectedDate, cfg.Location, window.dayEndMinutes)
 
 	occupied := make([]localInterval, 0)
 	for _, item := range active {
@@ -1232,6 +1242,9 @@ func buildAddPlacementFreeSlots(cfg config.EffectiveConfig, selectedDate time.Ti
 		if !item.Start.Before(item.End) {
 			continue
 		}
+		if !overtime && !item.Start.Before(workdayEnd) {
+			continue
+		}
 		slots = append(slots, ContextFreeSlot{
 			Start:           item.Start,
 			End:             item.End,
@@ -1241,8 +1254,12 @@ func buildAddPlacementFreeSlots(cfg config.EffectiveConfig, selectedDate time.Ti
 	return slots
 }
 
-func noAutomaticPlacementError() error {
-	return ValidationError{Issues: []ValidationIssue{{Field: "placement", Message: "no free slot available in the current time window"}}}
+func noAutomaticPlacementError(overtimeWouldSucceed bool) error {
+	message := "no free slot available in the current time window"
+	if overtimeWouldSucceed {
+		message += "; use --overtime to allow placement starting at or after day_end"
+	}
+	return ValidationError{Issues: []ValidationIssue{{Field: "placement", Message: message}}}
 }
 
 func isDuplicate(a, b LocalWorklog) bool {

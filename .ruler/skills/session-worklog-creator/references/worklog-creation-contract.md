@@ -29,8 +29,10 @@ Allowed command families only:
 ```text
 git branch --show-current
 
-workledger worklogs add --issue KEY (--fill DATE_WINDOW | --fit DATE_WINDOW | --started LOCAL_TIME | --started-utc UTC_TIME) --duration DURATION [--description "..."] --dry --output json
-workledger worklogs add --issue KEY (--fill DATE_WINDOW | --fit DATE_WINDOW | --started LOCAL_TIME | --started-utc UTC_TIME) --duration DURATION [--description "..."] --output json
+workledger worklogs add --issue KEY (--fill DATE_WINDOW | --fit DATE_WINDOW) [--overtime] --duration DURATION [--description "..."] --dry --output json
+workledger worklogs add --issue KEY (--fill DATE_WINDOW | --fit DATE_WINDOW) [--overtime] --duration DURATION [--description "..."] --output json
+workledger worklogs add --issue KEY (--started LOCAL_TIME | --started-utc UTC_TIME) --duration DURATION [--description "..."] --dry --output json
+workledger worklogs add --issue KEY (--started LOCAL_TIME | --started-utc UTC_TIME) --duration DURATION [--description "..."] --output json
 
 workledger worklogs context DATE_WINDOW [--issue KEY] --output json
 
@@ -59,6 +61,7 @@ Use `worklogs add` directly for the default one-issue add after duration and iss
 - Unknown exact start and no date/window: use `--fill --today`.
 - Supplied date/window and unknown exact start: use `--fill DATE_WINDOW`.
 - Continuous placement requested or clearly preferable: use `--fit DATE_WINDOW`.
+- Use `--overtime` only when the user explicitly authorizes automatic placement starting at or after the workday end.
 - User-supplied local start: use `--started LOCAL_TIME`.
 - User-supplied UTC start: use `--started-utc UTC_TIME`.
 - Do not run `worklogs context` before a direct automatic-placement add.
@@ -110,6 +113,8 @@ Bad unsupported specificity: `implemented payment API`, `fixed deployment outage
 ## Failure handling
 
 Repair dry-run failures only when current evidence supports the fix: command shape, payload shape, optional-description handling, extra fields, known missing fields, timestamp grammar/exclusivity, slot collisions, boundary splits, or allocation math that preserves the explicit total.
+
+If automatic placement fails with `use --overtime to allow placement starting at or after day_end`, report that nothing was created and ask whether to retry with `--overtime`. Do not infer authorization from the original worklog-creation request.
 
 Ask the user only when the fix needs unavailable mandatory information or would change user-provided intent: missing/invalid duration, missing issue key after branch fallback, incompatible optional fields, non-syntactic duration change, allocation change beyond even split, date conflict, or conflict priority.
 

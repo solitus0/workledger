@@ -534,10 +534,10 @@ func DefaultConfigBytes(clockifyConfig *ClockifyConfig) []byte {
 		"  minimum_duration_seconds: 900",
 		"  # daily_minimum_quota_seconds is for workledger worklogs context",
 		"  daily_minimum_quota_seconds: 28800",
-		"  # day_start and day_end are only used for workledger worklogs context",
+		"  # day_start and day_end are used for context analysis and automatic worklog placement",
 		"  day_start: 08:00",
 		"  day_end: 17:00",
-		"  # daily_lunch is only used for workledger worklogs context",
+		"  # daily_lunch is used for context analysis and automatic worklog placement",
 		"  daily_lunch: 12:00-12:45",
 		"",
 	}

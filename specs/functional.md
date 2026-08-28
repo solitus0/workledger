@@ -44,7 +44,7 @@ Placement rule:
 - [ ] FUNC-021: `workledger init` shall bootstrap `default_output: table` in a new starter config.
 - [ ] FUNC-022: `workledger init` shall bootstrap `local_timezone: Europe/Vilnius` in a new starter config.
 - [ ] FUNC-023: `workledger init` shall bootstrap `storage.sqlite_path: ~/.local/share/workledger/worklogs.db` in a new starter config.
-- [ ] FUNC-024: `workledger init` shall bootstrap `worklogs.minimum_duration_seconds: 900`, `worklogs.daily_minimum_quota_seconds: 28800`, `worklogs.day_start: 08:00`, `worklogs.day_end: 17:00`, and `worklogs.daily_lunch: 12:00-12:45` in a new starter config, with comments that `daily_minimum_quota_seconds`, `day_start`, `day_end`, and `daily_lunch` are for `workledger worklogs context`.
+- [ ] FUNC-024: `workledger init` shall bootstrap `worklogs.minimum_duration_seconds: 900`, `worklogs.daily_minimum_quota_seconds: 28800`, `worklogs.day_start: 08:00`, `worklogs.day_end: 17:00`, and `worklogs.daily_lunch: 12:00-12:45` in a new starter config, with comments that `daily_minimum_quota_seconds` is for `workledger worklogs context` and that `day_start`, `day_end`, and `daily_lunch` are for context analysis and automatic worklog placement.
 - [ ] FUNC-025: `workledger init` shall write commented adapter reference scaffolds for `clockify`, `jira_cloud`, and `jira_data_center`.
 - [ ] FUNC-026: The commented Clockify reference scaffold shall include a `project_mapping` example.
 - [ ] FUNC-027: The commented Jira Cloud reference scaffold shall include `pull.exclude_issues` and a non-default reporting route profile example.
@@ -181,8 +181,12 @@ Placement rule:
 - [ ] FUNC-141h: `workledger worklogs add --fill` shall search selected dates and free slots in ascending order and allocate the exact requested duration across one or more created worklogs.
 - [ ] FUNC-141i: `workledger worklogs add --fill` may split across lunch, occupied gaps, and selected dates, but shall not cross local midnight within any fragment.
 - [ ] FUNC-141j: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall respect `day_start`, lunch exclusion unless `--no-lunch` is supplied, and occupied active local worklogs.
-- [ ] FUNC-141k: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall not treat `day_end` as a hard placement limit and shall not warn only because a created worklog extends past `day_end`.
-- [ ] FUNC-141l: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall fail validation with `no free slot available in the current time window` when placement is impossible.
+- [ ] FUNC-141k: Without `--overtime`, `workledger worklogs add --fit` and `workledger worklogs add --fill` shall consider only free slots whose actual local start is strictly earlier than the effective `day_end`; an eligible record may extend past `day_end` but shall not cross local midnight.
+- [ ] FUNC-141ka: Without `--overtime`, an automatic placement slot beginning at or after `day_end` shall be skipped in favor of the next selected date, and automatic placement shall never extend beyond the selected date window.
+- [ ] FUNC-141kb: `workledger worklogs add --fit --overtime` and `workledger worklogs add --fill --overtime` shall ignore `day_end` as a candidate-start limit while preserving `day_start`, lunch exclusion, occupied-worklog, minimum-duration, selected-date, and local-midnight constraints.
+- [ ] FUNC-141kc: `workledger worklogs add --overtime` shall require `--fit` or `--fill` and shall not classify or persist created records as overtime.
+- [ ] FUNC-141l: `workledger worklogs add --fit` and `workledger worklogs add --fill` shall fail validation with `no free slot available in the current time window` when placement is impossible even with overtime placement eligibility.
+- [ ] FUNC-141la: When automatic placement without `--overtime` fails but the same request would succeed with overtime placement eligibility, validation shall append `use --overtime to allow placement starting at or after day_end` to the no-slot error.
 - [ ] FUNC-142: `workledger worklogs add` shall auto-generate the created worklog `id`.
 - [ ] FUNC-143: `workledger worklogs add` shall return the created canonical worklog on success.
 - [ ] FUNC-143a: manual `workledger worklogs add` success output shall keep the single-record contract.

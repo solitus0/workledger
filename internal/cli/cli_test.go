@@ -466,7 +466,7 @@ func TestInitWithoutClockifyAPIKeyWritesCommentedTemplate(t *testing.T) {
 		t.Fatalf("expected default timezone block, got %s", content)
 	}
 	fragments := []string{
-		"worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # day_start and day_end are only used for workledger worklogs context\n  day_start: 08:00\n  day_end: 17:00\n  # daily_lunch is only used for workledger worklogs context\n  daily_lunch: 12:00-12:45\n",
+		"worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # day_start and day_end are used for context analysis and automatic worklog placement\n  day_start: 08:00\n  day_end: 17:00\n  # daily_lunch is used for context analysis and automatic worklog placement\n  daily_lunch: 12:00-12:45\n",
 		"# clockify:\n#   workspace_id: your-workspace-id\n#   user_id: your-user-id\n#   auth:\n#     api_key_env: CLOCKIFY_API_KEY\n#   project_mapping:\n#     issue_prefixes:\n#       WEB: App Project\n#     default_project: Default Project # fallback project when no issue prefix matches\n#     create_issue_tag_if_missing: true # automation default; create missing issue tags on push\n",
 		"# jira_cloud:\n#   instances:\n#     product:\n#       base_url: https://example.atlassian.net\n#       auth:\n#         email: user@example.com\n#         token_env: WORKLEDGER_JIRA_CLOUD_PRODUCT_TOKEN\n#       pull:\n#         exclude_issues: # issue keys that pull must never import into local storage; reporting issues are excluded by default\n#           - REPORT-2\n#       routing:\n#         profiles:\n#           default:\n#             issue_prefixes:\n#               - WEB\n#           # Reconcile this reporting profile with:\n#           # workledger plan reconcile --push --adapter=jira-cloud --instance product --route-profile reporting --today\n#           reporting: # non-default profile for fixed reporting issue routing\n#             reporting_targets: # canonical prefix -> fixed reporting issue key; OPS matches jira_data_center.instances.internal.routing.profiles.default.issue_prefixes\n#               OPS: REPORT-1\n",
 		"# jira_data_center:\n#   instances:\n#     internal:\n#       base_url: https://jira.example.com\n#       auth:\n#         bearer:\n#           token_env: WORKLEDGER_JIRA_DC_INTERNAL_TOKEN\n#       routing:\n#         profiles:\n#           default:\n#             issue_prefixes:\n#               - OPS\n",
@@ -580,7 +580,7 @@ func TestInitWithClockifyAPIKeyPersistsActiveClockifyConfig(t *testing.T) {
 	if !bytes.Contains(data, []byte("local_timezone: Europe/Vilnius\n")) {
 		t.Fatalf("expected default timezone block, got %s", content)
 	}
-	if !strings.Contains(content, "worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # day_start and day_end are only used for workledger worklogs context\n  day_start: 08:00\n  day_end: 17:00\n  # daily_lunch is only used for workledger worklogs context\n  daily_lunch: 12:00-12:45\n") {
+	if !strings.Contains(content, "worklogs:\n  minimum_duration_seconds: 900\n  # daily_minimum_quota_seconds is for workledger worklogs context\n  daily_minimum_quota_seconds: 28800\n  # day_start and day_end are used for context analysis and automatic worklog placement\n  day_start: 08:00\n  day_end: 17:00\n  # daily_lunch is used for context analysis and automatic worklog placement\n  daily_lunch: 12:00-12:45\n") {
 		t.Fatalf("expected daily quota config block, got %s", content)
 	}
 	if !strings.Contains(content, "clockify:\n  workspace_id: ws-active\n  user_id: user-1\n  auth:\n    api_key_env: CLOCKIFY_API_KEY\n  # project_mapping:\n  #   issue_prefixes:\n  #     WEB: App Project\n  #   default_project: Default Project # fallback project when no issue prefix matches\n  #   create_issue_tag_if_missing: true # automation default; create missing issue tags on push\n") {
@@ -1441,6 +1441,11 @@ func TestWorklogsAddRejectsInvalidPlacementCombinations(t *testing.T) {
 		t.Fatalf("expected validation exit 2, got code=%d stdout=%s stderr=%s", automaticOnly.code, automaticOnly.stdout, automaticOnly.stderr)
 	}
 
+	manualOvertime := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started", "2026-05-03T09:00", "--overtime", "--duration", "1h", "--description", "Bad flags", "--output", "json")
+	if manualOvertime.code != 2 || !strings.Contains(manualOvertime.stdout, "overtime requires fit or fill") {
+		t.Fatalf("expected overtime validation failure, code=%d stdout=%s stderr=%s", manualOvertime.code, manualOvertime.stdout, manualOvertime.stderr)
+	}
+
 	weekOffsetAutomaticOnly := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started", "2026-05-03T09:00", "--mon", "--week-offset", "-1", "--duration", "1h", "--description", "Bad flags", "--output", "json")
 	if weekOffsetAutomaticOnly.code != 2 {
 		t.Fatalf("expected validation exit 2, got code=%d stdout=%s stderr=%s", weekOffsetAutomaticOnly.code, weekOffsetAutomaticOnly.stdout, weekOffsetAutomaticOnly.stderr)
@@ -1606,6 +1611,48 @@ func TestWorklogsAddFitTableExtendsPastDayEndWithoutWarning(t *testing.T) {
 	}
 	if !strings.Contains(result.stdout, "2026-05-03 - 16:00 - 18:00") {
 		t.Fatalf("expected overflow row in stdout, got %q", result.stdout)
+	}
+}
+
+func TestWorklogsAddOvertimeRestoresPostEndPlacement(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	sqlitePath := filepath.Join(t.TempDir(), "worklogs.db")
+	writeConfigContent(t, "default_output: table\nlocal_timezone: UTC\nstorage:\n  sqlite_path: "+sqlitePath+"\nworklogs:\n  minimum_duration_seconds: 900\n  day_start: 09:00\n  day_end: 17:00\n  daily_lunch: 12:00-12:45\n")
+
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+	seed := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T09:00:00Z", "--duration", "9h", "--description", "Busy", "--output", "json")
+	if seed.code != 0 {
+		t.Fatalf("seed add failed: code=%d stdout=%s stderr=%s", seed.code, seed.stdout, seed.stderr)
+	}
+
+	blocked := runCLI(t, "worklogs", "add", "--issue", "ABC-124", "--fit", "--from", "2026-05-03", "--to", "2026-05-03", "--duration", "2h", "--description", "Overflow", "--dry", "--output", "json")
+	if blocked.code != 2 || !strings.Contains(blocked.stdout, "use --overtime to allow placement starting at or after day_end") {
+		t.Fatalf("expected overtime suggestion, code=%d stdout=%s stderr=%s", blocked.code, blocked.stdout, blocked.stderr)
+	}
+
+	preview := runCLI(t, "worklogs", "add", "--issue", "ABC-124", "--fit", "--overtime", "--from", "2026-05-03", "--to", "2026-05-03", "--duration", "2h", "--description", "Overflow", "--dry", "--output", "json")
+	if preview.code != 0 {
+		t.Fatalf("overtime preview failed: code=%d stdout=%s stderr=%s", preview.code, preview.stdout, preview.stderr)
+	}
+	payload := decodeJSONMap(t, []byte(preview.stdout))
+	if payload["dry_run"] != true {
+		t.Fatalf("expected dry-run marker, got %s", preview.stdout)
+	}
+	records := payload["records"].([]any)
+	record := records[0].(map[string]any)
+	if record["started_at_utc"] != "2026-05-03T18:00:00Z" {
+		t.Fatalf("unexpected overtime start, got %s", preview.stdout)
+	}
+	if _, exists := record["overtime"]; exists {
+		t.Fatalf("overtime must not be persisted or exposed, got %s", preview.stdout)
+	}
+
+	created := runCLI(t, "worklogs", "add", "--issue", "ABC-124", "--fill", "--overtime", "--from", "2026-05-03", "--to", "2026-05-03", "--duration", "2h", "--description", "Overflow")
+	if created.code != 0 || !strings.Contains(created.stdout, "2026-05-03 - 18:00 - 20:00") {
+		t.Fatalf("overtime fill failed: code=%d stdout=%s stderr=%s", created.code, created.stdout, created.stderr)
 	}
 }
 

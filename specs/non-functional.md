@@ -196,7 +196,7 @@ Placement rule:
 - [ ] NFR-162: `worklogs add` normalized description shall remain non-empty.
 - [ ] NFR-163: `worklogs update` shall preserve the same non-empty normalized description invariant as `worklogs add`.
 - [ ] NFR-163a: `worklogs add --dry` shall preserve the same duration, timestamp, and description normalization rules as executed `worklogs add`.
-- [ ] NFR-163b: `worklogs add` shall reject automatic-placement date-window and workday-analysis flags unless `--fit` or `--fill` is present.
+- [ ] NFR-163b: `worklogs add` shall reject automatic-placement date-window, workday-analysis, and `--overtime` flags unless `--fit` or `--fill` is present.
 - [ ] NFR-163c: `worklogs add --fill` shall ensure every created fragment is greater than or equal to the effective configured minimum local worklog duration in seconds, including by shortening an earlier fragment when needed to make the final fragment valid.
 - [ ] NFR-164: `worklogs shift --by` shall normalize to non-zero whole seconds.
 - [ ] NFR-165: `worklogs apply` payload shall be JSON.

@@ -962,6 +962,81 @@ func TestAddFitExtendsPastDayEndWithoutWarning(t *testing.T) {
 	}
 }
 
+func TestPreviewAddFitSkipsSlotStartingAtDayEnd(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{
+		Location:               time.UTC,
+		MinimumDurationSeconds: 900,
+		DayStart:               "09:00",
+		DayEnd:                 "17:00",
+		DailyLunch:             "12:00-13:00",
+	}
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-123",
+		StartedUTC:  "2026-05-03T09:00:00Z",
+		Duration:    "8h",
+		Description: "Busy",
+	})
+
+	result, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fit:         true,
+		From:        "2026-05-03",
+		To:          "2026-05-04",
+		Duration:    "2h",
+		Description: "Fit",
+	})
+	if err != nil {
+		t.Fatalf("fit preview failed: %v", err)
+	}
+	assertRecords(t, result.Records, []expectedRecord{{start: "2026-05-04T09:00:00Z", duration: 7200}})
+}
+
+func TestPreviewAddFitOvertimeRestoresPostEndPlacement(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{
+		Location:               time.UTC,
+		MinimumDurationSeconds: 900,
+		DayStart:               "09:00",
+		DayEnd:                 "17:00",
+		DailyLunch:             "12:00-13:00",
+	}
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-123",
+		StartedUTC:  "2026-05-03T09:00:00Z",
+		Duration:    "9h",
+		Description: "Busy",
+	})
+
+	_, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fit:         true,
+		From:        "2026-05-03",
+		To:          "2026-05-03",
+		Duration:    "2h",
+		Description: "Fit",
+	})
+	assertAutomaticPlacementMessage(t, err, "no free slot available in the current time window; use --overtime to allow placement starting at or after day_end")
+
+	result, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fit:         true,
+		Overtime:    true,
+		From:        "2026-05-03",
+		To:          "2026-05-03",
+		Duration:    "2h",
+		Description: "Fit",
+	})
+	if err != nil {
+		t.Fatalf("overtime fit preview failed: %v", err)
+	}
+	assertRecords(t, result.Records, []expectedRecord{{start: "2026-05-03T18:00:00Z", duration: 7200}})
+}
+
 func TestPreviewAddFitRespectsDayStartAndMidnight(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()
@@ -998,6 +1073,34 @@ func TestPreviewAddFitRespectsDayStartAndMidnight(t *testing.T) {
 		Today:       true,
 		NoLunch:     true,
 		Duration:    "3h",
+		Description: "Too long",
+	})
+	assertNoAutomaticPlacement(t, err)
+}
+
+func TestPreviewAddFitOvertimeDoesNotCrossLocalMidnightOnDSTDay(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("load location: %v", err)
+	}
+	cfg := config.EffectiveConfig{
+		Location:               location,
+		MinimumDurationSeconds: 900,
+		DayStart:               "00:00",
+		DayEnd:                 "01:00",
+	}
+
+	_, err = service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fit:         true,
+		Overtime:    true,
+		From:        "2026-03-08",
+		To:          "2026-03-08",
+		NoLunch:     true,
+		Duration:    "24h",
 		Description: "Too long",
 	})
 	assertNoAutomaticPlacement(t, err)
@@ -1069,6 +1172,64 @@ func TestPreviewAddFillCanSpanSelectedDates(t *testing.T) {
 		{start: "2026-05-03T13:00:00Z", duration: 39600},
 		{start: "2026-05-04T09:00:00Z", duration: 10800},
 		{start: "2026-05-04T13:00:00Z", duration: 36000},
+	})
+}
+
+func TestPreviewAddFillAppliesDayEndToEveryFragment(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	cfg := config.EffectiveConfig{
+		Location:               time.UTC,
+		MinimumDurationSeconds: 900,
+		DayStart:               "09:00",
+		DayEnd:                 "17:00",
+		DailyLunch:             "12:00-13:00",
+	}
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-123",
+		StartedUTC:  "2026-05-03T09:00:00Z",
+		Duration:    "7h",
+		Description: "Busy before end",
+	})
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey:    "ABC-123",
+		StartedUTC:  "2026-05-03T17:00:00Z",
+		Duration:    "1h",
+		Description: "Boundary",
+	})
+
+	result, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fill:        true,
+		From:        "2026-05-03",
+		To:          "2026-05-04",
+		Duration:    "2h",
+		Description: "Fill",
+	})
+	if err != nil {
+		t.Fatalf("fill preview failed: %v", err)
+	}
+	assertRecords(t, result.Records, []expectedRecord{
+		{start: "2026-05-03T16:00:00Z", duration: 3600},
+		{start: "2026-05-04T09:00:00Z", duration: 3600},
+	})
+
+	overtimeResult, err := service.PreviewAdd(cfg, AddInput{
+		IssueKey:    "ABC-124",
+		Fill:        true,
+		Overtime:    true,
+		From:        "2026-05-03",
+		To:          "2026-05-04",
+		Duration:    "2h",
+		Description: "Fill",
+	})
+	if err != nil {
+		t.Fatalf("overtime fill preview failed: %v", err)
+	}
+	assertRecords(t, overtimeResult.Records, []expectedRecord{
+		{start: "2026-05-03T16:00:00Z", duration: 3600},
+		{start: "2026-05-03T18:00:00Z", duration: 3600},
 	})
 }
 
@@ -1194,6 +1355,10 @@ func assertRecords(t *testing.T, records []LocalWorklog, expected []expectedReco
 }
 
 func assertNoAutomaticPlacement(t *testing.T, err error) {
+	assertAutomaticPlacementMessage(t, err, "no free slot available in the current time window")
+}
+
+func assertAutomaticPlacementMessage(t *testing.T, err error, expected string) {
 	t.Helper()
 
 	if err == nil {
@@ -1207,7 +1372,7 @@ func assertNoAutomaticPlacement(t *testing.T, err error) {
 		t.Fatalf("expected one validation issue, got %#v", validationErr)
 	}
 	issue := validationErr.Issues[0]
-	if issue.Field != "placement" || issue.Message != "no free slot available in the current time window" {
+	if issue.Field != "placement" || issue.Message != expected {
 		t.Fatalf("unexpected validation issue %#v", issue)
 	}
 }

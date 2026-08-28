@@ -14,6 +14,7 @@ Create canonical local `workledger` worklogs from evidence visible in the curren
 - Use only current-session evidence: the request, chat or agent transcript, visible tool output, issue keys, branch/commit/PR snippets, and files or notes uploaded in this conversation.
 - Do not search unrelated conversation history, broad repository state, remote trackers, totals, or prior worklogs to fill gaps.
 - Do not run setup, diagnostics, totals, search, edit/delete, remote sync, reconciliation, or artifact-rendering flows.
+- Never supply `--overtime` unless the user explicitly authorizes overtime placement in the current request or after a blocked dry-run.
 - Load `references/worklog-creation-contract.md` before choosing placement, building payloads, running `workledger`, or explaining CLI failures.
 - If `workledger` is unavailable, stop and report that no worklog was created.
 
@@ -45,7 +46,7 @@ Never invent duration, issue keys, or completed work. Normalize explicit duratio
    - include `--description` only when the user supplied one or dry-run proves the CLI requires it
 6. Use `worklogs apply` with one JSON payload when the user supplies multiple issues, per-entry durations, a log count, explicit split instructions, or payload-shaped evidence. If the user gives one total duration with multiple issues or a log count but no split, divide the explicit total evenly and preserve the exact total.
 7. Dry-run first with `--output json`; apply immediately only after a clean dry-run.
-8. If dry-run fails, repair only evidence-supported command shape, payload shape, timestamp grammar/exclusivity, slot placement, optional-description handling, or allocation math that preserves the explicit total. Ask only when the smallest safe correction needs a missing duration, a missing issue key, or a change to user-provided intent.
+8. If dry-run fails, repair only evidence-supported command shape, payload shape, timestamp grammar/exclusivity, slot placement, optional-description handling, or allocation math that preserves the explicit total. When the CLI says placement would require `--overtime`, report that nothing was created and ask permission before retrying with `--overtime`. Otherwise ask only when the smallest safe correction needs a missing duration, a missing issue key, or a change to user-provided intent.
 9. If apply fails, do not claim success. Retry once only for a command-shape or transient persistence failure that preserves intent.
 
 ## Description and response style
