@@ -11,6 +11,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Bash, Zsh, and Fish completion script generation with local, read-only suggestions for command values, configured targets, issue keys, worklog IDs, and saved plan IDs.
 - `--tomorrow` as a shared date-window selector for CLI workflows, resolving to the next day in the configured local timezone.
 - Semantic weekday date values from `mon` through `sun` for local timestamps and explicit date ranges, resolving inside the current local Monday-through-Sunday week.
+- `workledger worklogs add --overtime` for explicitly allowing automatic `--fit` and `--fill` placement to start at or after the configured workday end.
+
+### Changed
+- Automatic `worklogs add --fit` and `--fill` placement now skips slots starting at or after `day_end` unless `--overtime` is supplied, while still allowing an eligible worklog that starts earlier to extend past `day_end`.
 
 ## [0.1.8] - 2026-07-02
 
