@@ -61,6 +61,12 @@ type Store struct {
 	db *sql.DB
 }
 
+type ChangeTracker struct {
+	conn    *sql.Conn
+	version int64
+	closed  bool
+}
+
 type BootstrapStatus string
 
 const (
@@ -77,7 +83,8 @@ var schemaStatements = []string{
 		duration_seconds INTEGER NOT NULL,
 		description TEXT NOT NULL,
 		created_at TEXT NOT NULL,
-		updated_at TEXT NOT NULL
+		updated_at TEXT NOT NULL,
+		revision INTEGER NOT NULL DEFAULT 1
 	)`,
 	`CREATE TABLE IF NOT EXISTS trashed_worklogs (
 		id TEXT PRIMARY KEY,
@@ -183,13 +190,13 @@ func Bootstrap(path string) (*Store, BootstrapStatus, error) {
 		return nil, "", err
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteDSN(path, false))
 	if err != nil {
 		return nil, "", err
 	}
 
 	store := &Store{db: db}
-	if err := store.pingAndConfigure(); err != nil {
+	if err := store.pingAndConfigure(true); err != nil {
 		_ = db.Close()
 		return nil, "", wrapBootstrapError(path, existed, err)
 	}
@@ -231,13 +238,13 @@ func OpenExisting(path string) (*Store, error) {
 		return nil, os.ErrNotExist
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", sqliteDSN(path, false))
 	if err != nil {
 		return nil, err
 	}
 
 	store := &Store{db: db}
-	if err := store.pingAndConfigure(); err != nil {
+	if err := store.pingAndConfigure(true); err != nil {
 		_ = db.Close()
 		return nil, wrapOpenExistingError(path, err)
 	}
@@ -258,11 +265,7 @@ func OpenExistingReadOnly(path string) (*Store, error) {
 		return nil, os.ErrNotExist
 	}
 
-	dsn := (&url.URL{
-		Scheme:   "file",
-		Path:     path,
-		RawQuery: "mode=ro",
-	}).String()
+	dsn := sqliteDSN(path, true)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -289,11 +292,65 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
-func (s *Store) pingAndConfigure() error {
-	if _, err := s.db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+func (s *Store) pingAndConfigure(writable bool) error {
+	if err := s.db.Ping(); err != nil {
 		return err
 	}
-	return s.db.Ping()
+	if !writable {
+		return nil
+	}
+	var mode string
+	if err := s.db.QueryRow(`PRAGMA journal_mode = WAL`).Scan(&mode); err != nil {
+		return err
+	}
+	if !strings.EqualFold(mode, "wal") {
+		return fmt.Errorf("failed to enable WAL journal mode: SQLite returned %q", mode)
+	}
+	return nil
+}
+
+func sqliteDSN(path string, readOnly bool) string {
+	query := url.Values{}
+	if readOnly {
+		query.Set("mode", "ro")
+	}
+	query.Add("_pragma", "busy_timeout(5000)")
+	query.Add("_pragma", "foreign_keys(1)")
+	return (&url.URL{Scheme: "file", Path: path, RawQuery: query.Encode()}).String()
+}
+
+func (s *Store) NewChangeTracker(ctx context.Context) (*ChangeTracker, error) {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tracker := &ChangeTracker{conn: conn}
+	if err := conn.QueryRowContext(ctx, `PRAGMA data_version`).Scan(&tracker.version); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return tracker, nil
+}
+
+func (t *ChangeTracker) Poll(ctx context.Context) (bool, error) {
+	if t.closed {
+		return false, errors.New("change tracker is closed")
+	}
+	var version int64
+	if err := t.conn.QueryRowContext(ctx, `PRAGMA data_version`).Scan(&version); err != nil {
+		return false, err
+	}
+	changed := version != t.version
+	t.version = version
+	return changed, nil
+}
+
+func (t *ChangeTracker) Close() error {
+	if t.closed {
+		return nil
+	}
+	t.closed = true
+	return t.conn.Close()
 }
 
 func (s *Store) ensureSchema(ctx context.Context) error {
@@ -320,6 +377,7 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		ddl    string
 	}{
 		{table: "saved_plans", column: "adapter_families_json", ddl: `ALTER TABLE saved_plans ADD COLUMN adapter_families_json TEXT NOT NULL DEFAULT '[]'`},
+		{table: "worklogs", column: "revision", ddl: `ALTER TABLE worklogs ADD COLUMN revision INTEGER NOT NULL DEFAULT 1`},
 		{table: "saved_plans", column: "target_instances_json", ddl: `ALTER TABLE saved_plans ADD COLUMN target_instances_json TEXT NOT NULL DEFAULT '[]'`},
 		{table: "saved_plan_items", column: "plan_direction", ddl: `ALTER TABLE saved_plan_items ADD COLUMN plan_direction TEXT NOT NULL DEFAULT 'pull'`},
 		{table: "saved_plan_items", column: "target_adapter_family", ddl: `ALTER TABLE saved_plan_items ADD COLUMN target_adapter_family TEXT NOT NULL DEFAULT ''`},
@@ -446,6 +504,7 @@ var requiredSchema = []tableRequirement{
 			{column: "description", typ: "TEXT", notNull: true},
 			{column: "created_at", typ: "TEXT", notNull: true},
 			{column: "updated_at", typ: "TEXT", notNull: true},
+			{column: "revision", typ: "INTEGER", notNull: true},
 		},
 	},
 	{

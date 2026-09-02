@@ -15,23 +15,27 @@ Placement rule:
 - [ ] NFR-002: SQLite shall be the source of truth for canonical local worklogs.
 - [ ] NFR-003: SQLite shall persist active local worklogs.
 - [ ] NFR-004: SQLite shall not persist a separate deleted-worklog marker model.
-- [ ] NFR-005: Saved plans, delivery attempts, audit events, issue metadata, and adapter runtime state shall be stored only in the additive storage model.
+- [ ] NFR-005: Saved plans, delivery attempts, and issue metadata shall be stored only in the additive storage model.
 - [ ] NFR-006: Persisted table and column names shall use `snake_case`.
-- [ ] NFR-007: The local `worklogs` table shall include `id`, `issue_key`, `started_at_utc`, `duration_seconds`, `description`, `created_at`, and `updated_at`.
+- [ ] NFR-007: The local `worklogs` table shall include `id`, `issue_key`, `started_at_utc`, `duration_seconds`, `description`, `created_at`, `updated_at`, and `revision`.
 - [ ] NFR-008: Bootstrap or schema repair shall drop any legacy deleted-worklog marker table when it exists.
 - [ ] NFR-009: The SQLite schema shall define a unique index on `worklogs(id)`.
 - [ ] NFR-010: The SQLite schema shall define an index on `worklogs(issue_key, started_at_utc)`.
 - [ ] NFR-011: The SQLite schema shall define an index on `worklogs(started_at_utc)`.
+- [ ] NFR-011a: Writable SQLite stores shall use WAL journal mode.
+- [ ] NFR-011b: Every SQLite connection shall enable foreign keys and a five-second busy timeout through the driver DSN.
+- [ ] NFR-011c: Long-running frontends shall detect commits from other connections through a dedicated-connection `PRAGMA data_version` tracker.
+- [ ] NFR-011d: Active worklogs shall carry an integer revision that starts at `1` and increments on every in-place mutation.
+- [ ] NFR-011e: Preview-driven update and delete operations shall reject a stale expected worklog revision rather than overwrite newer state.
 - [ ] NFR-014a: SQLite shall persist trashed worklogs in a `trashed_worklogs` table.
 - [ ] NFR-014b: The `trashed_worklogs` table shall use a dedicated archive `id` as its CLI identity.
 - [ ] NFR-014c: The `trashed_worklogs` table shall retain `storage_scope`, nullable `source_worklog_id`, canonical worklog fields, `trashed_at`, reason fields, `plan_direction`, nullable plan lineage, and nullable adapter lineage.
 - [ ] NFR-014d: The SQLite schema shall define indexes on `trashed_worklogs(issue_key, started_at_utc)`, `trashed_worklogs(trashed_at)`, `trashed_worklogs(reason_code)`, and `trashed_worklogs(storage_scope, trashed_at)`.
-- [ ] NFR-015: Additive storage shall use `issue_metadata`, `saved_plans`, `saved_plan_items`, `delivery_attempts`, and `audit_events` tables.
+- [ ] NFR-015: Additive storage shall use `issue_metadata`, `saved_plans`, `saved_plan_items`, and `delivery_attempts` tables.
 - [ ] NFR-016: The `issue_metadata` table shall include `issue_key`, `max_estimate_seconds`, `source_adapter_family`, `source_adapter_instance`, and `refreshed_at`.
 - [ ] NFR-017: The `saved_plans` table shall include `id`, `created_at`, `plan_direction`, `adapter_family`, `config_fingerprint`, `window_from_utc`, `window_to_utc`, `aggregate_status`, and `applied_at`.
 - [ ] NFR-018: The `saved_plan_items` table shall include `id`, `plan_id`, `issue_key`, `target_issue`, `route_profile`, `plan_direction`, `target_adapter_family`, `target_adapter_instance`, `window_from_utc`, `window_to_utc`, `plan_status`, `planned_action`, `comparison_status`, `reason_code`, `reason_detail`, `payload_json`, `inspection_summary_json`, `delivery_key`, `content_hash`, `local_row_count`, `local_total_seconds`, `remote_row_count`, `remote_total_seconds`, `applied_state`, `applied_at`, and `apply_message`.
 - [ ] NFR-019: The `delivery_attempts` table shall include `id`, `plan_id`, `plan_item_id`, `attempt_state`, `message`, and `created_at`.
-- [ ] NFR-020: The `audit_events` table shall include `id`, `event_type`, `entity_type`, `entity_id`, `created_at`, and `payload_json`.
 - [ ] NFR-021: Additive storage shall define a unique index on `issue_metadata(issue_key)`.
 - [ ] NFR-022: Additive storage shall define an index on `issue_metadata(refreshed_at)`.
 - [ ] NFR-023: Additive storage shall define an index on `saved_plans(created_at)`.
@@ -41,7 +45,6 @@ Placement rule:
 - [ ] NFR-027: Additive storage shall define an index on `saved_plan_items(delivery_key)`.
 - [ ] NFR-028: Additive storage shall define an index on `delivery_attempts(plan_item_id, created_at)`.
 - [ ] NFR-029: Additive storage shall define an index on `delivery_attempts(attempt_state, created_at)`.
-- [ ] NFR-030: Additive storage shall define an index on `audit_events(created_at)`.
 - [ ] NFR-031: Scope payload rows and inspection summaries shall be stored on `saved_plan_items`.
 - [ ] NFR-032: Scope payload rows and inspection summaries shall not be split into extra child tables in the first implementation.
 - [ ] NFR-033: Mutable adapter instance records shall not be persisted in SQLite.
@@ -348,6 +351,7 @@ Placement rule:
 - [ ] NFR-307: `plan reconcile --push` shall return exit code `6` when a saved plan contains one or more `check_failed` scopes.
 - [ ] NFR-307a: `plan reconcile --pull` shall return exit code `6` when a saved plan contains one or more `check_failed` scopes.
 - [ ] NFR-308: `plan apply` shall return exit code `6` when one execution ends with mixed per-scope success and failure results.
+- [ ] NFR-308a: An explicitly cancelled `plan apply`, `plan retry`, status check, or issue-metadata refresh shall return exit code `130`.
 
 ## Atomicity
 - [ ] NFR-309: SQLite worklog mutations shall use explicit SQLite write transactions.
@@ -427,8 +431,8 @@ Placement rule:
 - [ ] NFR-369: `internal/cli` shall own flag parsing helpers, rendering, confirmation, and exit code mapping.
 - [ ] NFR-370: `internal/config` shall own YAML loading, path resolution, normalization, and validation.
 - [ ] NFR-371: `internal/worklogs` shall own local CRUD rules, duplicate and overlap checks, and selectors.
-- [ ] NFR-372: `internal/issues` shall own local issue-metadata refresh, joins, and issue-scoped advisory rules.
-- [ ] NFR-373: `internal/plans` shall own saved-plan creation, scope grouping, classification, review loading, apply, and retry orchestration.
+- [ ] NFR-372: `internal/issues` shall own remote issue-metadata refresh while `internal/worklogs` owns local metadata persistence and metadata-backed worklog context.
+- [ ] NFR-373: `internal/reconcile` shall own saved-plan creation, scope grouping, classification, review loading, apply, and retry orchestration.
 - [ ] NFR-374: `internal/adapter` shall own shared adapter capability contracts and family-specific planning or apply helpers.
 - [ ] NFR-375: `internal/adapter/jira_cloud` shall own Jira Cloud integration.
 - [ ] NFR-376: `internal/adapter/jira_data_center` shall own Jira Data Center integration.
@@ -436,10 +440,10 @@ Placement rule:
 - [ ] NFR-378: `internal/store/sqlite` shall own SQLite stores, migrations, and transactions.
 - [ ] NFR-379: `internal/tui` shall be reserved for a future Bubble Tea and Lip Gloss frontend.
 - [ ] NFR-380: `internal/cli` shall not own worklog, planning, or adapter business rules.
-- [ ] NFR-381: Frontends shall depend on services rather than raw SQLite stores.
+- [ ] NFR-381: Frontend command and view logic shall depend on services rather than query raw SQLite stores; process composition may open stores to construct those services.
 - [ ] NFR-382: Frontends shall not call other commands.
 - [ ] NFR-383: Frontends shall not parse rendered output from other commands.
-- [ ] NFR-384: Pull, push, or routing shall not be split into separate top-level packages until `internal/plans`, `internal/worklogs`, or `internal/adapter` becomes too large.
+- [ ] NFR-384: Pull, push, or routing shall not be split into separate top-level packages until `internal/reconcile`, `internal/worklogs`, or `internal/adapter` becomes too large.
 - [ ] NFR-385: Application and domain logic shall remain reusable from the CLI and future TUI surfaces.
 - [ ] NFR-386: Adapter interfaces shall be defined at the consumer boundary for the service that uses them.
 - [ ] NFR-387: Adapter APIs shall prefer query structs over positional parameters.
@@ -547,6 +551,9 @@ Placement rule:
 - [ ] NFR-474: After confirmed success, execution shall mark the attempt `succeeded` and persist resulting execution metadata.
 - [ ] NFR-475: After confirmed failure, execution shall mark the attempt `failed`.
 - [ ] NFR-476: After ambiguous outcome, execution shall mark the attempt `uncertain`.
+- [ ] NFR-476a: Cancellation before a remote attempt is reserved shall leave the item `not_attempted`.
+- [ ] NFR-476b: Cancellation after a remote attempt is reserved but before its outcome is confirmed shall append an `uncertain` attempt.
+- [ ] NFR-476c: Cancellation shall not replace a confirmed `succeeded` outcome or mark the aggregate plan applied.
 - [ ] NFR-477: A `pending` attempt older than 15 minutes shall be treated as effective `uncertain`.
 - [ ] NFR-478: Historical attempt rows shall not be rewritten solely because they became stale.
 - [ ] NFR-479: Uncertain push retries shall first perform best-effort target-adapter reconciliation where supported.
@@ -562,13 +569,13 @@ Placement rule:
 - [ ] NFR-487: Push planning classification shall remain single-threaded.
 - [ ] NFR-488: Push planning saved-plan persistence shall remain single-threaded.
 - [ ] NFR-489: Push planning shall not spawn per-scope goroutines after remote target-instance reads complete.
-- [ ] NFR-490: Plan apply shall schedule concurrency at the saved-plan-item level.
-- [ ] NFR-491: Plan apply shall never split one saved plan item into multiple concurrent goroutines.
+- [ ] NFR-490: Plan apply shall schedule concurrency at the saved remote target-group level.
+- [ ] NFR-491: Plan apply shall never split one saved remote target group into multiple concurrent goroutines.
 - [ ] NFR-492: Plan apply shall allow at most one active goroutine per resolved target issue key at a time.
 - [ ] NFR-493: Plan retry shall reuse the same concurrency rules as `plan apply`.
-- [ ] NFR-494: Push execution shall run remote HTTP work with `errgroup.Group`.
-- [ ] NFR-495: Remote HTTP execution shall use bounded concurrency with one fixed tool-defined global `SetLimit()` across the whole plan execution.
-- [ ] NFR-496: Concurrency units shall be saved plan items, not sub-steps within one plan item.
+- [ ] NFR-494: Push execution shall use one bounded worker scheduler shared across the whole plan execution.
+- [ ] NFR-495: Remote HTTP execution shall allow at most four active target groups and shall stop scheduling new groups after cancellation.
+- [ ] NFR-496: Concurrency units shall be saved remote target groups, not sub-steps within one group.
 - [ ] NFR-497: Target-issue isolation shall apply before fixed-limit scheduling.
 - [ ] NFR-498: Per-task failures shall be treated as result data rather than fatal group errors.
 - [ ] NFR-499: Unexpected per-item infrastructure failures during remote I/O shall be recorded on those items while other independent items continue.

@@ -10,7 +10,7 @@ func (s *Service) ListActiveByIDPrefix(prefix string, limit int) ([]LocalWorklog
 	}
 
 	rows, err := s.store.DB().Query(
-		`SELECT id, issue_key, started_at_utc, duration_seconds, description
+		`SELECT id, issue_key, started_at_utc, duration_seconds, description, revision
 		 FROM worklogs
 		 WHERE instr(lower(id), lower(?)) = 1
 		 ORDER BY updated_at DESC, id

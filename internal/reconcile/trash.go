@@ -72,7 +72,7 @@ func pullRowKey(issueKey string, startedAt time.Time, durationSeconds int, descr
 	return fmt.Sprintf("%s\x00%s\x00%d\x00%s", issueKey, startedAt.UTC().Format(time.RFC3339), durationSeconds, description)
 }
 
-func (s *Service) archiveRemoteTrashRows(item PlanItem, rows []model.Row) (int, error) {
+func (s *Service) archiveRemoteTrashRows(ctx context.Context, item PlanItem, rows []model.Row) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
 	}
@@ -97,7 +97,7 @@ func (s *Service) archiveRemoteTrashRows(item PlanItem, rows []model.Row) (int, 
 		})
 	}
 
-	tx, err := s.store.DB().BeginTx(context.Background(), nil)
+	tx, err := s.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}

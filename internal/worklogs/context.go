@@ -1,6 +1,7 @@
 package worklogs
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"slices"
@@ -212,22 +213,34 @@ func (s *Service) ShowIssueMetadata(issueKey string) (IssueMetadata, error) {
 	return items[0], nil
 }
 
-func (s *Service) UpsertIssueMetadata(issueKey string, maxEstimateSeconds *int64, adapterFamily, adapterInstance string, refreshedAt time.Time) error {
-	_, err := s.store.DB().Exec(
-		`INSERT INTO issue_metadata(issue_key, max_estimate_seconds, source_adapter_family, source_adapter_instance, refreshed_at)
-		 VALUES(?, ?, ?, ?, ?)
-		 ON CONFLICT(issue_key) DO UPDATE SET
-		 	max_estimate_seconds = excluded.max_estimate_seconds,
-		 	source_adapter_family = excluded.source_adapter_family,
-		 	source_adapter_instance = excluded.source_adapter_instance,
-		 	refreshed_at = excluded.refreshed_at`,
-		issueKey,
-		maxEstimateSeconds,
-		adapterFamily,
-		adapterInstance,
-		refreshedAt.UTC().Format(time.RFC3339),
-	)
-	return err
+func (s *Service) UpsertIssueMetadataBatch(ctx context.Context, items []IssueMetadata) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := s.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO issue_metadata(issue_key, max_estimate_seconds, source_adapter_family, source_adapter_instance, refreshed_at)
+			 VALUES(?, ?, ?, ?, ?)
+			 ON CONFLICT(issue_key) DO UPDATE SET
+			   max_estimate_seconds = excluded.max_estimate_seconds,
+			   source_adapter_family = excluded.source_adapter_family,
+			   source_adapter_instance = excluded.source_adapter_instance,
+			   refreshed_at = excluded.refreshed_at`,
+			item.IssueKey,
+			item.MaxEstimateSeconds,
+			item.SourceAdapterFamily,
+			item.SourceAdapterInst,
+			item.RefreshedAt.UTC().Format(time.RFC3339),
+		); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func uniqueIssueKeys(issueKeys []string) []string {

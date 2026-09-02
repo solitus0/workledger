@@ -661,7 +661,7 @@ func (s *Service) CreateMultiPullPlan(ctx context.Context, cfg config.EffectiveC
 			return Plan{}, err
 		}
 		plans[0].ConfigFingerprint = fingerprint
-		if err := s.insertPlan(plans[0]); err != nil {
+		if err := s.insertPlan(ctx, plans[0]); err != nil {
 			return Plan{}, err
 		}
 		return plans[0], nil
@@ -670,7 +670,7 @@ func (s *Service) CreateMultiPullPlan(ctx context.Context, cfg config.EffectiveC
 	if err != nil {
 		return Plan{}, err
 	}
-	if err := s.insertPlan(merged); err != nil {
+	if err := s.insertPlan(ctx, merged); err != nil {
 		return Plan{}, err
 	}
 	return merged, nil
@@ -876,7 +876,7 @@ func (s *Service) ReconcileMultiPushPlan(ctx context.Context, cfg config.Effecti
 			return ReconcileResult{}, err
 		}
 		plans[0].ConfigFingerprint = fingerprint
-		if err := s.insertPlan(plans[0]); err != nil {
+		if err := s.insertPlan(ctx, plans[0]); err != nil {
 			return ReconcileResult{}, err
 		}
 		return ReconcileResult{Plan: &plans[0], ProfileSummaries: append([]ReconcileProfileSummary(nil), profileSummaries...)}, nil
@@ -885,7 +885,7 @@ func (s *Service) ReconcileMultiPushPlan(ctx context.Context, cfg config.Effecti
 	if err != nil {
 		return ReconcileResult{}, err
 	}
-	if err := s.insertPlan(merged); err != nil {
+	if err := s.insertPlan(ctx, merged); err != nil {
 		return ReconcileResult{}, err
 	}
 	return ReconcileResult{Plan: &merged, ProfileSummaries: append([]ReconcileProfileSummary(nil), profileSummaries...)}, nil
@@ -1270,7 +1270,7 @@ func (s *Service) CreateClockifyPushPlan(ctx context.Context, cfg config.Effecti
 	if err != nil {
 		return Plan{}, err
 	}
-	if err := s.insertPlan(plan); err != nil {
+	if err := s.insertPlan(ctx, plan); err != nil {
 		return Plan{}, err
 	}
 	return plan, nil
@@ -1607,20 +1607,20 @@ func (s *Service) listPlansByIDPrefix(prefix string, limit int) ([]ListEntry, er
 	return items, nil
 }
 
-func (s *Service) ApplyPlan(cfg config.EffectiveConfig, id string, options ...ApplyOptions) (ApplyResult, error) {
-	return s.executeSavedPlan(cfg, id, "", func(item PlanItem) bool {
+func (s *Service) ApplyPlan(ctx context.Context, cfg config.EffectiveConfig, id string, options ...ApplyOptions) (ApplyResult, error) {
+	return s.executeSavedPlan(ctx, cfg, id, "", func(item PlanItem) bool {
 		return item.PlanStatus == "ready" && item.ExecutionState == "not_attempted"
 	}, options...)
 }
 
-func (s *Service) RetryPlan(cfg config.EffectiveConfig, id string, only string, options ...ApplyOptions) (ApplyResult, error) {
+func (s *Service) RetryPlan(ctx context.Context, cfg config.EffectiveConfig, id string, only string, options ...ApplyOptions) (ApplyResult, error) {
 	switch only {
 	case "failed":
-		return s.executeSavedPlan(cfg, id, only, func(item PlanItem) bool {
+		return s.executeSavedPlan(ctx, cfg, id, only, func(item PlanItem) bool {
 			return item.PlanStatus == "ready" && item.ExecutionState == "failed"
 		}, options...)
 	case "uncertain":
-		return s.executeSavedPlan(cfg, id, only, func(item PlanItem) bool {
+		return s.executeSavedPlan(ctx, cfg, id, only, func(item PlanItem) bool {
 			return item.PlanStatus == "ready" && item.ExecutionState == "uncertain"
 		}, options...)
 	default:
@@ -1628,7 +1628,10 @@ func (s *Service) RetryPlan(cfg config.EffectiveConfig, id string, only string, 
 	}
 }
 
-func (s *Service) executeSavedPlan(cfg config.EffectiveConfig, id, retryScope string, selectItem func(PlanItem) bool, options ...ApplyOptions) (ApplyResult, error) {
+func (s *Service) executeSavedPlan(ctx context.Context, cfg config.EffectiveConfig, id, retryScope string, selectItem func(PlanItem) bool, options ...ApplyOptions) (ApplyResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ApplyResult{}, err
+	}
 	opts := resolveApplyOptions(options)
 	plan, err := s.LoadPlan(id)
 	if err != nil {
@@ -1687,7 +1690,10 @@ func (s *Service) executeSavedPlan(cfg config.EffectiveConfig, id, retryScope st
 	var scopeDone int
 	var workDone int
 	for _, item := range pullItems {
-		outcome, err := s.executePullItem(item)
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		outcome, err := s.executePullItem(ctx, item)
 		if err != nil {
 			return ApplyResult{}, err
 		}
@@ -1723,16 +1729,19 @@ func (s *Service) executeSavedPlan(cfg config.EffectiveConfig, id, retryScope st
 		})
 	}
 	if len(pushItems) > 0 {
-		pushResult, err := s.executeSavedPushGroups(context.Background(), cfg, retryScope, pushItems, allReadyPushItems, scopeDone, workDone, len(ready), totalApplyWorkUnits(ready), opts.Reporter)
-		if err != nil {
-			return ApplyResult{}, err
-		}
+		pushResult, err := s.executeSavedPushGroups(ctx, cfg, retryScope, pushItems, allReadyPushItems, scopeDone, workDone, len(ready), totalApplyWorkUnits(ready), opts.Reporter)
 		result.AppliedCount += pushResult.appliedCount
 		result.FailedCount += pushResult.failedCount
 		result.TrashArchivedCount += pushResult.trashArchivedCount
 		result.ScopeResults = append(result.ScopeResults, pushResult.scopeResults...)
 		scopeDone = pushResult.scopeDone
 		workDone = pushResult.workDone
+		if err != nil {
+			return result, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
 	}
 
 	appliedAt := s.now().UTC()
@@ -1755,7 +1764,7 @@ func (s *Service) executeSavedPlan(cfg config.EffectiveConfig, id, retryScope st
 func (s *Service) executeSavedPlanItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem, retryScope string) (applyItemExecution, error) {
 	switch item.PlanDirection {
 	case "", "pull":
-		return s.executePullItem(item)
+		return s.executePullItem(ctx, item)
 	case "push":
 		return s.executePushItem(ctx, cfg, item, retryScope)
 	default:
@@ -1763,14 +1772,14 @@ func (s *Service) executeSavedPlanItem(ctx context.Context, cfg config.Effective
 	}
 }
 
-func (s *Service) executePullItem(item PlanItem) (applyItemExecution, error) {
-	appliedAt := s.now().UTC()
-	archivedCount, err := s.applyPullItem(item)
-	if err != nil {
+func (s *Service) executePullItem(ctx context.Context, item PlanItem) (applyItemExecution, error) {
+	if err := ctx.Err(); err != nil {
 		return applyItemExecution{}, err
 	}
+	appliedAt := s.now().UTC()
 	message := "merged saved pull payload into local ledger"
-	if err := s.markItemApplied(item.ID, appliedAt, "succeeded", message); err != nil {
+	archivedCount, err := s.applyPullItem(ctx, item, appliedAt, message)
+	if err != nil {
 		return applyItemExecution{}, err
 	}
 	return applyItemExecution{
@@ -1813,10 +1822,7 @@ func (s *Service) executePushItem(ctx context.Context, cfg config.EffectiveConfi
 
 	pushResult, err := s.applyPushItem(ctx, cfg, item)
 	if err != nil {
-		finalState := "failed"
-		if retryScope == "uncertain" {
-			finalState = "uncertain"
-		}
+		finalState := pushFailureState(err, retryScope)
 		if attemptErr := s.recordDeliveryAttempt(item.PlanID, item.ID, finalState, err.Error()); attemptErr != nil {
 			return applyItemExecution{}, attemptErr
 		}
@@ -1861,8 +1867,8 @@ func (s *Service) applyPushItem(ctx context.Context, cfg config.EffectiveConfig,
 	}
 }
 
-func (s *Service) applyPullItem(item PlanItem) (int, error) {
-	tx, err := s.store.DB().BeginTx(context.Background(), nil)
+func (s *Service) applyPullItem(ctx context.Context, item PlanItem, appliedAt time.Time, message string) (int, error) {
+	tx, err := s.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -1878,17 +1884,13 @@ func (s *Service) applyPullItem(item PlanItem) (int, error) {
 		_ = tx.Rollback()
 		return 0, err
 	}
-	removedIDs := make([]string, 0, len(removed))
-	for _, row := range removed {
-		removedIDs = append(removedIDs, row.ID)
-	}
-	if err := worklogs.DeleteActiveWorklogsTx(context.Background(), tx, removedIDs); err != nil {
+	if err := worklogs.DeleteActiveWorklogsTx(ctx, tx, removed); err != nil {
 		_ = tx.Rollback()
 		return 0, err
 	}
 
 	for _, row := range inserted {
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
 			uuid.NewString(),
 			row.IssueKey,
@@ -1901,6 +1903,10 @@ func (s *Service) applyPullItem(item PlanItem) (int, error) {
 			_ = tx.Rollback()
 			return 0, err
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE saved_plan_items SET applied_state = ?, applied_at = ?, apply_message = ? WHERE id = ?`, "succeeded", sqlitestore.RFC3339UTC(appliedAt), message, item.ID); err != nil {
+		_ = tx.Rollback()
+		return 0, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -2066,7 +2072,7 @@ func (s *Service) applyClockifyPushItem(ctx context.Context, cfg config.Effectiv
 			}
 		}
 		result.deletedRows = append([]model.Row(nil), deletedRows...)
-		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+		if archivedCount, err := s.archiveRemoteTrashRows(ctx, item, deletedRows); err != nil {
 			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
 		} else {
 			result.trashArchivedCount += archivedCount
@@ -2090,7 +2096,7 @@ func (s *Service) applyClockifyPushItem(ctx context.Context, cfg config.Effectiv
 		if err := deleteRemoteClockifyEntries(ctx, client, clockifyCfg.WorkspaceID, scopeEntries); err != nil {
 			return result, err
 		}
-		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+		if archivedCount, err := s.archiveRemoteTrashRows(ctx, item, deletedRows); err != nil {
 			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
 		} else {
 			result.trashArchivedCount += archivedCount
@@ -2144,7 +2150,7 @@ func (s *Service) applyJiraDataPushItem(ctx context.Context, cfg config.Effectiv
 			}
 		}
 		result.deletedRows = append([]model.Row(nil), deletedRows...)
-		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+		if archivedCount, err := s.archiveRemoteTrashRows(ctx, item, deletedRows); err != nil {
 			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
 		} else {
 			result.trashArchivedCount += archivedCount
@@ -2160,7 +2166,7 @@ func (s *Service) applyJiraDataPushItem(ctx context.Context, cfg config.Effectiv
 		if err := deleteRemoteJiraDataWorklogs(ctx, client, item.TargetIssue, scope); err != nil {
 			return result, err
 		}
-		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+		if archivedCount, err := s.archiveRemoteTrashRows(ctx, item, deletedRows); err != nil {
 			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
 		} else {
 			result.trashArchivedCount += archivedCount
@@ -2203,7 +2209,7 @@ func (s *Service) applyJiraCloudPushItem(ctx context.Context, cfg config.Effecti
 			}
 		}
 		result.deletedRows = append([]model.Row(nil), deletedRows...)
-		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+		if archivedCount, err := s.archiveRemoteTrashRows(ctx, item, deletedRows); err != nil {
 			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
 		} else {
 			result.trashArchivedCount += archivedCount
@@ -2219,7 +2225,7 @@ func (s *Service) applyJiraCloudPushItem(ctx context.Context, cfg config.Effecti
 		if err := deleteRemoteJiraCloudWorklogs(ctx, client, item.TargetIssue, scope); err != nil {
 			return result, err
 		}
-		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+		if archivedCount, err := s.archiveRemoteTrashRows(ctx, item, deletedRows); err != nil {
 			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
 		} else {
 			result.trashArchivedCount += archivedCount
@@ -2230,9 +2236,9 @@ func (s *Service) applyJiraCloudPushItem(ctx context.Context, cfg config.Effecti
 	return result, nil
 }
 
-func (s *Service) insertPlan(plan Plan) error {
+func (s *Service) insertPlan(ctx context.Context, plan Plan) error {
 	normalizePlanSummary(&plan)
-	tx, err := s.store.DB().BeginTx(context.Background(), nil)
+	tx, err := s.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -2461,7 +2467,7 @@ func (s *Service) loadPlanFindings(planID string) ([]PlanFinding, error) {
 
 func (s *Service) listLocalScope(issueKey string, windowFrom, windowTo time.Time) ([]worklogs.LocalWorklog, error) {
 	rows, err := s.store.DB().Query(
-		`SELECT id, issue_key, started_at_utc, duration_seconds, description FROM worklogs WHERE issue_key = ? AND started_at_utc >= ? AND started_at_utc <= ? ORDER BY started_at_utc ASC, id ASC`,
+		`SELECT id, issue_key, started_at_utc, duration_seconds, description, revision FROM worklogs WHERE issue_key = ? AND started_at_utc >= ? AND started_at_utc <= ? ORDER BY started_at_utc ASC, id ASC`,
 		issueKey,
 		sqlitestore.RFC3339UTC(windowFrom.UTC()),
 		sqlitestore.RFC3339UTC(windowTo.UTC()),
@@ -2484,7 +2490,7 @@ func (s *Service) listLocalScope(issueKey string, windowFrom, windowTo time.Time
 
 func (s *Service) listActiveWindow(windowFrom, windowTo time.Time) ([]worklogs.LocalWorklog, error) {
 	rows, err := s.store.DB().Query(
-		`SELECT id, issue_key, started_at_utc, duration_seconds, description FROM worklogs WHERE started_at_utc >= ? AND started_at_utc <= ? ORDER BY issue_key ASC, started_at_utc ASC, id ASC`,
+		`SELECT id, issue_key, started_at_utc, duration_seconds, description, revision FROM worklogs WHERE started_at_utc >= ? AND started_at_utc <= ? ORDER BY issue_key ASC, started_at_utc ASC, id ASC`,
 		sqlitestore.RFC3339UTC(windowFrom.UTC()),
 		sqlitestore.RFC3339UTC(windowTo.UTC()),
 	)
@@ -2747,6 +2753,24 @@ func (s *Service) recordDeliveryAttempt(planID, itemID, state, message string) e
 		sqlitestore.RFC3339UTC(s.now().UTC()),
 	)
 	return err
+}
+
+func (s *Service) recordPendingGroup(ctx context.Context, items []PlanItem) error {
+	tx, err := s.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	createdAt := sqlitestore.RFC3339UTC(s.now().UTC())
+	for _, item := range items {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO delivery_attempts(id, plan_id, plan_item_id, attempt_state, message, created_at) VALUES(?, ?, ?, 'pending', 'push delivery started', ?)`,
+			uuid.NewString(), item.PlanID, item.ID, createdAt,
+		); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func deriveExecutionState(attempts []DeliveryAttempt, now time.Time) string {
@@ -3106,7 +3130,7 @@ func nullIfEmpty(value string) any {
 func scanWorklog(scanner interface{ Scan(dest ...any) error }) (worklogs.LocalWorklog, error) {
 	var item worklogs.LocalWorklog
 	var startedAt string
-	if err := scanner.Scan(&item.ID, &item.IssueKey, &startedAt, &item.DurationSeconds, &item.Description); err != nil {
+	if err := scanner.Scan(&item.ID, &item.IssueKey, &startedAt, &item.DurationSeconds, &item.Description, &item.Revision); err != nil {
 		return worklogs.LocalWorklog{}, err
 	}
 	parsed, err := time.Parse(time.RFC3339, startedAt)

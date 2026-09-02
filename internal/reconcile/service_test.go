@@ -216,7 +216,7 @@ func TestApplyPlanClockifyRemoteOwnedOrphanArchivesTrash(t *testing.T) {
 		t.Fatalf("expected remote-only cleanup scope, got %#v", plan.Items[0])
 	}
 
-	result, err := service.ApplyPlan(testClockifyConfig(true), plan.ID)
+	result, err := service.ApplyPlan(context.Background(), testClockifyConfig(true), plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -282,11 +282,11 @@ func TestApplyPlanPullMergeArchivesRemovedLocalRowsAndPreservesIDs(t *testing.T)
 			},
 		},
 	}
-	if err := service.insertPlan(plan); err != nil {
+	if err := service.insertPlan(context.Background(), plan); err != nil {
 		t.Fatalf("insert plan: %v", err)
 	}
 
-	result, err := service.ApplyPlan(cfg, plan.ID)
+	result, err := service.ApplyPlan(context.Background(), cfg, plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestApplyPlanClockifyReplaceFailureStillArchivesRemoteTrash(t *testing.T) {
 		t.Fatalf("expected one replace item, got %#v", plan.Items)
 	}
 
-	result, err := service.ApplyPlan(cfg, plan.ID)
+	result, err := service.ApplyPlan(context.Background(), cfg, plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestApplyPlanClockifyReplaceDeletesOnlyConflictingRemoteRows(t *testing.T) 
 		t.Fatalf("expected one replace item, got %#v", plan.Items)
 	}
 
-	result, err := service.ApplyPlan(cfg, plan.ID)
+	result, err := service.ApplyPlan(context.Background(), cfg, plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -459,7 +459,7 @@ func TestApplyPlanJiraDataReplaceDeletesOnlyConflictingRemoteRows(t *testing.T) 
 		t.Fatalf("expected one replace item, got %#v", plan.Items)
 	}
 
-	result, err := service.ApplyPlan(cfg, plan.ID)
+	result, err := service.ApplyPlan(context.Background(), cfg, plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestApplyPlanJiraCloudReplaceDeletesOnlyConflictingRemoteRows(t *testing.T)
 		t.Fatalf("expected one replace item, got %#v", plan.Items)
 	}
 
-	result, err := service.ApplyPlan(cfg, plan.ID)
+	result, err := service.ApplyPlan(context.Background(), cfg, plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -583,7 +583,7 @@ func TestApplyPlanJiraCloudReportingReplaceDeletesOnlyConflictingRemoteRows(t *t
 		t.Fatalf("expected one reporting replace item, got %#v", plan.Items)
 	}
 
-	result, err := service.ApplyPlan(cfg, plan.ID)
+	result, err := service.ApplyPlan(context.Background(), cfg, plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -659,7 +659,7 @@ func TestApplyPlanJiraCloudAutoReportingSharedTargetPreservesUnion(t *testing.T)
 		t.Fatalf("expected two saved items for shared reporting target, got %#v", result)
 	}
 
-	applyResult, err := service.ApplyPlan(cfg, result.Plan.ID)
+	applyResult, err := service.ApplyPlan(context.Background(), cfg, result.Plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -725,7 +725,7 @@ func TestApplyPlanJiraDataAutoReportingSharedTargetPreservesUnion(t *testing.T) 
 		t.Fatalf("expected two saved items for shared reporting target, got %#v", result)
 	}
 
-	applyResult, err := service.ApplyPlan(cfg, result.Plan.ID)
+	applyResult, err := service.ApplyPlan(context.Background(), cfg, result.Plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -897,7 +897,7 @@ func TestReconcileMultiJiraDataAutoReportingDoesNotLoopAfterApply(t *testing.T) 
 	if first.Plan == nil || len(first.Plan.Items) != 1 || first.Plan.Items[0].RouteProfile != "reporting" || first.Plan.Items[0].PlannedAction != "create" {
 		t.Fatalf("expected first reconcile to create reporting row only, got %#v", first)
 	}
-	if _, err := service.ApplyPlan(cfg, first.Plan.ID); err != nil {
+	if _, err := service.ApplyPlan(context.Background(), cfg, first.Plan.ID); err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
 
@@ -1010,7 +1010,7 @@ func TestApplyPlanPushMixedResult(t *testing.T) {
 		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
 	}
 
-	result, err := service.ApplyPlan(cfg, plan.ID)
+	result, err := service.ApplyPlan(context.Background(), cfg, plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -1067,7 +1067,7 @@ func TestApplyPlanSkipsNonNotAttemptedReadyItems(t *testing.T) {
 	seedDeliveryAttempt(t, store, plan.ID, itemsByIssue["CAPP-1"].ID, "pending", "pending now", "2026-05-02T11:50:00Z")
 	seedDeliveryAttempt(t, store, plan.ID, itemsByIssue["DAPP-1"].ID, "pending", "stale", "2026-05-02T11:00:00Z")
 
-	result, err := service.ApplyPlan(testClockifyConfig(true), plan.ID)
+	result, err := service.ApplyPlan(context.Background(), testClockifyConfig(true), plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -1109,7 +1109,7 @@ func TestApplyPlanClockifyPreflightFailureDoesNotCreatePendingAttempt(t *testing
 	}
 	client.tagsByID = map[string]clockify.Tag{}
 
-	if _, err := service.ApplyPlan(cfg, plan.ID); err == nil || err.Error() != `issue tag "AAPP-1" is missing and config forbids creating it` {
+	if _, err := service.ApplyPlan(context.Background(), cfg, plan.ID); err == nil || err.Error() != `issue tag "AAPP-1" is missing and config forbids creating it` {
 		t.Fatalf("expected clockify preflight failure, got %v", err)
 	}
 
@@ -1153,7 +1153,7 @@ func TestRetryPlanFailedReexecutesOnlyFailedReadyItems(t *testing.T) {
 	seedDeliveryAttempt(t, store, plan.ID, itemsByIssue["AAPP-1"].ID, "failed", "first failed", "2026-05-02T10:00:00Z")
 	seedDeliveryAttempt(t, store, plan.ID, itemsByIssue["BAPP-1"].ID, "succeeded", "done", "2026-05-02T10:00:00Z")
 
-	result, err := service.RetryPlan(testClockifyConfig(true), plan.ID, "failed")
+	result, err := service.RetryPlan(context.Background(), testClockifyConfig(true), plan.ID, "failed")
 	if err != nil {
 		t.Fatalf("RetryPlan failed: %v", err)
 	}
@@ -1235,7 +1235,7 @@ func TestRetryPlanFailedSharedPushScopeUsesFullGroupReconcileContext(t *testing.
 	seedDeliveryAttempt(t, store, result.Plan.ID, itemA.ID, "succeeded", "done", "2026-05-02T10:00:00Z")
 	seedDeliveryAttempt(t, store, result.Plan.ID, itemB.ID, "failed", "cleanup failed", "2026-05-02T10:00:00Z")
 
-	retryResult, err := service.RetryPlan(cfg, result.Plan.ID, "failed")
+	retryResult, err := service.RetryPlan(context.Background(), cfg, result.Plan.ID, "failed")
 	if err != nil {
 		t.Fatalf("RetryPlan failed: %v", err)
 	}
@@ -1316,7 +1316,7 @@ func TestRetryPlanUncertainClockifyHandlesSuccessReplayAndAmbiguous(t *testing.T
 		seedDeliveryAttempt(t, store, plan.ID, item.ID, "pending", "timed out", "2026-05-02T11:00:00Z")
 	}
 
-	result, err := service.RetryPlan(testClockifyConfig(true), plan.ID, "uncertain")
+	result, err := service.RetryPlan(context.Background(), testClockifyConfig(true), plan.ID, "uncertain")
 	if err != nil {
 		t.Fatalf("RetryPlan failed: %v", err)
 	}
@@ -1360,11 +1360,11 @@ func TestRetryPlanRejectsFingerprintMismatchAndNoEligibleReturnsNoOp(t *testing.
 	}
 	seedDeliveryAttempt(t, store, plan.ID, plan.Items[0].ID, "succeeded", "done", "2026-05-02T10:00:00Z")
 
-	if _, err := service.RetryPlan(testClockifyConfig(false), plan.ID, "failed"); err == nil || err.Error() != "saved plan config fingerprint does not match current config; run 'workledger plan reconcile' to generate a new plan" {
+	if _, err := service.RetryPlan(context.Background(), testClockifyConfig(false), plan.ID, "failed"); err == nil || err.Error() != "saved plan config fingerprint does not match current config; run 'workledger plan reconcile' to generate a new plan" {
 		t.Fatalf("expected fingerprint mismatch, got %v", err)
 	}
 
-	result, err := service.RetryPlan(testClockifyConfig(true), plan.ID, "failed")
+	result, err := service.RetryPlan(context.Background(), testClockifyConfig(true), plan.ID, "failed")
 	if err != nil {
 		t.Fatalf("RetryPlan failed: %v", err)
 	}
@@ -1397,7 +1397,7 @@ func TestApplyPlanPushRunsDistinctTargetGroupsConcurrently(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := service.ApplyPlan(cfg, plan.ID)
+		_, err := service.ApplyPlan(context.Background(), cfg, plan.ID)
 		done <- err
 	}()
 
@@ -1415,6 +1415,74 @@ func TestApplyPlanPushRunsDistinctTargetGroupsConcurrently(t *testing.T) {
 
 	if err := <-done; err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
+	}
+}
+
+func TestApplyPlanCancellationBeforeSchedulingLeavesItemUnattempted(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "First")
+	client := &fakeClockifyClient{projects: []clockify.Project{{ID: "proj-app", Name: "App"}}}
+	service := NewService(store)
+	service.newClockifyClient = func(config.ClockifyConfig) clockifyClient { return client }
+	cfg := testClockifyConfig(true)
+	plan, err := service.CreateClockifyPushPlan(context.Background(), cfg, mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = service.ApplyPlan(ctx, cfg, plan.ID)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ApplyPlan error = %v, want context.Canceled", err)
+	}
+	loaded, err := service.LoadPlan(plan.ID)
+	if err != nil {
+		t.Fatalf("LoadPlan failed: %v", err)
+	}
+	if loaded.Items[0].ExecutionState != "not_attempted" || loaded.AppliedAt != nil {
+		t.Fatalf("unexpected cancelled plan state %#v", loaded)
+	}
+}
+
+func TestApplyPlanCancellationDuringRemoteMutationMarksItemUncertain(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "First")
+	client := &blockingClockifyClient{
+		fakeClockifyClient: fakeClockifyClient{projects: []clockify.Project{{ID: "proj-app", Name: "App"}}},
+		createStarted:      make(chan string, 1),
+		release:            make(chan struct{}),
+	}
+	service := NewService(store)
+	service.newClockifyClient = func(config.ClockifyConfig) clockifyClient { return client }
+	cfg := testClockifyConfig(true)
+	plan, err := service.CreateClockifyPushPlan(context.Background(), cfg, mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
+	if err != nil {
+		t.Fatalf("CreateClockifyPushPlan failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.ApplyPlan(ctx, cfg, plan.ID)
+		done <- err
+	}()
+	select {
+	case <-client.createStarted:
+		cancel()
+	case <-time.After(2 * time.Second):
+		t.Fatal("remote mutation did not start")
+	}
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("ApplyPlan error = %v, want context.Canceled", err)
+	}
+	loaded, err := service.LoadPlan(plan.ID)
+	if err != nil {
+		t.Fatalf("LoadPlan failed: %v", err)
+	}
+	if loaded.Items[0].ExecutionState != "uncertain" || loaded.AppliedAt != nil {
+		t.Fatalf("unexpected cancelled plan state %#v", loaded)
 	}
 }
 
@@ -1639,7 +1707,7 @@ func TestApplyPlanJiraDataRemoteOwnedCleanupArchivesTrash(t *testing.T) {
 		t.Fatalf("CreateJiraDataPushPlan failed: %v", err)
 	}
 
-	result, err := service.ApplyPlan(testJiraDataConfig(), plan.ID)
+	result, err := service.ApplyPlan(context.Background(), testJiraDataConfig(), plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -1734,7 +1802,7 @@ func TestCreateJiraCloudPullPushAndApplyPlan(t *testing.T) {
 		t.Fatalf("expected reporting description prefix, got %#v", item.Payload)
 	}
 
-	result, err := service.ApplyPlan(testJiraCloudConfig(), pushPlan.ID)
+	result, err := service.ApplyPlan(context.Background(), testJiraCloudConfig(), pushPlan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -1949,7 +2017,7 @@ func TestApplyPlanJiraCloudRemoteOwnedCleanupArchivesTrash(t *testing.T) {
 		t.Fatalf("CreateJiraCloudPushPlan failed: %v", err)
 	}
 
-	result, err := service.ApplyPlan(testJiraCloudConfig(), plan.ID)
+	result, err := service.ApplyPlan(context.Background(), testJiraCloudConfig(), plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -2015,7 +2083,7 @@ func TestApplyPlanJiraCloudReplaceKeepsADFMatchedRows(t *testing.T) {
 		t.Fatalf("expected append-only replace diff, got %#v", item.InspectionSummary)
 	}
 
-	result, err := service.ApplyPlan(testJiraCloudConfig(), plan.ID)
+	result, err := service.ApplyPlan(context.Background(), testJiraCloudConfig(), plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -2149,7 +2217,7 @@ func TestReconcileJiraDataPushPlanAggregatesSharedReportingTargets(t *testing.T)
 		t.Fatalf("unexpected per-source totals %#v", item.InspectionSummary.PerSourceTotals)
 	}
 
-	applyResult, err := service.ApplyPlan(testAggregatedJiraDataConfig(), result.Plan.ID)
+	applyResult, err := service.ApplyPlan(context.Background(), testAggregatedJiraDataConfig(), result.Plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -2263,7 +2331,7 @@ func TestReconcileJiraCloudPushPlanAggregatesSharedReportingTargets(t *testing.T
 		t.Fatalf("unexpected per-source totals %#v", item.InspectionSummary.PerSourceTotals)
 	}
 
-	applyResult, err := service.ApplyPlan(testAggregatedJiraCloudConfig(), result.Plan.ID)
+	applyResult, err := service.ApplyPlan(context.Background(), testAggregatedJiraCloudConfig(), result.Plan.ID)
 	if err != nil {
 		t.Fatalf("ApplyPlan failed: %v", err)
 	}
@@ -3877,7 +3945,11 @@ func (f *fakeClockifyClient) CreateTimeEntry(ctx context.Context, workspaceID st
 
 func (f *blockingClockifyClient) CreateTimeEntry(ctx context.Context, workspaceID string, row clockify.CandidateRow, projectID string, tagIDs []string) (clockify.TimeEntry, error) {
 	f.createStarted <- row.IssueKey
-	<-f.release
+	select {
+	case <-ctx.Done():
+		return clockify.TimeEntry{}, ctx.Err()
+	case <-f.release:
+	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()

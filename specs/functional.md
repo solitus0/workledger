@@ -353,6 +353,8 @@ Placement rule:
 - [ ] FUNC-271a: `workledger plan apply` for `plan_direction=pull` shall archive local active rows removed by the saved merge into `workledger trash`.
 - [ ] FUNC-271b: `workledger plan apply` for `plan_direction=push` shall archive successfully deleted remote cleanup rows into `workledger trash`.
 - [ ] FUNC-271c: human-readable `workledger plan apply` success output shall include the aggregate trash archive count for the execution summary.
+- [ ] FUNC-271d: Cancelling `workledger plan apply` before a remote mutation starts shall leave unscheduled items unattempted.
+- [ ] FUNC-271e: Cancelling an in-flight remote mutation whose outcome cannot be confirmed shall leave its saved plan items uncertain for explicit reconciliation.
 
 ## Plan Retry
 - [ ] FUNC-272: `workledger plan retry` shall load the requested saved plan by ID.

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"github.com/mattn/go-isatty"
 	clockifyadapter "github.com/solitus0/workledger/internal/adapter/clockify"
 	"github.com/solitus0/workledger/internal/config"
+	statusservice "github.com/solitus0/workledger/internal/status"
 	"github.com/solitus0/workledger/internal/worklogs"
 	"github.com/spf13/cobra"
 )
@@ -293,91 +295,15 @@ func (a *app) newStatusCommand() *cobra.Command {
 		Short: "Run local status diagnostics",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-
-			items := make([]statusItem, 0)
-			exitCode := 0
-			effective, issues, err := config.ValidateExisting()
+			report, err := statusservice.NewService().Check(cmd.Context())
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return exitError{code: 130}
+				}
 				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
 			}
-
-			configValid := len(issues) == 0
-			if configValid {
-				items = append(items, statusItem{Category: "local", Target: "config", Status: "ok", Message: "config is valid"})
-				if err := checkLocalStorageWritable(effective.SQLitePath, "status"); err != nil {
-					items = append(items, statusItem{Category: "local", Target: "storage", Status: "error", Message: err.Error()})
-					exitCode = firstNonZeroExitCode(exitCode, 1)
-				} else {
-					items = append(items, statusItem{Category: "local", Target: "storage", Status: "ok", Message: "local SQLite storage is writable"})
-				}
-			} else {
-				items = append(items, statusItem{Category: "local", Target: "config", Status: "error", Message: "config validation failed"})
-				exitCode = 2
-			}
-
-			if !configValid {
-				items = append(items, statusItem{Category: "env", Target: "config", Status: "skipped", Message: "config validation failed"})
-			} else {
-				refs := config.EnvReferences(effective)
-				missing := 0
-				for _, ref := range refs {
-					status := "ok"
-					message := "set"
-					if !ref.IsSet {
-						status = "error"
-						message = "missing"
-						missing++
-					}
-					items = append(items, statusItem{Category: "env", Target: ref.Name, Status: status, Message: message})
-				}
-				if missing > 0 && exitCode == 0 {
-					exitCode = 2
-				}
-			}
-
-			if !configValid {
-				items = append(items, statusItem{Category: "routing", Target: "config", Status: "skipped", Message: "config validation failed"})
-			} else {
-				rules := config.RouteRules(effective)
-				if len(rules) == 0 {
-					items = append(items, statusItem{Category: "routing", Target: "rules", Status: "ok", Message: "no routing rules configured"})
-				} else {
-					items = append(items, statusItem{Category: "routing", Target: "rules", Status: "ok", Message: fmt.Sprintf("%d routing rules configured", len(rules))})
-				}
-				audit := config.AuditClockifyMappings(effective)
-				for _, prefix := range audit.MissingPrefixes {
-					items = append(items, statusItem{Category: "routing", Target: prefix, Status: "warning", Message: "routed prefix has no Clockify project mapping"})
-				}
-				for _, prefix := range audit.OrphanedPrefixes {
-					items = append(items, statusItem{Category: "routing", Target: prefix, Status: "warning", Message: "Clockify project mapping is not referenced by Jira routing"})
-				}
-			}
-
-			if !configValid {
-				items = append(items, statusItem{Category: "connectivity", Target: "config", Status: "skipped", Message: "config validation failed"})
-			} else {
-				rows, code := a.collectAllConnectivityRows(cmd.Context(), effective)
-				for _, row := range rows {
-					target := row.Adapter
-					if row.Instance != "" {
-						target += ":" + row.Instance
-					}
-					if row.Adapter == "clockify" && row.WorkspaceID != "" {
-						target = row.Adapter + ":" + row.WorkspaceID
-					}
-					status := "ok"
-					message := row.User
-					if row.Adapter == "clockify" {
-						message = row.UserID
-					}
-					if row.Status != "OK" {
-						status = "error"
-						message = row.Status
-					}
-					items = append(items, statusItem{Category: "connectivity", Target: target, Status: status, Message: message})
-				}
-				exitCode = firstNonZeroExitCode(exitCode, code)
-			}
+			items := report.Items
+			exitCode := statusExitCode(items)
 
 			if mode == "json" {
 				rows := make([]map[string]any, 0, len(items))
@@ -396,9 +322,6 @@ func (a *app) newStatusCommand() *cobra.Command {
 				return err
 			}
 
-			if !configValid && exitCode == 0 {
-				exitCode = 2
-			}
 			if exitCode != 0 {
 				return exitError{code: exitCode}
 			}
@@ -614,12 +537,7 @@ func (a *app) newClockifyMappingsValidateCommand() *cobra.Command {
 	}
 }
 
-type statusItem struct {
-	Category string
-	Target   string
-	Status   string
-	Message  string
-}
+type statusItem = statusservice.Item
 
 type clockifyMappingRow struct {
 	Prefix  string
@@ -634,6 +552,24 @@ func statusRows(items []statusItem) [][]string {
 		rows = append(rows, []string{item.Category, item.Target, item.Status, item.Message})
 	}
 	return rows
+}
+
+func statusExitCode(items []statusItem) int {
+	for _, item := range items {
+		switch item.FailureKind {
+		case statusservice.FailureInternal:
+			return 1
+		case statusservice.FailureValidation:
+			return 2
+		case statusservice.FailureNotFound:
+			return 3
+		case statusservice.FailureAuth:
+			return 4
+		case statusservice.FailureRemote:
+			return 5
+		}
+	}
+	return 0
 }
 
 func routeExplanationJSON(explanation config.RouteExplanation) map[string]any {

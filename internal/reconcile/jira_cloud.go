@@ -22,7 +22,7 @@ func (s *Service) CreateJiraCloudPullPlan(ctx context.Context, cfg config.Effect
 	if err != nil {
 		return Plan{}, err
 	}
-	if err := s.insertPlan(plan); err != nil {
+	if err := s.insertPlan(ctx, plan); err != nil {
 		return Plan{}, err
 	}
 	return plan, nil
@@ -221,7 +221,7 @@ func (s *Service) ReconcileJiraCloudPushPlan(ctx context.Context, cfg config.Eff
 		return result, nil
 	}
 	if result.Plan != nil {
-		if err := s.insertPlan(*result.Plan); err != nil {
+		if err := s.insertPlan(ctx, *result.Plan); err != nil {
 			return ReconcileResult{}, err
 		}
 	}
@@ -258,7 +258,7 @@ func (s *Service) CreateJiraCloudPushPlan(ctx context.Context, cfg config.Effect
 	if err != nil {
 		return Plan{}, err
 	}
-	if err := s.insertPlan(plan); err != nil {
+	if err := s.insertPlan(ctx, plan); err != nil {
 		return Plan{}, err
 	}
 	return plan, nil

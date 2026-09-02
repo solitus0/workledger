@@ -23,6 +23,7 @@ import (
 	jiracloudadapter "github.com/solitus0/workledger/internal/adapter/jiracloud"
 	jiradcadapter "github.com/solitus0/workledger/internal/adapter/jiradatacenter"
 	"github.com/solitus0/workledger/internal/config"
+	"github.com/solitus0/workledger/internal/issues"
 	"github.com/solitus0/workledger/internal/progress"
 	"github.com/solitus0/workledger/internal/reconcile"
 	reconcilemodel "github.com/solitus0/workledger/internal/reconcile/model"
@@ -871,7 +872,7 @@ func (a *app) newWorklogsShiftCommand() *cobra.Command {
 			defer cleanup()
 
 			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			result, err := service.Shift(effective, worklogs.ListFilters{
+			result, err := service.Shift(cmd.Context(), effective, worklogs.ListFilters{
 				Issue:         issue,
 				IssuePrefix:   issuePrefix,
 				Today:         today,
@@ -993,7 +994,7 @@ func (a *app) newWorklogsApplyCommand() *cobra.Command {
 				return a.handleWorklogError(mode, effective, err)
 			}
 
-			result, err := service.Apply(effective, payload, force, dry)
+			result, err := service.Apply(cmd.Context(), effective, payload, force, dry)
 			if err != nil {
 				return a.handleWorklogError(mode, effective, err)
 			}
@@ -1097,7 +1098,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 			if dry {
 				result, err = service.PreviewAdd(effective, input)
 			} else {
-				result, err = service.Add(effective, input)
+				result, err = service.Add(cmd.Context(), effective, input)
 			}
 			if err != nil {
 				return a.handleWorklogError(mode, effective, err)
@@ -1210,7 +1211,12 @@ func (a *app) newWorklogsUpdateCommand() *cobra.Command {
 				patch.Description = &description
 			}
 
-			record, err := service.Update(effective, args[0], patch)
+			current, err := service.Show(args[0])
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+			patch.ExpectedRevision = current.Revision
+			record, err := service.Update(cmd.Context(), effective, args[0], patch)
 			if err != nil {
 				return a.handleWorklogError(mode, effective, err)
 			}
@@ -1272,7 +1278,11 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 				if dry || yes || issue != "" || issuePrefix != "" || today || yesterday || monday || tuesday || wednesday || thursday || friday || saturday || sunday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != "" || weekOffsetSet {
 					return a.fail(mode, 2, "validation_error", "single delete cannot be combined with batch delete flags", nil)
 				}
-				record, err := service.Delete(args[0])
+				current, err := service.Show(args[0])
+				if err != nil {
+					return a.handleWorklogError(mode, effective, err)
+				}
+				record, err := service.Delete(cmd.Context(), args[0], current.Revision)
 				if err != nil {
 					return a.handleWorklogError(mode, effective, err)
 				}
@@ -1293,7 +1303,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 				return a.fail(mode, 2, "validation_error", "filtered batch delete requires --yes or --dry", nil)
 			}
 
-			result, err := service.DeleteBatch(effective, worklogs.ListFilters{
+			result, err := service.DeleteBatch(cmd.Context(), effective, worklogs.ListFilters{
 				Issue:         issue,
 				IssuePrefix:   issuePrefix,
 				Today:         today,
@@ -1381,168 +1391,6 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	return cmd
 }
 
-type connectivityRow struct {
-	Adapter     string
-	Instance    string
-	Status      string
-	BaseURL     string
-	WorkspaceID string
-	UserID      string
-	User        string
-}
-
-func (a *app) collectAllConnectivityRows(ctx context.Context, effective config.EffectiveConfig) ([]connectivityRow, int) {
-	rows := make([]connectivityRow, 0)
-	exitCode := 0
-
-	clockifyRows, err := a.collectClockifyConnectivityRows(ctx, effective)
-	if err != nil {
-		rows = append(rows, failedClockifyConnectivityRow(effective, err))
-		exitCode = firstNonZeroExitCode(exitCode, connectivityExitCodeForClockify(err))
-	} else {
-		rows = append(rows, clockifyRows...)
-	}
-
-	jiraCloudRows, jiraCloudExitCode := a.collectJiraCloudConnectivityRows(ctx, effective)
-	rows = append(rows, jiraCloudRows...)
-	exitCode = firstNonZeroExitCode(exitCode, jiraCloudExitCode)
-
-	jiraDataRows, jiraDataExitCode := a.collectJiraDataConnectivityRows(ctx, effective)
-	rows = append(rows, jiraDataRows...)
-	exitCode = firstNonZeroExitCode(exitCode, jiraDataExitCode)
-
-	return rows, exitCode
-}
-
-func (a *app) collectClockifyConnectivityRows(ctx context.Context, effective config.EffectiveConfig) ([]connectivityRow, error) {
-	if effective.File.Clockify == nil {
-		return nil, nil
-	}
-
-	resolvedInstance, clockifyCfg, err := config.ResolveClockifyInstance(effective, "")
-	if err != nil {
-		return nil, err
-	}
-
-	client := clockifyadapter.NewClient(clockifyCfg.Auth.APIKey)
-	user, err := client.CurrentUser(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if user.ID != clockifyCfg.UserID {
-		return nil, errors.New("configured clockify.user_id does not match authenticated user")
-	}
-	if clockifyCfg.WorkspaceID != user.ActiveWorkspace && clockifyCfg.WorkspaceID != user.DefaultWorkspace {
-		return nil, errors.New("configured clockify.workspace_id is not visible for the authenticated user")
-	}
-	windowFrom, windowTo, err := parsePlanWindow(effective, false, false, false, false, false, false, false, false, false, false, true, false, false, false, "", "", 0, false)
-	if err != nil {
-		return nil, err
-	}
-	_, err = client.ListUserTimeEntries(ctx, clockifyCfg.WorkspaceID, clockifyCfg.UserID, windowFrom, windowTo)
-	if err != nil {
-		return nil, err
-	}
-	_, err = client.ListTags(ctx, clockifyCfg.WorkspaceID)
-	if err != nil {
-		return nil, err
-	}
-
-	return []connectivityRow{{
-		Adapter:     "clockify",
-		Instance:    resolvedInstance,
-		Status:      "OK",
-		WorkspaceID: clockifyCfg.WorkspaceID,
-		UserID:      clockifyCfg.UserID,
-	}}, nil
-}
-
-func (a *app) collectJiraCloudConnectivityRows(ctx context.Context, effective config.EffectiveConfig) ([]connectivityRow, int) {
-	if effective.File.JiraCloud == nil || len(effective.File.JiraCloud.Instances) == 0 {
-		return nil, 0
-	}
-
-	names := sortedJiraCloudInstanceNames(effective.File.JiraCloud.Instances)
-	rows := make([]connectivityRow, 0, len(names))
-	exitCode := 0
-	for _, name := range names {
-		_, instance, err := config.ResolveJiraCloudInstance(effective, name)
-		if err != nil {
-			rows = append(rows, connectivityRow{
-				Adapter:  "jira-cloud",
-				Instance: name,
-				Status:   err.Error(),
-			})
-			exitCode = firstNonZeroExitCode(exitCode, 2)
-			continue
-		}
-		client := jiracloudadapter.NewClient(instance.BaseURL, instance.Auth.Email, instance.Auth.Token)
-		user, err := client.CurrentUser(ctx)
-		if err != nil {
-			rows = append(rows, connectivityRow{
-				Adapter:  "jira-cloud",
-				Instance: name,
-				Status:   err.Error(),
-				BaseURL:  instance.BaseURL,
-			})
-			exitCode = firstNonZeroExitCode(exitCode, connectivityExitCodeForJiraCloud(err))
-			continue
-		}
-		rows = append(rows, connectivityRow{
-			Adapter:  "jira-cloud",
-			Instance: name,
-			Status:   "OK",
-			BaseURL:  instance.BaseURL,
-			User:     firstNonEmpty(user.DisplayName, user.EmailAddress, user.Name, user.Key, user.AccountID),
-		})
-	}
-
-	return rows, exitCode
-}
-
-func (a *app) collectJiraDataConnectivityRows(ctx context.Context, effective config.EffectiveConfig) ([]connectivityRow, int) {
-	if effective.File.JiraData == nil || len(effective.File.JiraData.Instances) == 0 {
-		return nil, 0
-	}
-
-	names := sortedJiraDataInstanceNames(effective.File.JiraData.Instances)
-	rows := make([]connectivityRow, 0, len(names))
-	exitCode := 0
-	for _, name := range names {
-		_, instance, err := config.ResolveJiraDataInstance(effective, name)
-		if err != nil {
-			rows = append(rows, connectivityRow{
-				Adapter:  "jira-data-center",
-				Instance: name,
-				Status:   err.Error(),
-			})
-			exitCode = firstNonZeroExitCode(exitCode, 2)
-			continue
-		}
-		client := jiradcadapter.NewClient(instance.BaseURL, instance.Auth.Bearer.Token)
-		user, err := client.CurrentUser(ctx)
-		if err != nil {
-			rows = append(rows, connectivityRow{
-				Adapter:  "jira-data-center",
-				Instance: name,
-				Status:   err.Error(),
-				BaseURL:  instance.BaseURL,
-			})
-			exitCode = firstNonZeroExitCode(exitCode, connectivityExitCodeForJiraData(err))
-			continue
-		}
-		rows = append(rows, connectivityRow{
-			Adapter:  "jira-data-center",
-			Instance: name,
-			Status:   "OK",
-			BaseURL:  instance.BaseURL,
-			User:     firstNonEmpty(user.DisplayName, user.EmailAddress, user.Name, user.Key, user.AccountID),
-		})
-	}
-
-	return rows, exitCode
-}
-
 func sortedJiraCloudInstanceNames(instances map[string]config.JiraCloudInstance) []string {
 	names := make([]string, 0, len(instances))
 	for name := range instances {
@@ -1559,19 +1407,6 @@ func sortedJiraDataInstanceNames(instances map[string]config.JiraDataCenterInsta
 	}
 	sort.Strings(names)
 	return names
-}
-
-func failedClockifyConnectivityRow(effective config.EffectiveConfig, err error) connectivityRow {
-	row := connectivityRow{
-		Adapter:  "clockify",
-		Instance: config.ClockifyInstanceName,
-		Status:   err.Error(),
-	}
-	if effective.File.Clockify != nil {
-		row.WorkspaceID = effective.File.Clockify.WorkspaceID
-		row.UserID = effective.File.Clockify.UserID
-	}
-	return row
 }
 
 func firstNonZeroExitCode(current, next int) int {
@@ -1849,146 +1684,52 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 		Example: "  workledger issue-metadata refresh --adapter jira-cloud --field max-estimate --today\n  workledger issue-metadata refresh --adapter jira-data-center --field max-estimate --from 2026-05-14 --to 2026-05-16",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			if field != "max-estimate" {
-				return a.fail(mode, 2, "validation_error", "only --field=max-estimate is supported in this slice", nil)
-			}
 			effective, service, cleanup, err := a.loadService(mode, true, "issue-metadata refresh")
 			if err != nil {
 				return err
 			}
 			defer cleanup()
-
 			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			items, _, err := service.List(effective, worklogs.ListFilters{
-				Issue:         issue,
-				IssuePrefix:   issuePrefix,
-				Today:         today,
-				Yesterday:     yesterday,
-				Tomorrow:      tomorrow,
-				Monday:        monday,
-				Tuesday:       tuesday,
-				Wednesday:     wednesday,
-				Thursday:      thursday,
-				Friday:        friday,
-				Saturday:      saturday,
-				Sunday:        sunday,
-				CurrentWeek:   currentWeek,
-				LastWeek:      lastWeek,
-				CurrentMonth:  currentMonth,
-				LastMonth:     lastMonth,
-				From:          from,
-				To:            to,
-				WeekOffset:    weekOffset,
-				WeekOffsetSet: weekOffsetSet,
+			result, err := issues.NewService(service).Refresh(cmd.Context(), effective, issues.RefreshInput{
+				Adapter:  adapter,
+				Instance: instance,
+				Field:    field,
+				Filters: worklogs.ListFilters{
+					Issue: issue, IssuePrefix: issuePrefix, Today: today, Yesterday: yesterday, Tomorrow: tomorrow,
+					Monday: monday, Tuesday: tuesday, Wednesday: wednesday, Thursday: thursday, Friday: friday,
+					Saturday: saturday, Sunday: sunday, CurrentWeek: currentWeek, LastWeek: lastWeek,
+					CurrentMonth: currentMonth, LastMonth: lastMonth, From: from, To: to,
+					WeekOffset: weekOffset, WeekOffsetSet: weekOffsetSet,
+				},
 			})
 			if err != nil {
-				return a.handleWorklogError(mode, effective, err)
+				switch {
+				case errors.Is(err, context.Canceled):
+					return exitError{code: 130}
+				case errors.Is(err, issues.ErrValidation):
+					return a.fail(mode, 2, "validation_error", err.Error(), nil)
+				case errors.Is(err, worklogs.ErrValidation), errors.Is(err, worklogs.ErrConflict), errors.Is(err, worklogs.ErrNotFound):
+					return a.handleWorklogError(mode, effective, err)
+				}
+				var remoteErr *issues.RemoteError
+				if errors.As(err, &remoteErr) {
+					if remoteErr.Adapter == "jira-cloud" {
+						return a.handleJiraCloudError(mode, remoteErr.Err)
+					}
+					return a.handleJiraDataError(mode, remoteErr.Err)
+				}
+				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
 			}
-			var resolvedInstance string
-			var refreshed []map[string]any
-			issueKeys := issueKeys(items)
-			switch adapter {
-			case "jira-data-center":
-				resolvedInstance, err = resolveJiraDataInstanceName(effective, instance)
-				if err != nil {
-					return a.fail(mode, 2, "validation_error", err.Error(), nil)
-				}
-				if len(issueKeys) == 0 {
-					if mode == "json" {
-						return a.writeJSON(map[string]any{"adapter": adapter, "instance": resolvedInstance, "field": field, "updated": 0, "issues": []any{}})
-					}
-					_, _ = fmt.Fprintln(a.stdout, "updated=0")
-					return nil
-				}
-				if effective.File.JiraData != nil {
-					if cfg, ok := effective.File.JiraData.Instances[resolvedInstance]; ok && cfg.Routing != nil {
-						issuePrefixes, err := config.JiraDataIssuePrefixes(effective, resolvedInstance)
-						if err != nil {
-							return a.fail(mode, 2, "validation_error", err.Error(), nil)
-						}
-						issueKeys = filterIssueKeysByPrefixes(issueKeys, issuePrefixes)
-					}
-				}
-				if len(issueKeys) == 0 {
-					if mode == "json" {
-						return a.writeJSON(map[string]any{"adapter": adapter, "instance": resolvedInstance, "field": field, "updated": 0, "issues": []any{}})
-					}
-					_, _ = fmt.Fprintln(a.stdout, "updated=0")
-					return nil
-				}
-				_, cfg, err := config.ResolveJiraDataInstance(effective, resolvedInstance)
-				if err != nil {
-					return a.fail(mode, 2, "validation_error", err.Error(), nil)
-				}
-				client := jiradcadapter.NewClient(cfg.BaseURL, cfg.Auth.Bearer.Token)
-				refreshed = make([]map[string]any, 0, len(issueKeys))
-				for _, key := range issueKeys {
-					issueItem, err := client.GetIssue(cmd.Context(), key, []string{"timetracking"})
-					if err != nil {
-						return a.handleJiraDataError(mode, err)
-					}
-					var estimate *int64
-					if issueItem.Fields.Timetracking != nil {
-						estimate = issueItem.Fields.Timetracking.OriginalEstimateSeconds
-					}
-					if err := service.UpsertIssueMetadata(key, estimate, "jira-data-center", resolvedInstance, time.Now().UTC()); err != nil {
-						return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
-					}
-					refreshed = append(refreshed, map[string]any{"issue_key": key, "max_estimate_seconds": int64PtrToAny(estimate)})
-				}
-			case "jira-cloud":
-				resolvedInstance, err = resolveJiraCloudInstanceName(effective, instance)
-				if err != nil {
-					return a.fail(mode, 2, "validation_error", err.Error(), nil)
-				}
-				if len(issueKeys) == 0 {
-					if mode == "json" {
-						return a.writeJSON(map[string]any{"adapter": adapter, "instance": resolvedInstance, "field": field, "updated": 0, "issues": []any{}})
-					}
-					_, _ = fmt.Fprintln(a.stdout, "updated=0")
-					return nil
-				}
-				if effective.File.JiraCloud != nil {
-					if cfg, ok := effective.File.JiraCloud.Instances[resolvedInstance]; ok && cfg.Routing != nil {
-						issuePrefixes, err := config.JiraCloudIssuePrefixes(effective, resolvedInstance)
-						if err != nil {
-							return a.fail(mode, 2, "validation_error", err.Error(), nil)
-						}
-						issueKeys = filterIssueKeysByPrefixes(issueKeys, issuePrefixes)
-					}
-				}
-				if len(issueKeys) == 0 {
-					if mode == "json" {
-						return a.writeJSON(map[string]any{"adapter": adapter, "instance": resolvedInstance, "field": field, "updated": 0, "issues": []any{}})
-					}
-					_, _ = fmt.Fprintln(a.stdout, "updated=0")
-					return nil
-				}
-				_, cfg, err := config.ResolveJiraCloudInstance(effective, resolvedInstance)
-				if err != nil {
-					return a.fail(mode, 2, "validation_error", err.Error(), nil)
-				}
-				client := jiracloudadapter.NewClient(cfg.BaseURL, cfg.Auth.Email, cfg.Auth.Token)
-				refreshed = make([]map[string]any, 0, len(issueKeys))
-				for _, key := range issueKeys {
-					issueItem, err := client.GetIssue(cmd.Context(), key, []string{"timetracking"})
-					if err != nil {
-						return a.handleJiraCloudError(mode, err)
-					}
-					var estimate *int64
-					if issueItem.Fields.Timetracking != nil {
-						estimate = issueItem.Fields.Timetracking.OriginalEstimateSeconds
-					}
-					if err := service.UpsertIssueMetadata(key, estimate, "jira-cloud", resolvedInstance, time.Now().UTC()); err != nil {
-						return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
-					}
-					refreshed = append(refreshed, map[string]any{"issue_key": key, "max_estimate_seconds": int64PtrToAny(estimate)})
-				}
-			default:
-				return a.fail(mode, 2, "validation_error", "supported adapters are jira-cloud and jira-data-center", nil)
+			refreshed := make([]map[string]any, 0, len(result.Items))
+			for _, item := range result.Items {
+				refreshed = append(refreshed, map[string]any{"issue_key": item.IssueKey, "max_estimate_seconds": int64PtrToAny(item.MaxEstimateSeconds)})
 			}
 			if mode == "json" {
-				return a.writeJSON(map[string]any{"adapter": adapter, "instance": resolvedInstance, "field": field, "updated": len(refreshed), "issues": refreshed})
+				return a.writeJSON(map[string]any{"adapter": result.Adapter, "instance": result.Instance, "field": result.Field, "updated": len(refreshed), "issues": refreshed})
+			}
+			if len(refreshed) == 0 {
+				_, _ = fmt.Fprintln(a.stdout, "updated=0")
+				return nil
 			}
 			return renderTable(a.stdout, []string{"ISSUE", "MAX_ESTIMATE_SECONDS"}, issueMetadataRefreshRows(refreshed))
 		},
@@ -2672,8 +2413,11 @@ func (a *app) newPlanApplyCommand() *cobra.Command {
 			if err != nil {
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
-			result, err := reconcile.NewService(store).ApplyPlan(effective, planID, reconcile.ApplyOptions{Reporter: reporter})
+			result, err := reconcile.NewService(store).ApplyPlan(cmd.Context(), effective, planID, reconcile.ApplyOptions{Reporter: reporter})
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return exitError{code: 130}
+				}
 				if errors.Is(err, reconcile.ErrPlanNotFound) {
 					return a.fail(mode, 3, "not_found", "saved plan not found", nil)
 				}
@@ -2716,8 +2460,11 @@ func (a *app) newPlanRetryCommand() *cobra.Command {
 			if err != nil {
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
-			result, err := reconcile.NewService(store).RetryPlan(effective, planID, only, reconcile.ApplyOptions{Reporter: reporter})
+			result, err := reconcile.NewService(store).RetryPlan(cmd.Context(), effective, planID, only, reconcile.ApplyOptions{Reporter: reporter})
 			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return exitError{code: 130}
+				}
 				if errors.Is(err, reconcile.ErrPlanNotFound) {
 					return a.fail(mode, 3, "not_found", "saved plan not found", nil)
 				}
@@ -3352,8 +3099,8 @@ func (a *app) loadStore(mode string, requireWrite bool, operation string) (confi
 	}
 
 	if requireWrite {
-		if err := checkLocalStorageWritable(effective.SQLitePath, operation); err != nil {
-			var storageErr *localStorageError
+		if err := sqlitestore.CheckWritable(effective.SQLitePath, operation); err != nil {
+			var storageErr *sqlitestore.WritableError
 			if errors.As(err, &storageErr) {
 				return config.EffectiveConfig{}, nil, nil, a.failLocalStorageNotWritable(mode, storageErr)
 			}
@@ -3361,7 +3108,11 @@ func (a *app) loadStore(mode string, requireWrite bool, operation string) (confi
 		}
 	}
 
-	store, err := sqlitestore.OpenExisting(effective.SQLitePath)
+	openStore := sqlitestore.OpenExistingReadOnly
+	if requireWrite {
+		openStore = sqlitestore.OpenExisting
+	}
+	store, err := openStore(effective.SQLitePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return config.EffectiveConfig{}, nil, nil, a.failSQLiteStoreNotReady(mode)
@@ -4180,7 +3931,7 @@ func (a *app) failUnrecoverableSQLite(mode, sqlitePath string) error {
 	return exitError{code: 1}
 }
 
-func (a *app) failLocalStorageNotWritable(mode string, storageErr *localStorageError) error {
+func (a *app) failLocalStorageNotWritable(mode string, storageErr *sqlitestore.WritableError) error {
 	message := storageErr.Error()
 	next := "Next step: run outside sandbox, move storage.sqlite_path to a writable location, or fix filesystem permissions."
 
@@ -4524,19 +4275,6 @@ func issueKeys(items []worklogs.LocalWorklog) []string {
 		keys = append(keys, item.IssueKey)
 	}
 	return keys
-}
-
-func filterIssueKeysByPrefixes(issueKeys, issuePrefixes []string) []string {
-	if len(issuePrefixes) == 0 {
-		return issueKeys
-	}
-	filtered := make([]string, 0, len(issueKeys))
-	for _, issueKey := range issueKeys {
-		if matchesAnyIssuePrefix(issueKey, issuePrefixes) {
-			filtered = append(filtered, issueKey)
-		}
-	}
-	return filtered
 }
 
 func issueMetadataRefreshRows(items []map[string]any) [][]string {

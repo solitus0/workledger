@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -267,10 +268,18 @@ func ArchiveLocalTrashTx(tx *sql.Tx, planID, planItemID string, rows []LocalWork
 	return InsertTrashRowsTx(tx, records)
 }
 
-func DeleteActiveWorklogsTx(ctx context.Context, tx *sql.Tx, ids []string) error {
-	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM worklogs WHERE id = ?`, id); err != nil {
+func DeleteActiveWorklogsTx(ctx context.Context, tx *sql.Tx, rows []LocalWorklog) error {
+	for _, row := range rows {
+		result, err := tx.ExecContext(ctx, `DELETE FROM worklogs WHERE id = ? AND revision = ?`, row.ID, row.Revision)
+		if err != nil {
 			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return fmt.Errorf("%w: worklog %s changed during pull apply", ErrConflict, row.ID)
 		}
 	}
 	return nil

@@ -258,6 +258,19 @@ func TestStatusWithoutConfigReportsValidationFailure(t *testing.T) {
 	}
 }
 
+func TestStatusCancellationReturnsExit130(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	code := Run(ctx, []string{"status"}, stdout, stderr)
+
+	if code != 130 {
+		t.Fatalf("expected cancellation exit 130, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestWorklogsListRejectsMissingSQLiteStoreWithInitGuidance(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTC(t)

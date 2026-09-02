@@ -1,7 +1,9 @@
 package worklogs
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -9,6 +11,38 @@ import (
 	"github.com/solitus0/workledger/internal/config"
 	sqlitestore "github.com/solitus0/workledger/internal/store/sqlite"
 )
+
+func TestUpdateAndDeleteRejectStaleRevision(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	added, err := service.Add(context.Background(), cfg, AddInput{IssueKey: "APP-1", StartedUTC: "2026-05-01T09:00:00Z", Duration: "15m", Description: "initial"})
+	if err != nil {
+		t.Fatalf("Add failed: %v", err)
+	}
+	original := added.Records[0]
+	description := "updated"
+	updated, err := service.Update(context.Background(), cfg, original.ID, PatchInput{Description: &description, ExpectedRevision: original.Revision})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if updated.Revision != original.Revision+1 {
+		t.Fatalf("revision = %d, want %d", updated.Revision, original.Revision+1)
+	}
+
+	staleDescription := "stale"
+	_, err = service.Update(context.Background(), cfg, original.ID, PatchInput{Description: &staleDescription, ExpectedRevision: original.Revision})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale update error = %v, want ErrConflict", err)
+	}
+	_, err = service.Delete(context.Background(), original.ID, original.Revision)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale delete error = %v, want ErrConflict", err)
+	}
+	if _, err := service.Delete(context.Background(), original.ID, updated.Revision); err != nil {
+		t.Fatalf("Delete current revision failed: %v", err)
+	}
+}
 
 func TestParseDateSelectorAtSupportsSemanticWeekdays(t *testing.T) {
 	fixedNow := func() time.Time {
@@ -116,7 +150,7 @@ func TestSemanticWeekdayTimestampWorksAcrossWritePaths(t *testing.T) {
 
 	cfg := config.EffectiveConfig{Location: time.UTC, MinimumDurationSeconds: 900}
 
-	added, err := service.Add(cfg, AddInput{
+	added, err := service.Add(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-123",
 		Started:     "monT08:00",
 		Duration:    "30m",
@@ -130,7 +164,7 @@ func TestSemanticWeekdayTimestampWorksAcrossWritePaths(t *testing.T) {
 	}
 
 	updatedStarted := "monT09:00"
-	updated, err := service.Update(cfg, added.Records[0].ID, PatchInput{Started: &updatedStarted})
+	updated, err := service.Update(context.Background(), cfg, added.Records[0].ID, PatchInput{Started: &updatedStarted, ExpectedRevision: added.Records[0].Revision})
 	if err != nil {
 		t.Fatalf("update with semantic weekday: %v", err)
 	}
@@ -140,7 +174,7 @@ func TestSemanticWeekdayTimestampWorksAcrossWritePaths(t *testing.T) {
 
 	batchStarted := "monT10:00"
 	durationSeconds := 1800
-	applied, err := service.Apply(cfg, RawApplyPayload{Adds: []RawApplyAdd{{
+	applied, err := service.Apply(context.Background(), cfg, RawApplyPayload{Adds: []RawApplyAdd{{
 		IssueKey:        "ABC-124",
 		StartedAt:       &batchStarted,
 		DurationSeconds: &durationSeconds,
@@ -641,7 +675,7 @@ func TestSearchSupportsIssueDateLiteral(t *testing.T) {
 		Duration:    "30m",
 		Description: "Fix 100percent done behavior",
 	})
-	if _, err := service.Delete(literal.ID); err != nil {
+	if _, err := service.Delete(context.Background(), literal.ID, literal.Revision); err != nil {
 		t.Fatalf("delete failed: %v", err)
 	}
 
@@ -941,7 +975,7 @@ func TestAddFitExtendsPastDayEndWithoutWarning(t *testing.T) {
 		Description: "Busy",
 	})
 
-	result, err := service.Add(cfg, AddInput{
+	result, err := service.Add(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fit:         true,
 		Today:       true,
@@ -1318,7 +1352,7 @@ func TestAddFillFailsAtomicallyWhenFullDurationCannotBePlaced(t *testing.T) {
 		DayEnd:                 "17:00",
 		DailyLunch:             "12:00-13:00",
 	}
-	_, err := service.Add(cfg, AddInput{
+	_, err := service.Add(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fill:        true,
 		From:        "2026-05-03",
@@ -1390,7 +1424,7 @@ func newTestService(t *testing.T) (*sqlitestore.Store, *Service) {
 func mustAddWorklog(t *testing.T, service *Service, cfg config.EffectiveConfig, input AddInput) LocalWorklog {
 	t.Helper()
 
-	item, err := service.Add(cfg, input)
+	item, err := service.Add(context.Background(), cfg, input)
 	if err != nil {
 		t.Fatalf("add worklog: %v", err)
 	}
@@ -1426,7 +1460,7 @@ func TestUpdateIssueKeyDoesNotCreateDeleteMarker(t *testing.T) {
 	})
 
 	newKey := "NEW-2"
-	updated, err := service.Update(cfg, wl.ID, PatchInput{IssueKey: &newKey})
+	updated, err := service.Update(context.Background(), cfg, wl.ID, PatchInput{IssueKey: &newKey, ExpectedRevision: wl.Revision})
 	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
@@ -1448,7 +1482,7 @@ func TestUpdateIssueKeyDoesNotCreateDeleteMarker(t *testing.T) {
 			Description: "work",
 		})
 		newDesc := "updated work"
-		if _, err := service2.Update(cfg, wl2.ID, PatchInput{Description: &newDesc}); err != nil {
+		if _, err := service2.Update(context.Background(), cfg, wl2.ID, PatchInput{Description: &newDesc, ExpectedRevision: wl2.Revision}); err != nil {
 			t.Fatalf("update description failed: %v", err)
 		}
 		if got := countActiveWorklogs(t, store2); got != 1 {
@@ -1467,7 +1501,7 @@ func TestUpdateIssueKeyDoesNotCreateDeleteMarker(t *testing.T) {
 			Description: "work",
 		})
 		sameKey := "ABC-1"
-		if _, err := service3.Update(cfg, wl3.ID, PatchInput{IssueKey: &sameKey}); err != nil {
+		if _, err := service3.Update(context.Background(), cfg, wl3.ID, PatchInput{IssueKey: &sameKey, ExpectedRevision: wl3.Revision}); err != nil {
 			t.Fatalf("update same issue key failed: %v", err)
 		}
 		if got := countActiveWorklogs(t, store3); got != 1 {

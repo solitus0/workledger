@@ -1,11 +1,13 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -118,6 +120,112 @@ func TestBootstrapRepairsSavedPlanPushColumns(t *testing.T) {
 		if exists != 1 {
 			t.Fatalf("expected column %s to exist after repair", column)
 		}
+	}
+}
+
+func TestWritableStoreUsesWALAndConnectionPragmas(t *testing.T) {
+	store, _, err := Bootstrap(filepath.Join(t.TempDir(), "worklogs.db"))
+	if err != nil {
+		t.Fatalf("Bootstrap failed: %v", err)
+	}
+	defer store.Close()
+
+	var journalMode string
+	if err := store.DB().QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatalf("journal mode: %v", err)
+	}
+	if journalMode != "wal" {
+		t.Fatalf("journal mode = %q, want wal", journalMode)
+	}
+
+	ctx := context.Background()
+	connections := make([]*sql.Conn, 0, 3)
+	for range 3 {
+		conn, err := store.DB().Conn(ctx)
+		if err != nil {
+			t.Fatalf("acquire connection: %v", err)
+		}
+		connections = append(connections, conn)
+		var foreignKeys int
+		var busyTimeout int
+		if err := conn.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+			t.Fatalf("foreign_keys: %v", err)
+		}
+		if err := conn.QueryRowContext(ctx, `PRAGMA busy_timeout`).Scan(&busyTimeout); err != nil {
+			t.Fatalf("busy_timeout: %v", err)
+		}
+		if foreignKeys != 1 || busyTimeout != 5000 {
+			t.Fatalf("unexpected pragmas foreign_keys=%d busy_timeout=%d", foreignKeys, busyTimeout)
+		}
+	}
+	for _, conn := range connections {
+		_ = conn.Close()
+	}
+}
+
+func TestChangeTrackerDetectsAnotherStoreCommit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+	store, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatalf("Bootstrap failed: %v", err)
+	}
+	defer store.Close()
+	other, err := OpenExisting(path)
+	if err != nil {
+		t.Fatalf("OpenExisting failed: %v", err)
+	}
+	defer other.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	tracker, err := store.NewChangeTracker(ctx)
+	if err != nil {
+		t.Fatalf("NewChangeTracker failed: %v", err)
+	}
+	defer tracker.Close()
+	changed, err := tracker.Poll(ctx)
+	if err != nil || changed {
+		t.Fatalf("initial poll changed=%t err=%v", changed, err)
+	}
+
+	_, err = other.DB().Exec(`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES('external', 'APP-1', '2026-05-01T09:00:00Z', 900, 'external', '2026-05-01T09:00:00Z', '2026-05-01T09:00:00Z')`)
+	if err != nil {
+		t.Fatalf("external insert: %v", err)
+	}
+	changed, err = tracker.Poll(ctx)
+	if err != nil || !changed {
+		t.Fatalf("external poll changed=%t err=%v", changed, err)
+	}
+}
+
+func TestWALAllowsReaderWhileAnotherStoreHasUncommittedWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+	writer, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatalf("Bootstrap failed: %v", err)
+	}
+	defer writer.Close()
+	reader, err := OpenExistingReadOnly(path)
+	if err != nil {
+		t.Fatalf("OpenExistingReadOnly failed: %v", err)
+	}
+	defer reader.Close()
+
+	tx, err := writer.DB().Begin()
+	if err != nil {
+		t.Fatalf("Begin failed: %v", err)
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES('pending', 'APP-1', '2026-05-01T09:00:00Z', 900, 'pending', '2026-05-01T09:00:00Z', '2026-05-01T09:00:00Z')`)
+	if err != nil {
+		t.Fatalf("uncommitted insert: %v", err)
+	}
+	var count int
+	if err := reader.DB().QueryRow(`SELECT COUNT(*) FROM worklogs`).Scan(&count); err != nil {
+		t.Fatalf("read during write transaction: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("reader observed uncommitted row: count=%d", count)
 	}
 }
 

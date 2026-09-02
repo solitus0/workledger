@@ -114,7 +114,7 @@ func (s *Service) applyClockifyPushItemWithDeps(ctx context.Context, item PlanIt
 			}
 		}
 		deletedRows := scopedRemoteRowValues(deleteRows)
-		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+		if archivedCount, err := s.archiveRemoteTrashRows(ctx, item, deletedRows); err != nil {
 			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
 		} else {
 			result.trashArchivedCount += archivedCount
@@ -137,7 +137,7 @@ func (s *Service) applyClockifyPushItemWithDeps(ctx context.Context, item PlanIt
 		if err := deleteRemoteClockifyEntries(ctx, deps.client, deps.cfg.WorkspaceID, scopeEntries); err != nil {
 			return result, err
 		}
-		if archivedCount, err := s.archiveRemoteTrashRows(item, deletedRows); err != nil {
+		if archivedCount, err := s.archiveRemoteTrashRows(ctx, item, deletedRows); err != nil {
 			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
 		} else {
 			result.trashArchivedCount += archivedCount

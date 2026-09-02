@@ -70,7 +70,7 @@ func ParseRawApplyPayload(data []byte) (RawApplyPayload, error) {
 	return payload, nil
 }
 
-func (s *Service) Shift(cfg config.EffectiveConfig, filters ListFilters, by string, dryRun bool) (ShiftResult, error) {
+func (s *Service) Shift(ctx context.Context, cfg config.EffectiveConfig, filters ListFilters, by string, dryRun bool) (ShiftResult, error) {
 	if !hasExplicitSelector(filters) {
 		return ShiftResult{}, ValidationError{Issues: []ValidationIssue{{Field: "shift", Message: "requires at least one selector"}}}
 	}
@@ -142,21 +142,33 @@ func (s *Service) Shift(cfg config.EffectiveConfig, filters ListFilters, by stri
 		return result, nil
 	}
 
-	tx, err := s.store.DB().BeginTx(context.Background(), nil)
+	tx, err := s.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return ShiftResult{}, err
 	}
 	updatedAt := sqlitestore.RFC3339UTC(s.now().UTC())
-	for _, item := range shifted {
-		if _, err := tx.Exec(
-			`UPDATE worklogs SET started_at_utc = ?, updated_at = ? WHERE id = ?`,
+	for index, item := range shifted {
+		updateResult, err := tx.ExecContext(ctx,
+			`UPDATE worklogs SET started_at_utc = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ?`,
 			sqlitestore.RFC3339UTC(item.StartedAtUTC),
 			updatedAt,
 			item.ID,
-		); err != nil {
+			item.Revision,
+		)
+		if err != nil {
 			_ = tx.Rollback()
 			return ShiftResult{}, err
 		}
+		affected, err := updateResult.RowsAffected()
+		if err != nil {
+			_ = tx.Rollback()
+			return ShiftResult{}, err
+		}
+		if affected == 0 {
+			_ = tx.Rollback()
+			return ShiftResult{}, fmt.Errorf("%w: worklog %s changed since it was selected", ErrConflict, item.ID)
+		}
+		shifted[index].Revision++
 	}
 	if err := tx.Commit(); err != nil {
 		return ShiftResult{}, err
@@ -165,7 +177,7 @@ func (s *Service) Shift(cfg config.EffectiveConfig, filters ListFilters, by stri
 	return result, nil
 }
 
-func (s *Service) Apply(cfg config.EffectiveConfig, payload RawApplyPayload, force bool, dryRun bool) (ApplyResult, error) {
+func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, payload RawApplyPayload, force bool, dryRun bool) (ApplyResult, error) {
 	if len(payload.Adds) == 0 {
 		return ApplyResult{}, ValidationError{Issues: []ValidationIssue{{Field: "adds", Message: "must contain at least one add operation"}}}
 	}
@@ -205,7 +217,7 @@ func (s *Service) Apply(cfg config.EffectiveConfig, payload RawApplyPayload, for
 		return result, nil
 	}
 
-	tx, err := s.store.DB().BeginTx(context.Background(), nil)
+	tx, err := s.store.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return ApplyResult{}, err
 	}
@@ -215,11 +227,12 @@ func (s *Service) Apply(cfg config.EffectiveConfig, payload RawApplyPayload, for
 	for index, item := range candidates {
 		id := uuid.NewString()
 		item.ID = id
+		item.Revision = 1
 		result.Items[index].ID = &id
 		result.Items[index].Record = item
 		result.Records[index] = item
 
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
 			item.ID,
 			item.IssueKey,
