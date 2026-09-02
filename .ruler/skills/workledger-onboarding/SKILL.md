@@ -1,6 +1,6 @@
 ---
 name: workledger-onboarding
-description: guide first-time workledger cli setup, configuration, adapter onboarding, token environment variables, routing checks, and diagnostics. use when chatgpt needs to help initialize workledger, configure jira cloud, jira data center, or clockify, inspect effective yaml config, validate local storage, explain setup command syntax, interpret workledger status output, or troubleshoot onboarding before worklog creation, editing, reconciliation, or remote sync.
+description: guide first-time workledger cli setup, shell completion, configuration, adapter onboarding, token environment variables, routing checks, and diagnostics. use when chatgpt needs to help initialize workledger, configure command completion, configure jira cloud, jira data center, or clockify, inspect effective yaml config, validate local storage, explain setup command syntax, interpret workledger status output, or troubleshoot onboarding before worklog creation, editing, reconciliation, or remote sync.
 ---
 
 # Workledger Onboarding
@@ -16,8 +16,9 @@ Help users get `workledger` configured before worklog entry or sync workflows. S
 5. Use `workledger init` when no config exists.
 6. Generate the narrowest `workledger setup ...` command.
 7. Validate with `workledger config`, then diagnose with `workledger status`. For Jira, use `workledger route explain <real-issue-key>` to confirm that the configured prefix resolves to the intended family and instance.
-8. Interpret failures by layer: `config`, `env`, `routing`, `storage`, or `connectivity`.
-9. If the user uses Codex and wants `workledger` to write local worklogs into the shared SQLite database outside the current agent session without repeated sandbox prompts, optionally recommend adding the default local storage path to the Codex sandbox config:
+8. Identify the user's shell and include the matching completion setup for Bash, Zsh, or Fish. Explain that PowerShell is unsupported and that installed scripts should be regenerated after upgrades that change commands or flags.
+9. Interpret failures by layer: `config`, `env`, `routing`, `storage`, or `connectivity`.
+10. If the user uses Codex and wants `workledger` to write local worklogs into the shared SQLite database outside the current agent session without repeated sandbox prompts, optionally recommend adding the default local storage path to the Codex sandbox config:
 
    ```toml
    [sandbox_workspace_write]
@@ -27,9 +28,9 @@ Help users get `workledger` configured before worklog entry or sync workflows. S
    ```
 
    Explain the purpose clearly: this grants Codex write access to the default shared local Workledger storage directory so repeated `workledger worklogs add` operations can update the SQLite database without asking for permission each time. Also explain when to skip it: users who do not use Codex for local worklog writes, or who prefer explicit approval per write, do not need this change.
-10. End with current setup status and the next concrete command.
+11. End with current setup status and the next concrete command.
 
-Load `references/setup-commands.md` only when exact command syntax, routing commands, or diagnostic boundaries matter.
+Load `references/setup-commands.md` only when exact command syntax, shell completion installation, routing commands, or diagnostic boundaries matter.
 
 ## Boundaries
 
@@ -44,7 +45,7 @@ Do not handle normal worklog CRUD, coding-session worklog drafting, totals compa
 
 ## Response shape
 
-For setup, include: detected goal, missing inputs if any, commands in order, validation interpretation, and next action.
+For setup, include: detected goal, missing inputs if any, commands in order, matching shell completion setup, validation interpretation, and next action.
 
 For Jira setup, always include one plain-language routing example, such as: "`PROJ` tells Workledger that an issue like `PROJ-123` belongs to this Jira instance." If the instance handles multiple Jira projects, show one repeated `--issue-prefix` flag per project.
 

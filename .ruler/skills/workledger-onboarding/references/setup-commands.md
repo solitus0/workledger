@@ -12,6 +12,40 @@ workledger status
 
 `workledger config` validates the effective config. `workledger status` checks config, local storage, env vars, routing, and adapter connectivity.
 
+## Shell completion
+
+Workledger generates completion scripts for Bash, Zsh, and Fish. PowerShell is unsupported. Completion generation writes to stdout and does not require valid config or initialized SQLite storage.
+
+For Zsh, install the script and initialize its completion directory before `compinit`:
+
+```zsh
+mkdir -p ~/.zfunc
+workledger completion zsh > ~/.zfunc/_workledger
+```
+
+```zsh
+fpath=(~/.zfunc $fpath)
+autoload -Uz compinit
+compinit
+```
+
+For Bash, load completion in the current session:
+
+```bash
+source <(workledger completion bash)
+```
+
+Add that command to the user's Bash startup file when persistent completion is wanted.
+
+For Fish, install the script in the standard user completion directory:
+
+```fish
+mkdir -p ~/.config/fish/completions
+workledger completion fish > ~/.config/fish/completions/workledger.fish
+```
+
+Regenerate installed scripts after upgrading to a release that changes commands or flags.
+
 ## Adapter setup
 
 ### Jira Cloud
