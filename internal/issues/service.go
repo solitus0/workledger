@@ -97,7 +97,7 @@ func (s *Service) Refresh(ctx context.Context, cfg config.EffectiveConfig, input
 		return RefreshResult{}, err
 	}
 
-	active, _, err := s.worklogs.List(cfg, input.Filters)
+	active, _, err := s.worklogs.List(ctx, cfg, input.Filters)
 	if err != nil {
 		return RefreshResult{}, err
 	}

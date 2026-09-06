@@ -5490,6 +5490,14 @@ func TestTrashListSearchAndShowJSON(t *testing.T) {
 	if first["storage_scope"] != "local" || first["source_worklog_id"] != "row-1" {
 		t.Fatalf("unexpected first trash row %#v", first)
 	}
+	localOnly := runCLI(t, "trash", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--scope", "local", "--output", "json")
+	if localOnly.code != 0 {
+		t.Fatalf("scope list failed: %s %s", localOnly.stdout, localOnly.stderr)
+	}
+	localPayload := decodeJSONMap(t, []byte(localOnly.stdout))
+	if localPayload["total"].(float64) != 1 || localPayload["filters"].(map[string]any)["effective"].(map[string]any)["scope"] != "local" {
+		t.Fatalf("unexpected scoped trash: %s", localOnly.stdout)
+	}
 
 	search := runCLI(t, "trash", "search", "remote cleanup", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
 	if search.code != 0 {
@@ -5515,6 +5523,10 @@ func TestTrashListSearchAndShowJSON(t *testing.T) {
 	origin := showPayload["origin"].(map[string]any)
 	if origin["plan_direction"] != "push" || origin["adapter_family"] != "clockify" || origin["adapter_instance"] != "clockify" {
 		t.Fatalf("unexpected trash origin %#v", origin)
+	}
+	remoteRestore := runCLI(t, "trash", "restore", "trash-remote-1", "--output", "json")
+	if remoteRestore.code != 2 {
+		t.Fatalf("remote restore code=%d stdout=%s stderr=%s", remoteRestore.code, remoteRestore.stdout, remoteRestore.stderr)
 	}
 }
 
@@ -6111,7 +6123,7 @@ func TestPlanReconcileRejectsOnlyDeletedWithPull(t *testing.T) {
 	}
 }
 
-func TestAddUpdateAndPermanentDeleteFlow(t *testing.T) {
+func TestAddUpdateDeleteAndRestoreFlow(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTC(t)
 
@@ -6150,6 +6162,11 @@ func TestAddUpdateAndPermanentDeleteFlow(t *testing.T) {
 	if del.code != 0 {
 		t.Fatalf("delete failed: code=%d stdout=%s stderr=%s", del.code, del.stdout, del.stderr)
 	}
+	deleted := decodeJSONMap(t, []byte(del.stdout))
+	trashID, ok := deleted["trash_id"].(string)
+	if !ok || trashID == "" {
+		t.Fatalf("delete did not expose trash_id: %s", del.stdout)
+	}
 
 	afterDelete := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--fields", "id", "--output", "json")
 	if afterDelete.code != 0 {
@@ -6159,6 +6176,18 @@ func TestAddUpdateAndPermanentDeleteFlow(t *testing.T) {
 	afterDeleteItems := afterDeletePayload["items"].([]any)
 	if len(afterDeleteItems) != 0 {
 		t.Fatalf("expected no active worklogs after delete, got %#v", afterDeletePayload["items"])
+	}
+	restore := runCLI(t, "trash", "restore", trashID, "--output", "json")
+	if restore.code != 0 {
+		t.Fatalf("restore failed: code=%d stdout=%s stderr=%s", restore.code, restore.stdout, restore.stderr)
+	}
+	restored := decodeJSONMap(t, []byte(restore.stdout))
+	if restored["trash_id"] != trashID || restored["record"].(map[string]any)["id"] != id {
+		t.Fatalf("unexpected restore output: %s", restore.stdout)
+	}
+	second := runCLI(t, "trash", "restore", trashID, "--output", "json")
+	if second.code != 3 {
+		t.Fatalf("second restore code=%d stdout=%s stderr=%s", second.code, second.stdout, second.stderr)
 	}
 }
 
@@ -6214,6 +6243,10 @@ func TestOverlapConflictAndBatchDelete(t *testing.T) {
 	if exec.code != 0 {
 		t.Fatalf("batch delete failed: code=%d stdout=%s stderr=%s", exec.code, exec.stdout, exec.stderr)
 	}
+	executed := decodeJSONMap(t, []byte(exec.stdout))
+	if executed["deleted_count"].(float64) != 1 || executed["items"].([]any)[0].(map[string]any)["trash_id"] == "" {
+		t.Fatalf("unexpected batch delete mapping: %s", exec.stdout)
+	}
 
 	list := runCLI(t, "worklogs", "list", "--from", "2026-05-03", "--to", "2026-05-03", "--output", "json")
 	if list.code != 0 {
@@ -6222,6 +6255,22 @@ func TestOverlapConflictAndBatchDelete(t *testing.T) {
 	payload := decodeJSONMap(t, []byte(list.stdout))
 	if payload["total"].(float64) != 0 {
 		t.Fatalf("expected zero active rows, got %#v", payload["total"])
+	}
+	restoreDry := runCLI(t, "trash", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--dry", "--output", "json")
+	if restoreDry.code != 0 {
+		t.Fatalf("restore dry failed: %s %s", restoreDry.stdout, restoreDry.stderr)
+	}
+	dryPayload := decodeJSONMap(t, []byte(restoreDry.stdout))
+	if dryPayload["matched_count"].(float64) != 1 || dryPayload["restored_count"].(float64) != 0 {
+		t.Fatalf("unexpected restore preview: %s", restoreDry.stdout)
+	}
+	restoreExec := runCLI(t, "trash", "restore", "--from", "2026-05-03", "--to", "2026-05-03", "--yes", "--output", "json")
+	if restoreExec.code != 0 {
+		t.Fatalf("restore execute failed: %s %s", restoreExec.stdout, restoreExec.stderr)
+	}
+	restorePayload := decodeJSONMap(t, []byte(restoreExec.stdout))
+	if restorePayload["restored_count"].(float64) != 1 {
+		t.Fatalf("unexpected restore execution: %s", restoreExec.stdout)
 	}
 }
 

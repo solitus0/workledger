@@ -318,6 +318,12 @@ func TestBootstrapCreatesTrashTableAndIndexes(t *testing.T) {
 			t.Fatalf("expected index %s to exist", index)
 		}
 	}
+	for _, column := range []string{"source_created_at", "source_updated_at", "source_revision"} {
+		var count int
+		if err := store.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('trashed_worklogs') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("trash column %s count=%d err=%v", column, count, err)
+		}
+	}
 
 	var tombstoneTables int
 	if err := store.DB().QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'worklog_tombstones'`).Scan(&tombstoneTables); err != nil {

@@ -15,12 +15,19 @@ import (
 func TestUpdateAndDeleteRejectStaleRevision(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()
+	createdAt := time.Date(2026, 5, 1, 10, 15, 0, 0, time.UTC)
+	service.now = func() time.Time { return createdAt }
 	cfg := config.EffectiveConfig{Location: time.UTC}
 	added, err := service.Add(context.Background(), cfg, AddInput{IssueKey: "APP-1", StartedUTC: "2026-05-01T09:00:00Z", Duration: "15m", Description: "initial"})
 	if err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
 	original := added.Records[0]
+	if !original.CreatedAt.Equal(createdAt) || !original.UpdatedAt.Equal(createdAt) {
+		t.Fatalf("created timestamps = %s/%s, want %s", original.CreatedAt, original.UpdatedAt, createdAt)
+	}
+	updatedAt := createdAt.Add(45 * time.Minute)
+	service.now = func() time.Time { return updatedAt }
 	description := "updated"
 	updated, err := service.Update(context.Background(), cfg, original.ID, PatchInput{Description: &description, ExpectedRevision: original.Revision})
 	if err != nil {
@@ -28,6 +35,16 @@ func TestUpdateAndDeleteRejectStaleRevision(t *testing.T) {
 	}
 	if updated.Revision != original.Revision+1 {
 		t.Fatalf("revision = %d, want %d", updated.Revision, original.Revision+1)
+	}
+	if !updated.CreatedAt.Equal(createdAt) || !updated.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("updated timestamps = %s/%s, want %s/%s", updated.CreatedAt, updated.UpdatedAt, createdAt, updatedAt)
+	}
+	shown, err := service.Show(context.Background(), original.ID)
+	if err != nil {
+		t.Fatalf("Show failed: %v", err)
+	}
+	if !shown.CreatedAt.Equal(createdAt) || !shown.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("shown timestamps = %s/%s, want %s/%s", shown.CreatedAt, shown.UpdatedAt, createdAt, updatedAt)
 	}
 
 	staleDescription := "stale"
@@ -41,6 +58,141 @@ func TestUpdateAndDeleteRejectStaleRevision(t *testing.T) {
 	}
 	if _, err := service.Delete(context.Background(), original.ID, updated.Revision); err != nil {
 		t.Fatalf("Delete current revision failed: %v", err)
+	}
+}
+
+func TestActiveIssueTotalSecondsSumsExactActiveIssueAcrossAllDates(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	ctx := context.Background()
+
+	first := mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey: "APP-1", StartedUTC: "2026-05-01T09:00:00Z", Duration: "1h", Description: "first",
+	})
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey: "APP-1", StartedUTC: "2026-06-01T09:00:00Z", Duration: "2h30m", Description: "second",
+	})
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey: "APP-10", StartedUTC: "2026-07-01T09:00:00Z", Duration: "4h", Description: "nearby key",
+	})
+
+	total, err := service.ActiveIssueTotalSeconds(ctx, "APP-1")
+	if err != nil || total != 3*3600+30*60 {
+		t.Fatalf("active issue total = %d, err=%v", total, err)
+	}
+
+	if _, err := service.Delete(ctx, first.ID, first.Revision); err != nil {
+		t.Fatalf("delete first worklog: %v", err)
+	}
+	total, err = service.ActiveIssueTotalSeconds(ctx, "APP-1")
+	if err != nil || total != 2*3600+30*60 {
+		t.Fatalf("active issue total after delete = %d, err=%v", total, err)
+	}
+}
+
+func TestActiveIssueTotalSecondsValidatesIssueKey(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+
+	_, err := service.ActiveIssueTotalSeconds(context.Background(), "app-1")
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("invalid issue total error = %v, want ErrValidation", err)
+	}
+}
+
+func TestDeleteBatchExpectedRejectsChangedMembershipAndDeletesExactSnapshot(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	ctx := context.Background()
+
+	first, err := service.Add(ctx, cfg, AddInput{IssueKey: "APP-1", StartedUTC: "2026-05-21T09:00:00Z", Duration: "1h", Description: "first"})
+	if err != nil {
+		t.Fatalf("add first: %v", err)
+	}
+	second, err := service.Add(ctx, cfg, AddInput{IssueKey: "APP-2", StartedUTC: "2026-05-21T10:00:00Z", Duration: "1h", Description: "second"})
+	if err != nil {
+		t.Fatalf("add second: %v", err)
+	}
+	expected := []DeleteExpectation{
+		{ID: first.Records[0].ID, Revision: first.Records[0].Revision},
+		{ID: second.Records[0].ID, Revision: second.Records[0].Revision},
+	}
+	filters := ListFilters{From: "2026-05-21", To: "2026-05-21"}
+
+	third, err := service.Add(ctx, cfg, AddInput{IssueKey: "APP-3", StartedUTC: "2026-05-21T11:00:00Z", Duration: "1h", Description: "added after confirmation"})
+	if err != nil {
+		t.Fatalf("add third: %v", err)
+	}
+	if _, err := service.DeleteBatchExpected(ctx, cfg, filters, expected); !errors.Is(err, ErrConflict) {
+		t.Fatalf("changed membership error = %v, want ErrConflict", err)
+	}
+	remaining, _, err := service.List(ctx, cfg, filters)
+	if err != nil || len(remaining) != 3 {
+		t.Fatalf("membership conflict partially deleted rows: count=%d err=%v", len(remaining), err)
+	}
+
+	expected = append(expected, DeleteExpectation{ID: third.Records[0].ID, Revision: third.Records[0].Revision})
+	result, err := service.DeleteBatchExpected(ctx, cfg, filters, expected)
+	if err != nil {
+		t.Fatalf("delete exact snapshot: %v", err)
+	}
+	if len(result.Deleted) != 3 || len(result.Items) != 3 {
+		t.Fatalf("delete exact result = %#v", result)
+	}
+	remaining, _, err = service.List(ctx, cfg, filters)
+	if err != nil || len(remaining) != 0 {
+		t.Fatalf("exact snapshot remained: count=%d err=%v", len(remaining), err)
+	}
+}
+
+func TestDeleteBatchExpectedRejectsStaleRevisionWithoutPartialDelete(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	ctx := context.Background()
+	first, err := service.Add(ctx, cfg, AddInput{IssueKey: "APP-1", StartedUTC: "2026-05-21T09:00:00Z", Duration: "1h", Description: "first"})
+	if err != nil {
+		t.Fatalf("add first: %v", err)
+	}
+	second, err := service.Add(ctx, cfg, AddInput{IssueKey: "APP-2", StartedUTC: "2026-05-21T10:00:00Z", Duration: "1h", Description: "second"})
+	if err != nil {
+		t.Fatalf("add second: %v", err)
+	}
+	description := "changed"
+	if _, err := service.Update(ctx, cfg, second.Records[0].ID, PatchInput{Description: &description, ExpectedRevision: second.Records[0].Revision}); err != nil {
+		t.Fatalf("update second: %v", err)
+	}
+	expected := []DeleteExpectation{
+		{ID: first.Records[0].ID, Revision: first.Records[0].Revision},
+		{ID: second.Records[0].ID, Revision: second.Records[0].Revision},
+	}
+	filters := ListFilters{From: "2026-05-21", To: "2026-05-21"}
+	if _, err := service.DeleteBatchExpected(ctx, cfg, filters, expected); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale revision error = %v, want ErrConflict", err)
+	}
+	remaining, _, err := service.List(ctx, cfg, filters)
+	if err != nil || len(remaining) != 2 {
+		t.Fatalf("revision conflict partially deleted rows: count=%d err=%v", len(remaining), err)
+	}
+}
+
+func TestTUIFacingReadsHonorCancellation(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, _, err := service.List(ctx, cfg, ListFilters{Today: true}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("List cancellation = %v", err)
+	}
+	if _, err := service.Show(ctx, "missing"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Show cancellation = %v", err)
+	}
+	if _, err := service.Context(ctx, cfg, ContextInput{Today: true, NoLunch: true}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Context cancellation = %v", err)
 	}
 }
 
@@ -558,7 +710,7 @@ func TestListAndSearchSupportExactIssuePrefixBoundary(t *testing.T) {
 		Description: "IRW docs item",
 	})
 
-	active, effective, err := service.List(cfg, ListFilters{
+	active, effective, err := service.List(context.Background(), cfg, ListFilters{
 		IssuePrefix:  "IRW",
 		CurrentMonth: true,
 	})
@@ -575,7 +727,7 @@ func TestListAndSearchSupportExactIssuePrefixBoundary(t *testing.T) {
 		t.Fatalf("unexpected list matches %#v", active)
 	}
 
-	filtered, _, err := service.List(cfg, ListFilters{
+	filtered, _, err := service.List(context.Background(), cfg, ListFilters{
 		Issue:        exact.IssueKey,
 		IssuePrefix:  "IRW",
 		CurrentMonth: true,
@@ -587,7 +739,7 @@ func TestListAndSearchSupportExactIssuePrefixBoundary(t *testing.T) {
 		t.Fatalf("expected intersection to keep %s, got %#v", exact.IssueKey, filtered)
 	}
 
-	empty, _, err := service.List(cfg, ListFilters{
+	empty, _, err := service.List(context.Background(), cfg, ListFilters{
 		Issue:        nearMiss.IssueKey,
 		IssuePrefix:  "IRW",
 		CurrentMonth: true,
@@ -599,7 +751,7 @@ func TestListAndSearchSupportExactIssuePrefixBoundary(t *testing.T) {
 		t.Fatalf("expected no IRW matches for %s, got %#v", nearMiss.IssueKey, empty)
 	}
 
-	search, _, _, err := service.Search(cfg, SearchInput{
+	search, _, _, err := service.Search(context.Background(), cfg, SearchInput{
 		Query: "item",
 		ListFilters: ListFilters{
 			IssuePrefix: "IRW",
@@ -636,7 +788,7 @@ func TestSearchMatchesCaseInsensitiveLiteralSubstringAndOrdering(t *testing.T) {
 		Description: "api DOCS follow-up",
 	})
 
-	active, effective, query, err := service.Search(cfg, SearchInput{
+	active, effective, query, err := service.Search(context.Background(), cfg, SearchInput{
 		Query: "Api DoCs",
 	})
 	if err != nil {
@@ -679,7 +831,7 @@ func TestSearchSupportsIssueDateLiteral(t *testing.T) {
 		t.Fatalf("delete failed: %v", err)
 	}
 
-	active, _, _, err := service.Search(cfg, SearchInput{
+	active, _, _, err := service.Search(context.Background(), cfg, SearchInput{
 		Query: "%_done",
 		ListFilters: ListFilters{
 			From:  "2026-05-03",
@@ -714,7 +866,7 @@ func TestListOrdersActiveWorklogsOldestFirst(t *testing.T) {
 		Description: "Earlier",
 	})
 
-	active, _, err := service.List(cfg, ListFilters{
+	active, _, err := service.List(context.Background(), cfg, ListFilters{
 		From: "2026-05-03",
 		To:   "2026-05-04",
 	})
@@ -734,7 +886,7 @@ func TestSearchRejectsBlankQuery(t *testing.T) {
 	defer store.Close()
 
 	cfg := config.EffectiveConfig{Location: time.UTC}
-	_, _, _, err := service.Search(cfg, SearchInput{Query: "   "})
+	_, _, _, err := service.Search(context.Background(), cfg, SearchInput{Query: "   "})
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
@@ -746,7 +898,7 @@ func TestPreviewAddNormalizesAndDoesNotPersist(t *testing.T) {
 
 	cfg := config.EffectiveConfig{Location: time.UTC, MinimumDurationSeconds: 900}
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-123",
 		Started:     "2026-05-03T09:00",
 		Duration:    "1h",
@@ -791,7 +943,7 @@ func TestPreviewAddEnforcesConflictsAndForce(t *testing.T) {
 		Description: "First",
 	})
 
-	_, err := service.PreviewAdd(cfg, AddInput{
+	_, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		StartedUTC:  "2026-05-03T06:30:00Z",
 		Duration:    "1h",
@@ -801,7 +953,7 @@ func TestPreviewAddEnforcesConflictsAndForce(t *testing.T) {
 		t.Fatal("expected preview conflict")
 	}
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		StartedUTC:  "2026-05-03T06:30:00Z",
 		Duration:    "1h",
@@ -847,7 +999,7 @@ func TestPreviewAddFitCreatesOneContinuousWorklog(t *testing.T) {
 		Description: "Late morning",
 	})
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fit:         true,
 		Today:       true,
@@ -866,6 +1018,97 @@ func TestPreviewAddFitCreatesOneContinuousWorklog(t *testing.T) {
 	}
 	if record.DurationSeconds != 7200 {
 		t.Fatalf("unexpected duration %d", record.DurationSeconds)
+	}
+}
+
+func TestAddRejectsChangedExpectedAutomaticPlacement(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	cfg := config.EffectiveConfig{
+		Location: time.UTC, MinimumDurationSeconds: 900,
+		DayStart: "09:00", DayEnd: "17:00", DailyLunch: "12:00-12:45",
+	}
+	input := AddInput{
+		IssueKey: "ABC-124", Fit: true, From: "2026-05-03", To: "2026-05-03",
+		Duration: "1h", Description: "Fit",
+	}
+	preview, err := service.PreviewAdd(context.Background(), cfg, input)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	input.ExpectedPlacement = []PlacementExpectation{{
+		StartedAtUTC: preview.Records[0].StartedAtUTC, DurationSeconds: preview.Records[0].DurationSeconds,
+	}}
+	mustAddWorklog(t, service, cfg, AddInput{
+		IssueKey: "ABC-123", StartedUTC: "2026-05-03T09:00:00Z", Duration: "1h", Description: "Concurrent",
+	})
+
+	if _, err := service.Add(context.Background(), cfg, input); !errors.Is(err, ErrPlacementChanged) {
+		t.Fatalf("changed placement error = %v, want ErrPlacementChanged", err)
+	}
+	if got := countActiveWorklogs(t, store); got != 1 {
+		t.Fatalf("active worklogs = %d, want only concurrent row", got)
+	}
+}
+
+func TestAutomaticAddSerializesPlacementWithConcurrentWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+	store1, _, err := sqlitestore.Bootstrap(path)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	defer store1.Close()
+	store2, err := sqlitestore.OpenExisting(path)
+	if err != nil {
+		t.Fatalf("open second store: %v", err)
+	}
+	defer store2.Close()
+
+	ctx := context.Background()
+	conn, err := store1.DB().Conn(ctx)
+	if err != nil {
+		t.Fatalf("writer connection: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		t.Fatalf("begin writer: %v", err)
+	}
+	now := sqlitestore.RFC3339UTC(time.Now().UTC())
+	if _, err := conn.ExecContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		"concurrent", "ABC-123", "2026-05-03T08:00:00Z", 3600, "Concurrent", now, now); err != nil {
+		t.Fatalf("insert concurrent row: %v", err)
+	}
+
+	type addOutcome struct {
+		result AddResult
+		err    error
+	}
+	outcomes := make(chan addOutcome, 1)
+	go func() {
+		result, addErr := NewService(store2).Add(ctx, config.EffectiveConfig{
+			Location: time.UTC, MinimumDurationSeconds: 900,
+			DayStart: "08:00", DayEnd: "17:00", DailyLunch: "12:00-12:45",
+		}, AddInput{
+			IssueKey: "ABC-124", Fit: true, From: "2026-05-03", To: "2026-05-03",
+			Duration: "1h", Description: "Serialized",
+		})
+		outcomes <- addOutcome{result: result, err: addErr}
+	}()
+
+	select {
+	case outcome := <-outcomes:
+		t.Fatalf("automatic add completed before writer commit: %#v", outcome)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		t.Fatalf("commit writer: %v", err)
+	}
+	outcome := <-outcomes
+	if outcome.err != nil {
+		t.Fatalf("automatic add: %v", outcome.err)
+	}
+	if len(outcome.result.Records) != 1 || outcome.result.Records[0].StartedAtUTC.Format(time.RFC3339) != "2026-05-03T09:00:00Z" {
+		t.Fatalf("serialized placement = %#v, want 09:00", outcome.result.Records)
 	}
 }
 
@@ -896,7 +1139,7 @@ func TestPreviewAddFitRefusesFragmentedPlacement(t *testing.T) {
 		Description: "Rest",
 	})
 
-	_, err := service.PreviewAdd(cfg, AddInput{
+	_, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fit:         true,
 		Today:       true,
@@ -921,7 +1164,7 @@ func TestPreviewAddFitRespectsLunchAndNoLunch(t *testing.T) {
 		return time.Date(2026, 5, 3, 7, 0, 0, 0, time.UTC)
 	}
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fit:         true,
 		Today:       true,
@@ -938,7 +1181,7 @@ func TestPreviewAddFitRespectsLunchAndNoLunch(t *testing.T) {
 		t.Fatalf("unexpected start %s", got)
 	}
 
-	noLunchResult, err := service.PreviewAdd(cfg, AddInput{
+	noLunchResult, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fit:         true,
 		Today:       true,
@@ -1014,7 +1257,7 @@ func TestPreviewAddFitSkipsSlotStartingAtDayEnd(t *testing.T) {
 		Description: "Busy",
 	})
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fit:         true,
 		From:        "2026-05-03",
@@ -1046,7 +1289,7 @@ func TestPreviewAddFitOvertimeRestoresPostEndPlacement(t *testing.T) {
 		Description: "Busy",
 	})
 
-	_, err := service.PreviewAdd(cfg, AddInput{
+	_, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fit:         true,
 		From:        "2026-05-03",
@@ -1056,7 +1299,7 @@ func TestPreviewAddFitOvertimeRestoresPostEndPlacement(t *testing.T) {
 	})
 	assertAutomaticPlacementMessage(t, err, "no free slot available in the current time window; use --overtime to allow placement starting at or after day_end")
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fit:         true,
 		Overtime:    true,
@@ -1086,7 +1329,7 @@ func TestPreviewAddFitRespectsDayStartAndMidnight(t *testing.T) {
 		return time.Date(2026, 5, 3, 7, 0, 0, 0, time.UTC)
 	}
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fit:         true,
 		Today:       true,
@@ -1101,7 +1344,7 @@ func TestPreviewAddFitRespectsDayStartAndMidnight(t *testing.T) {
 		t.Fatalf("unexpected start %s", got)
 	}
 
-	_, err = service.PreviewAdd(cfg, AddInput{
+	_, err = service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fit:         true,
 		Today:       true,
@@ -1127,7 +1370,7 @@ func TestPreviewAddFitOvertimeDoesNotCrossLocalMidnightOnDSTDay(t *testing.T) {
 		DayEnd:                 "01:00",
 	}
 
-	_, err = service.PreviewAdd(cfg, AddInput{
+	_, err = service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fit:         true,
 		Overtime:    true,
@@ -1161,7 +1404,7 @@ func TestPreviewAddFillSplitsAcrossEarliestGapsAndLunch(t *testing.T) {
 		Description: "Middle",
 	})
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fill:        true,
 		Today:       true,
@@ -1190,7 +1433,7 @@ func TestPreviewAddFillCanSpanSelectedDates(t *testing.T) {
 		DailyLunch:             "12:00-13:00",
 	}
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fill:        true,
 		From:        "2026-05-03",
@@ -1233,7 +1476,7 @@ func TestPreviewAddFillAppliesDayEndToEveryFragment(t *testing.T) {
 		Description: "Boundary",
 	})
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fill:        true,
 		From:        "2026-05-03",
@@ -1249,7 +1492,7 @@ func TestPreviewAddFillAppliesDayEndToEveryFragment(t *testing.T) {
 		{start: "2026-05-04T09:00:00Z", duration: 3600},
 	})
 
-	overtimeResult, err := service.PreviewAdd(cfg, AddInput{
+	overtimeResult, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fill:        true,
 		Overtime:    true,
@@ -1285,7 +1528,7 @@ func TestPreviewAddFillExtendsPastDayEndWithoutWarning(t *testing.T) {
 		Description: "Busy",
 	})
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fill:        true,
 		From:        "2026-05-03",
@@ -1325,7 +1568,7 @@ func TestPreviewAddFillAdjustsFragmentsToMinimumDuration(t *testing.T) {
 		Description: "Rest",
 	})
 
-	result, err := service.PreviewAdd(cfg, AddInput{
+	result, err := service.PreviewAdd(context.Background(), cfg, AddInput{
 		IssueKey:    "ABC-124",
 		Fill:        true,
 		Today:       true,

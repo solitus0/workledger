@@ -136,7 +136,7 @@ type workdayWindow struct {
 	lunch           *ContextLunch
 }
 
-func (s *Service) LookupIssueMetadata(issueKeys []string) (map[string]IssueMetadata, error) {
+func (s *Service) LookupIssueMetadata(ctx context.Context, issueKeys []string) (map[string]IssueMetadata, error) {
 	unique := uniqueIssueKeys(issueKeys)
 	if len(unique) == 0 {
 		return map[string]IssueMetadata{}, nil
@@ -148,7 +148,7 @@ func (s *Service) LookupIssueMetadata(issueKeys []string) (map[string]IssueMetad
 		args = append(args, issueKey)
 	}
 
-	rows, err := s.store.DB().Query(
+	rows, err := s.store.DB().QueryContext(ctx,
 		`SELECT issue_key, max_estimate_seconds, source_adapter_family, source_adapter_instance, refreshed_at FROM issue_metadata WHERE issue_key IN (`+placeholders+`)`,
 		args...,
 	)
@@ -180,13 +180,13 @@ func (s *Service) LookupIssueMetadata(issueKeys []string) (map[string]IssueMetad
 	return items, rows.Err()
 }
 
-func (s *Service) ListIssueMetadata(issueKeys []string) ([]IssueMetadata, error) {
+func (s *Service) ListIssueMetadata(ctx context.Context, issueKeys []string) ([]IssueMetadata, error) {
 	unique := uniqueIssueKeys(issueKeys)
 	if len(unique) == 0 {
 		return []IssueMetadata{}, nil
 	}
 
-	items, err := s.LookupIssueMetadata(unique)
+	items, err := s.LookupIssueMetadata(ctx, unique)
 	if err != nil {
 		return nil, err
 	}
@@ -202,8 +202,8 @@ func (s *Service) ListIssueMetadata(issueKeys []string) ([]IssueMetadata, error)
 	return ordered, nil
 }
 
-func (s *Service) ShowIssueMetadata(issueKey string) (IssueMetadata, error) {
-	items, err := s.ListIssueMetadata([]string{issueKey})
+func (s *Service) ShowIssueMetadata(ctx context.Context, issueKey string) (IssueMetadata, error) {
+	items, err := s.ListIssueMetadata(ctx, []string{issueKey})
 	if err != nil {
 		return IssueMetadata{}, err
 	}
@@ -259,7 +259,7 @@ func uniqueIssueKeys(issueKeys []string) []string {
 	return unique
 }
 
-func (s *Service) Context(cfg config.EffectiveConfig, input ContextInput) (ContextResult, error) {
+func (s *Service) Context(ctx context.Context, cfg config.EffectiveConfig, input ContextInput) (ContextResult, error) {
 	filters, err := normalizeContextFiltersAt(cfg, input, s.now)
 	if err != nil {
 		return ContextResult{}, err
@@ -271,7 +271,7 @@ func (s *Service) Context(cfg config.EffectiveConfig, input ContextInput) (Conte
 	}
 
 	selectedDates := selectedContextDates(filters.From, filters.To, cfg.Location)
-	active, err := s.listActive(EffectiveFilters{})
+	active, err := s.listActive(ctx, EffectiveFilters{})
 	if err != nil {
 		return ContextResult{}, err
 	}
@@ -280,7 +280,7 @@ func (s *Service) Context(cfg config.EffectiveConfig, input ContextInput) (Conte
 	for _, item := range active {
 		keys = append(keys, item.IssueKey)
 	}
-	metadata, err := s.LookupIssueMetadata(keys)
+	metadata, err := s.LookupIssueMetadata(ctx, keys)
 	if err != nil {
 		return ContextResult{}, err
 	}

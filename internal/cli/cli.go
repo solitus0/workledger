@@ -558,7 +558,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 				WeekOffsetSet: weekOffsetSet,
 				Fields:        fieldList,
 			}
-			active, effectiveFilters, err := service.List(effective, raw)
+			active, effectiveFilters, err := service.List(cmd.Context(), effective, raw)
 			if err != nil {
 				return a.handleWorklogError(mode, effective, err)
 			}
@@ -663,7 +663,7 @@ func (a *app) newWorklogsSearchCommand() *cobra.Command {
 				WeekOffsetSet: weekOffsetSet,
 				Fields:        fieldList,
 			}
-			active, effectiveFilters, normalizedQuery, err := service.Search(effective, worklogs.SearchInput{
+			active, effectiveFilters, normalizedQuery, err := service.Search(cmd.Context(), effective, worklogs.SearchInput{
 				Query:       args[0],
 				ListFilters: rawFilters,
 			})
@@ -748,7 +748,7 @@ func (a *app) newWorklogsContextCommand() *cobra.Command {
 			defer cleanup()
 
 			weekOffsetSet := cmd.Flags().Changed("week-offset")
-			result, err := service.Context(effective, worklogs.ContextInput{
+			result, err := service.Context(cmd.Context(), effective, worklogs.ContextInput{
 				Issues:        issues,
 				Today:         today,
 				Yesterday:     yesterday,
@@ -1096,7 +1096,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 
 			var result worklogs.AddResult
 			if dry {
-				result, err = service.PreviewAdd(effective, input)
+				result, err = service.PreviewAdd(cmd.Context(), effective, input)
 			} else {
 				result, err = service.Add(cmd.Context(), effective, input)
 			}
@@ -1211,7 +1211,7 @@ func (a *app) newWorklogsUpdateCommand() *cobra.Command {
 				patch.Description = &description
 			}
 
-			current, err := service.Show(args[0])
+			current, err := service.Show(cmd.Context(), args[0])
 			if err != nil {
 				return a.handleWorklogError(mode, effective, err)
 			}
@@ -1278,7 +1278,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 				if dry || yes || issue != "" || issuePrefix != "" || today || yesterday || monday || tuesday || wednesday || thursday || friday || saturday || sunday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != "" || weekOffsetSet {
 					return a.fail(mode, 2, "validation_error", "single delete cannot be combined with batch delete flags", nil)
 				}
-				current, err := service.Show(args[0])
+				current, err := service.Show(cmd.Context(), args[0])
 				if err != nil {
 					return a.handleWorklogError(mode, effective, err)
 				}
@@ -1289,11 +1289,12 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 				if mode == "json" {
 					return a.writeJSON(map[string]any{
 						"id":         record.ID,
+						"trash_id":   record.TrashID,
 						"issue_key":  record.IssueKey,
 						"deleted_at": record.DeletedAt.Format(time.RFC3339),
 					})
 				}
-				return renderTable(a.stdout, []string{"ID", "ISSUE", "DELETED"}, deleteResultRows([]worklogs.DeleteResult{record}))
+				return renderTable(a.stdout, []string{"ID", "TRASH ID", "ISSUE", "DELETED"}, deleteResultRows([]worklogs.DeleteResult{record}))
 			}
 
 			if dry && yes {
@@ -1358,10 +1359,10 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 				return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows(result.Items, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
 			}
 			rows := make([][]string, 0, len(result.Deleted))
-			for _, id := range result.Deleted {
-				rows = append(rows, []string{id})
+			for _, item := range result.Deleted {
+				rows = append(rows, []string{item.ID, item.TrashID})
 			}
-			return renderTable(a.stdout, []string{"ID"}, rows)
+			return renderTable(a.stdout, []string{"ID", "TRASH ID"}, rows)
 		},
 	}
 
@@ -1606,17 +1607,17 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 			if worklogs.IsValidIssueKey(issue) && !hasSelector(raw) {
 				filters.Timezone = effective.TimezoneName
 				filters.IssueKey = &issue
-				item, err := service.ShowIssueMetadata(issue)
+				item, err := service.ShowIssueMetadata(cmd.Context(), issue)
 				if err != nil {
 					return a.handleIssueMetadataError(mode, err)
 				}
 				items = []worklogs.IssueMetadata{item}
 			} else {
-				active, effectiveFilters, err := service.List(effective, raw)
+				active, effectiveFilters, err := service.List(cmd.Context(), effective, raw)
 				if err != nil {
 					return a.handleWorklogError(mode, effective, err)
 				}
-				items, err = service.ListIssueMetadata(issueKeys(active))
+				items, err = service.ListIssueMetadata(cmd.Context(), issueKeys(active))
 				if err != nil {
 					return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
 				}
@@ -3695,14 +3696,14 @@ func (a *app) renderDeleteBatchJSON(raw worklogs.ListFilters, result worklogs.De
 	}
 
 	items := make([]map[string]any, 0, len(result.Deleted))
-	for _, id := range result.Deleted {
-		items = append(items, map[string]any{"id": id})
+	for _, item := range result.Deleted {
+		items = append(items, map[string]any{"id": item.ID, "trash_id": item.TrashID})
 	}
 	return a.writeJSON(map[string]any{
-		"filters": filters,
-		"dry_run": false,
-		"deleted": len(result.Deleted),
-		"items":   items,
+		"filters":       filters,
+		"dry_run":       false,
+		"deleted_count": len(result.Deleted),
+		"items":         items,
 	})
 }
 
@@ -4141,6 +4142,7 @@ func deleteResultRows(items []worklogs.DeleteResult) [][]string {
 	for _, item := range items {
 		rows = append(rows, []string{
 			item.ID,
+			item.TrashID,
 			item.IssueKey,
 			item.DeletedAt.UTC().Format(time.RFC3339),
 		})

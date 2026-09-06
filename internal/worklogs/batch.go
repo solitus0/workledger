@@ -85,7 +85,7 @@ func (s *Service) Shift(ctx context.Context, cfg config.EffectiveConfig, filters
 		return ShiftResult{}, ValidationError{Issues: []ValidationIssue{{Field: "by", Message: err.Error()}}}
 	}
 
-	matched, err := s.listActive(effective)
+	matched, err := s.listActive(ctx, effective)
 	if err != nil {
 		return ShiftResult{}, err
 	}
@@ -93,7 +93,7 @@ func (s *Service) Shift(ctx context.Context, cfg config.EffectiveConfig, filters
 		return ShiftResult{}, ErrNotFound
 	}
 
-	all, err := s.listActive(EffectiveFilters{})
+	all, err := s.listActive(ctx, EffectiveFilters{})
 	if err != nil {
 		return ShiftResult{}, err
 	}
@@ -199,7 +199,7 @@ func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, payload
 		})
 	}
 
-	existing, err := s.listActive(EffectiveFilters{})
+	existing, err := s.listActive(ctx, EffectiveFilters{})
 	if err != nil {
 		return ApplyResult{}, err
 	}

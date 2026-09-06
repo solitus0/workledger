@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"time"
 
@@ -36,7 +37,9 @@ type Item struct {
 }
 
 type Report struct {
-	Items []Item
+	Items         []Item
+	ConfigSummary *config.ConfigSummary
+	ConfigIssues  []config.ValidationIssue
 }
 
 type Dependencies struct {
@@ -59,7 +62,7 @@ func NewServiceWith(deps Dependencies) *Service {
 		deps.ValidateConfig = config.ValidateExisting
 	}
 	if deps.CheckStorage == nil {
-		deps.CheckStorage = sqlitestore.CheckWritable
+		deps.CheckStorage = checkStorage
 	}
 	if deps.Now == nil {
 		deps.Now = time.Now
@@ -72,6 +75,22 @@ func NewServiceWith(deps Dependencies) *Service {
 	return &Service{deps: deps}
 }
 
+func checkStorage(path, operation string) error {
+	if err := sqlitestore.CheckWritable(path, operation); err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	store, err := sqlitestore.OpenExistingReadOnly(path)
+	if err != nil {
+		return err
+	}
+	return store.Close()
+}
+
 func (s *Service) Check(ctx context.Context) (Report, error) {
 	if err := ctx.Err(); err != nil {
 		return Report{}, err
@@ -81,9 +100,12 @@ func (s *Service) Check(ctx context.Context) (Report, error) {
 		return Report{}, err
 	}
 
+	report := Report{ConfigIssues: append([]config.ValidationIssue(nil), issues...)}
 	items := make([]Item, 0)
 	configValid := len(issues) == 0
 	if configValid {
+		summary := config.Summary(effective)
+		report.ConfigSummary = &summary
 		items = append(items, Item{Category: "local", Target: "config", Status: "ok", Message: "config is valid"})
 		if err := s.deps.CheckStorage(effective.SQLitePath, "status"); err != nil {
 			items = append(items, Item{Category: "local", Target: "storage", Status: "error", Message: err.Error(), FailureKind: FailureInternal})
@@ -137,7 +159,8 @@ func (s *Service) Check(ctx context.Context) (Report, error) {
 			return Report{}, err
 		}
 	}
-	return Report{Items: items}, nil
+	report.Items = items
+	return report, nil
 }
 
 func checkConnectivity(ctx context.Context, cfg config.EffectiveConfig, now func() time.Time) []Item {

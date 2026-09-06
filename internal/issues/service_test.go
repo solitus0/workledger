@@ -62,7 +62,7 @@ func TestRefreshPersistsResultsAtomically(t *testing.T) {
 	if result.Instance != "product" || len(result.Items) != 2 {
 		t.Fatalf("unexpected result %#v", result)
 	}
-	stored, err := worklogs.NewService(store).ListIssueMetadata([]string{"APP-1", "APP-2"})
+	stored, err := worklogs.NewService(store).ListIssueMetadata(context.Background(), []string{"APP-1", "APP-2"})
 	if err != nil || len(stored) != 2 {
 		t.Fatalf("unexpected persisted metadata %#v err=%v", stored, err)
 	}
@@ -88,7 +88,7 @@ func TestRefreshRemoteFailureDoesNotPartiallyPersist(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected remote error")
 	}
-	stored, lookupErr := worklogs.NewService(store).ListIssueMetadata([]string{"APP-1", "APP-2"})
+	stored, lookupErr := worklogs.NewService(store).ListIssueMetadata(context.Background(), []string{"APP-1", "APP-2"})
 	if lookupErr != nil || len(stored) != 0 {
 		t.Fatalf("metadata should remain unchanged: %#v err=%v", stored, lookupErr)
 	}
@@ -115,7 +115,7 @@ func TestRefreshCancellationDoesNotPartiallyPersist(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Refresh error = %v, want context.Canceled", err)
 	}
-	stored, lookupErr := worklogs.NewService(store).ListIssueMetadata([]string{"APP-1", "APP-2"})
+	stored, lookupErr := worklogs.NewService(store).ListIssueMetadata(context.Background(), []string{"APP-1", "APP-2"})
 	if lookupErr != nil || len(stored) != 0 {
 		t.Fatalf("metadata should remain unchanged: %#v err=%v", stored, lookupErr)
 	}

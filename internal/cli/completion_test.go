@@ -135,7 +135,7 @@ func TestDynamicCompletionUsesOnlyLocalActiveData(t *testing.T) {
 		db.Close()
 		t.Fatalf("seed issue metadata: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO trashed_worklogs(id, storage_scope, source_worklog_id, issue_key, started_at_utc, duration_seconds, description, trashed_at, reason_code, reason_detail, plan_direction, adapter_family, adapter_instance) VALUES('trashed-only', 'local', NULL, 'OLD-1', '2026-05-01T08:00:00Z', 900, 'old', '2026-05-01T10:00:00Z', 'deleted', '', '', NULL, NULL)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO trashed_worklogs(id, storage_scope, source_worklog_id, issue_key, started_at_utc, duration_seconds, description, trashed_at, reason_code, reason_detail, plan_direction, adapter_family, adapter_instance) VALUES('trashed-only', 'local', 'original-id', 'OLD-1', '2026-05-01T08:00:00Z', 900, 'old', '2026-05-01T10:00:00Z', 'deleted', '', '', NULL, NULL), ('trashed-remote', 'remote', NULL, 'OLD-2', '2026-05-01T09:00:00Z', 900, 'remote', '2026-05-01T10:00:00Z', 'deleted', '', '', NULL, NULL)`); err != nil {
 		db.Close()
 		t.Fatalf("seed trash: %v", err)
 	}
@@ -148,6 +148,11 @@ func TestDynamicCompletionUsesOnlyLocalActiveData(t *testing.T) {
 	assertCompletionContains(t, worklogResult, firstID)
 	if containsString(completionValues(worklogResult.stdout), secondID) || containsString(completionValues(worklogResult.stdout), "trashed-only") {
 		t.Fatalf("worklog completion leaked a nonmatching or trashed ID: %s", worklogResult.stdout)
+	}
+	trashResult := runCompletion(t, "trash", "restore", "trashed-")
+	assertCompletionContains(t, trashResult, "trashed-only")
+	if containsString(completionValues(trashResult.stdout), "trashed-remote") {
+		t.Fatalf("restore completion included remote trash: %s", trashResult.stdout)
 	}
 
 	for _, args := range [][]string{

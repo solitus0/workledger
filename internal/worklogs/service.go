@@ -22,6 +22,7 @@ var (
 	ErrIssueMetadataNotFound = errors.New("issue metadata not found")
 	ErrValidation            = errors.New("validation failed")
 	ErrConflict              = errors.New("worklog conflict")
+	ErrPlacementChanged      = errors.New("automatic placement changed")
 	issueKeyPattern          = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[1-9][0-9]*$`)
 	issuePrefixPattern       = regexp.MustCompile(`^[A-Z][A-Z0-9]*$`)
 )
@@ -51,13 +52,21 @@ type LocalWorklog struct {
 	StartedAtUTC    time.Time
 	DurationSeconds int
 	Description     string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 	Revision        int64
 }
 
 type DeleteResult struct {
 	ID        string
+	TrashID   string
 	IssueKey  string
 	DeletedAt time.Time
+}
+
+type DeleteMapping struct {
+	ID      string
+	TrashID string
 }
 
 type ListFilters struct {
@@ -99,37 +108,43 @@ type EffectiveFilters struct {
 }
 
 type AddInput struct {
-	IssueKey      string
-	Started       string
-	StartedUTC    string
-	Fit           bool
-	Fill          bool
-	Overtime      bool
-	Today         bool
-	Yesterday     bool
-	Tomorrow      bool
-	Monday        bool
-	Tuesday       bool
-	Wednesday     bool
-	Thursday      bool
-	Friday        bool
-	Saturday      bool
-	Sunday        bool
-	CurrentWeek   bool
-	LastWeek      bool
-	CurrentMonth  bool
-	LastMonth     bool
-	From          string
-	To            string
-	WeekOffset    int
-	WeekOffsetSet bool
-	DayStart      string
-	DayEnd        string
-	Lunch         string
-	NoLunch       bool
-	Duration      string
-	Description   string
-	Force         bool
+	IssueKey          string
+	Started           string
+	StartedUTC        string
+	Fit               bool
+	Fill              bool
+	Overtime          bool
+	Today             bool
+	Yesterday         bool
+	Tomorrow          bool
+	Monday            bool
+	Tuesday           bool
+	Wednesday         bool
+	Thursday          bool
+	Friday            bool
+	Saturday          bool
+	Sunday            bool
+	CurrentWeek       bool
+	LastWeek          bool
+	CurrentMonth      bool
+	LastMonth         bool
+	From              string
+	To                string
+	WeekOffset        int
+	WeekOffsetSet     bool
+	DayStart          string
+	DayEnd            string
+	Lunch             string
+	NoLunch           bool
+	Duration          string
+	Description       string
+	Force             bool
+	ExpectedPlacement []PlacementExpectation
+}
+
+type PlacementExpectation struct {
+	StartedAtUTC    time.Time
+	DurationSeconds int
 }
 
 type AddResult struct {
@@ -150,8 +165,13 @@ type PatchInput struct {
 type DeleteBatchResult struct {
 	Filters EffectiveFilters
 	Items   []LocalWorklog
-	Deleted []string
+	Deleted []DeleteMapping
 	DryRun  bool
+}
+
+type DeleteExpectation struct {
+	ID       string
+	Revision int64
 }
 
 type ConflictDetail struct {
@@ -209,7 +229,7 @@ func NewService(store *sqlitestore.Store) *Service {
 	}
 }
 
-func (s *Service) List(cfg config.EffectiveConfig, filters ListFilters) ([]LocalWorklog, EffectiveFilters, error) {
+func (s *Service) List(ctx context.Context, cfg config.EffectiveConfig, filters ListFilters) ([]LocalWorklog, EffectiveFilters, error) {
 	if !hasListTimeSelector(filters) {
 		return nil, EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: "worklogs list requires at least one time selector"}}}
 	}
@@ -219,11 +239,11 @@ func (s *Service) List(cfg config.EffectiveConfig, filters ListFilters) ([]Local
 		return nil, EffectiveFilters{}, err
 	}
 
-	items, err := s.listActive(effective)
+	items, err := s.listActive(ctx, effective)
 	return items, effective, err
 }
 
-func (s *Service) Search(cfg config.EffectiveConfig, input SearchInput) ([]LocalWorklog, EffectiveFilters, string, error) {
+func (s *Service) Search(ctx context.Context, cfg config.EffectiveConfig, input SearchInput) ([]LocalWorklog, EffectiveFilters, string, error) {
 	effective, err := normalizeListFiltersAt(cfg, input.ListFilters, false, s.now)
 	if err != nil {
 		return nil, EffectiveFilters{}, "", err
@@ -234,12 +254,12 @@ func (s *Service) Search(cfg config.EffectiveConfig, input SearchInput) ([]Local
 		return nil, EffectiveFilters{}, "", err
 	}
 
-	items, err := s.searchActive(effective, query)
+	items, err := s.searchActive(ctx, effective, query)
 	return items, effective, query, err
 }
 
-func (s *Service) Show(id string) (LocalWorklog, error) {
-	row := s.store.DB().QueryRow(`SELECT id, issue_key, started_at_utc, duration_seconds, description, revision FROM worklogs WHERE id = ?`, id)
+func (s *Service) Show(ctx context.Context, id string) (LocalWorklog, error) {
+	row := s.store.DB().QueryRowContext(ctx, `SELECT id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision FROM worklogs WHERE id = ?`, id)
 	worklog, err := scanWorklog(row)
 	if err == nil {
 		return worklog, nil
@@ -250,8 +270,22 @@ func (s *Service) Show(id string) (LocalWorklog, error) {
 	return LocalWorklog{}, err
 }
 
-func (s *Service) PreviewAdd(cfg config.EffectiveConfig, input AddInput) (AddResult, error) {
-	result, err := s.prepareAdd(cfg, input)
+// ActiveIssueTotalSeconds returns the all-time duration of active local
+// worklogs allocated to one exact issue key. Trashed worklogs are excluded.
+func (s *Service) ActiveIssueTotalSeconds(ctx context.Context, issueKey string) (int, error) {
+	if !issueKeyPattern.MatchString(issueKey) {
+		return 0, ValidationError{Issues: []ValidationIssue{{Field: "issue", Message: "must match <PROJECTKEY>-<NUMBER>"}}}
+	}
+
+	var total int
+	if err := s.store.DB().QueryRowContext(ctx, `SELECT COALESCE(SUM(duration_seconds), 0) FROM worklogs WHERE issue_key = ?`, issueKey).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func (s *Service) PreviewAdd(ctx context.Context, cfg config.EffectiveConfig, input AddInput) (AddResult, error) {
+	result, err := s.prepareAdd(ctx, cfg, input)
 	if err != nil {
 		return AddResult{}, err
 	}
@@ -260,16 +294,30 @@ func (s *Service) PreviewAdd(cfg config.EffectiveConfig, input AddInput) (AddRes
 }
 
 func (s *Service) Add(ctx context.Context, cfg config.EffectiveConfig, input AddInput) (AddResult, error) {
-	result, err := s.prepareAdd(cfg, input)
+	conn, err := s.store.DB().Conn(ctx)
 	if err != nil {
 		return AddResult{}, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return AddResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
+		}
+	}()
+
+	result, err := s.prepareAddWithQueryer(ctx, cfg, input, conn)
+	if err != nil {
+		return AddResult{}, err
+	}
+	if len(input.ExpectedPlacement) > 0 && !placementMatches(result.Records, input.ExpectedPlacement) {
+		return AddResult{}, ErrPlacementChanged
 	}
 
 	now := s.now().UTC()
-	tx, err := s.store.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return AddResult{}, err
-	}
 	created := make([]LocalWorklog, 0, len(result.Records))
 	for _, candidate := range result.Records {
 		worklog := LocalWorklog{
@@ -278,10 +326,12 @@ func (s *Service) Add(ctx context.Context, cfg config.EffectiveConfig, input Add
 			StartedAtUTC:    candidate.StartedAtUTC,
 			DurationSeconds: candidate.DurationSeconds,
 			Description:     candidate.Description,
+			CreatedAt:       now,
+			UpdatedAt:       now,
 			Revision:        1,
 		}
 
-		_, err = tx.ExecContext(ctx,
+		_, err = conn.ExecContext(ctx,
 			`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
 			worklog.ID,
 			worklog.IssueKey,
@@ -292,31 +342,39 @@ func (s *Service) Add(ctx context.Context, cfg config.EffectiveConfig, input Add
 			sqlitestore.RFC3339UTC(now),
 		)
 		if err != nil {
-			_ = tx.Rollback()
 			return AddResult{}, err
 		}
 		created = append(created, worklog)
 	}
-	if err := tx.Commit(); err != nil {
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
 		return AddResult{}, err
 	}
+	committed = true
 	result.Records = created
 
 	return result, nil
 }
 
-func (s *Service) prepareAdd(cfg config.EffectiveConfig, input AddInput) (AddResult, error) {
-	candidates, err := s.prepareAddCandidates(cfg, input)
+func (s *Service) prepareAdd(ctx context.Context, cfg config.EffectiveConfig, input AddInput) (AddResult, error) {
+	return s.prepareAddWithQueryer(ctx, cfg, input, s.store.DB())
+}
+
+type sqlQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func (s *Service) prepareAddWithQueryer(ctx context.Context, cfg config.EffectiveConfig, input AddInput, queryer sqlQueryer) (AddResult, error) {
+	candidates, err := s.prepareAddCandidates(ctx, cfg, input, queryer)
 	if err != nil {
 		return AddResult{}, err
 	}
-	if err := s.validateAddConflicts(cfg, candidates, input.Force); err != nil {
+	if err := s.validateAddConflictsWithQueryer(ctx, cfg, candidates, input.Force, queryer); err != nil {
 		return AddResult{}, err
 	}
 	return AddResult{Records: candidates}, nil
 }
 
-func (s *Service) prepareAddCandidates(cfg config.EffectiveConfig, input AddInput) ([]LocalWorklog, error) {
+func (s *Service) prepareAddCandidates(ctx context.Context, cfg config.EffectiveConfig, input AddInput, queryer sqlQueryer) ([]LocalWorklog, error) {
 	if input.Overtime && !input.Fit && !input.Fill {
 		return nil, ValidationError{Issues: []ValidationIssue{{Field: "placement", Message: "overtime requires fit or fill"}}}
 	}
@@ -324,7 +382,7 @@ func (s *Service) prepareAddCandidates(cfg config.EffectiveConfig, input AddInpu
 		return nil, ValidationError{Issues: []ValidationIssue{{Field: "placement", Message: "provide exactly one of started, started_utc, fit, or fill"}}}
 	}
 	if input.Fit || input.Fill {
-		return s.prepareAutomaticAddCandidates(cfg, input)
+		return s.prepareAutomaticAddCandidates(ctx, cfg, input, queryer)
 	}
 
 	if hasAutomaticPlacementOnlyAddFlags(input) {
@@ -345,7 +403,7 @@ func (s *Service) prepareAddCandidates(cfg config.EffectiveConfig, input AddInpu
 	return []LocalWorklog{candidate}, nil
 }
 
-func (s *Service) prepareAutomaticAddCandidates(cfg config.EffectiveConfig, input AddInput) ([]LocalWorklog, error) {
+func (s *Service) prepareAutomaticAddCandidates(ctx context.Context, cfg config.EffectiveConfig, input AddInput, queryer sqlQueryer) ([]LocalWorklog, error) {
 	candidateBase, err := buildAddBaseCandidate(cfg, input.IssueKey, input.Duration, input.Description)
 	if err != nil {
 		return nil, err
@@ -384,7 +442,7 @@ func (s *Service) prepareAutomaticAddCandidates(cfg config.EffectiveConfig, inpu
 		return nil, err
 	}
 
-	active, err := s.listActive(EffectiveFilters{})
+	active, err := s.listActiveWithQueryer(ctx, EffectiveFilters{}, queryer)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +459,7 @@ func (s *Service) prepareAutomaticAddCandidates(cfg config.EffectiveConfig, inpu
 }
 
 func (s *Service) Update(ctx context.Context, cfg config.EffectiveConfig, id string, patch PatchInput) (LocalWorklog, error) {
-	current, err := s.Show(id)
+	current, err := s.Show(ctx, id)
 	if err != nil {
 		return LocalWorklog{}, err
 	}
@@ -445,17 +503,18 @@ func (s *Service) Update(ctx context.Context, cfg config.EffectiveConfig, id str
 		return LocalWorklog{}, err
 	}
 
-	if err := s.validateConflicts(cfg, candidate, id, patch.Force); err != nil {
+	if err := s.validateConflicts(ctx, cfg, candidate, id, patch.Force); err != nil {
 		return LocalWorklog{}, err
 	}
 
+	updatedAt := s.now().UTC()
 	result, err := s.store.DB().ExecContext(ctx,
 		`UPDATE worklogs SET issue_key = ?, started_at_utc = ?, duration_seconds = ?, description = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ?`,
 		candidate.IssueKey,
 		sqlitestore.RFC3339UTC(candidate.StartedAtUTC),
 		candidate.DurationSeconds,
 		candidate.Description,
-		sqlitestore.RFC3339UTC(s.now().UTC()),
+		sqlitestore.RFC3339UTC(updatedAt),
 		id,
 		patch.ExpectedRevision,
 	)
@@ -474,13 +533,14 @@ func (s *Service) Update(ctx context.Context, cfg config.EffectiveConfig, id str
 	current.StartedAtUTC = candidate.StartedAtUTC
 	current.DurationSeconds = candidate.DurationSeconds
 	current.Description = candidate.Description
+	current.UpdatedAt = updatedAt
 	current.Revision = patch.ExpectedRevision + 1
 
 	return current, nil
 }
 
 func (s *Service) Delete(ctx context.Context, id string, expectedRevision int64) (DeleteResult, error) {
-	current, err := s.Show(id)
+	current, err := s.Show(ctx, id)
 	if err != nil {
 		return DeleteResult{}, err
 	}
@@ -494,6 +554,11 @@ func (s *Service) Delete(ctx context.Context, id string, expectedRevision int64)
 		return DeleteResult{}, err
 	}
 
+	trashIDs, err := archiveLocalUserDeletedTx(tx, []LocalWorklog{current}, deletedAt)
+	if err != nil {
+		_ = tx.Rollback()
+		return DeleteResult{}, err
+	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM worklogs WHERE id = ? AND revision = ?`, id, expectedRevision)
 	if err != nil {
 		_ = tx.Rollback()
@@ -514,6 +579,7 @@ func (s *Service) Delete(ctx context.Context, id string, expectedRevision int64)
 
 	return DeleteResult{
 		ID:        current.ID,
+		TrashID:   trashIDs[0],
 		IssueKey:  current.IssueKey,
 		DeletedAt: deletedAt,
 	}, nil
@@ -528,7 +594,7 @@ func (s *Service) DeleteBatch(ctx context.Context, cfg config.EffectiveConfig, f
 		return DeleteBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "delete", Message: "batch delete requires at least one selector"}}}
 	}
 
-	items, err := s.listActive(effective)
+	items, err := s.listActive(ctx, effective)
 	if err != nil {
 		return DeleteBatchResult{}, err
 	}
@@ -547,23 +613,10 @@ func (s *Service) DeleteBatch(ctx context.Context, cfg config.EffectiveConfig, f
 		return DeleteBatchResult{}, err
 	}
 
-	result.Deleted = make([]string, 0, len(items))
-	for _, item := range items {
-		deleteResult, err := tx.ExecContext(ctx, `DELETE FROM worklogs WHERE id = ? AND revision = ?`, item.ID, item.Revision)
-		if err != nil {
-			_ = tx.Rollback()
-			return DeleteBatchResult{}, err
-		}
-		affected, err := deleteResult.RowsAffected()
-		if err != nil {
-			_ = tx.Rollback()
-			return DeleteBatchResult{}, err
-		}
-		if affected == 0 {
-			_ = tx.Rollback()
-			return DeleteBatchResult{}, fmt.Errorf("%w: worklog %s changed since it was selected", ErrConflict, item.ID)
-		}
-		result.Deleted = append(result.Deleted, item.ID)
+	result.Deleted, err = archiveAndDeleteWorklogsTx(ctx, tx, items, s.now().UTC())
+	if err != nil {
+		_ = tx.Rollback()
+		return DeleteBatchResult{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -571,6 +624,104 @@ func (s *Service) DeleteBatch(ctx context.Context, cfg config.EffectiveConfig, f
 	}
 
 	return result, nil
+}
+
+func (s *Service) DeleteBatchExpected(ctx context.Context, cfg config.EffectiveConfig, filters ListFilters, expected []DeleteExpectation) (DeleteBatchResult, error) {
+	effective, err := normalizeListFiltersAt(cfg, filters, false, s.now)
+	if err != nil {
+		return DeleteBatchResult{}, err
+	}
+	if effective.IssueKey == nil && effective.From == nil && effective.To == nil {
+		return DeleteBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "delete", Message: "batch delete requires at least one selector"}}}
+	}
+	if len(expected) == 0 {
+		return DeleteBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "expected", Message: "at least one expected worklog is required"}}}
+	}
+	expectedByID := make(map[string]int64, len(expected))
+	for _, item := range expected {
+		if item.ID == "" || item.Revision <= 0 {
+			return DeleteBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "expected", Message: "each expected worklog requires an id and positive revision"}}}
+		}
+		if _, duplicate := expectedByID[item.ID]; duplicate {
+			return DeleteBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "expected", Message: "expected worklog ids must be unique"}}}
+		}
+		expectedByID[item.ID] = item.Revision
+	}
+
+	tx, err := s.store.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return DeleteBatchResult{}, err
+	}
+	items, err := s.listActiveWithQueryer(ctx, effective, tx)
+	if err != nil {
+		_ = tx.Rollback()
+		return DeleteBatchResult{}, err
+	}
+	if !matchesDeleteExpectations(items, expectedByID) {
+		_ = tx.Rollback()
+		return DeleteBatchResult{}, fmt.Errorf("%w: selected worklogs changed since confirmation", ErrConflict)
+	}
+
+	deleted, err := archiveAndDeleteWorklogsTx(ctx, tx, items, s.now().UTC())
+	if err != nil {
+		_ = tx.Rollback()
+		return DeleteBatchResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return DeleteBatchResult{}, err
+	}
+	return DeleteBatchResult{Filters: effective, Items: items, Deleted: deleted}, nil
+}
+
+func matchesDeleteExpectations(items []LocalWorklog, expectedByID map[string]int64) bool {
+	if len(items) != len(expectedByID) {
+		return false
+	}
+	for _, item := range items {
+		revision, ok := expectedByID[item.ID]
+		if !ok || revision != item.Revision {
+			return false
+		}
+	}
+	return true
+}
+
+func archiveAndDeleteWorklogsTx(ctx context.Context, tx *sql.Tx, items []LocalWorklog, deletedAt time.Time) ([]DeleteMapping, error) {
+	trashIDs, err := archiveLocalUserDeletedTx(tx, items, deletedAt)
+	if err != nil {
+		return nil, err
+	}
+	deleted := make([]DeleteMapping, 0, len(items))
+	for _, item := range items {
+		result, err := tx.ExecContext(ctx, `DELETE FROM worklogs WHERE id = ? AND revision = ?`, item.ID, item.Revision)
+		if err != nil {
+			return nil, err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if affected == 0 {
+			return nil, fmt.Errorf("%w: worklog %s changed since it was selected", ErrConflict, item.ID)
+		}
+		deleted = append(deleted, DeleteMapping{ID: item.ID, TrashID: trashIDs[len(deleted)]})
+	}
+	return deleted, nil
+}
+
+func archiveLocalUserDeletedTx(tx *sql.Tx, items []LocalWorklog, deletedAt time.Time) ([]string, error) {
+	archive := make([]TrashArchiveInput, 0, len(items))
+	for index := range items {
+		item := &items[index]
+		archive = append(archive, TrashArchiveInput{
+			StorageScope: TrashScopeLocal, SourceWorklogID: item.ID,
+			SourceCreatedAt: &item.CreatedAt, SourceUpdatedAt: &item.UpdatedAt, SourceRevision: &item.Revision,
+			IssueKey: item.IssueKey, StartedAtUTC: item.StartedAtUTC, DurationSeconds: item.DurationSeconds,
+			Description: item.Description, TrashedAt: deletedAt, ReasonCode: "local_user_deleted",
+			ReasonDetail: "deleted by local operator", PlanDirection: "local",
+		})
+	}
+	return InsertTrashRowsTx(tx, archive)
 }
 
 type AddCandidateInput struct {
@@ -692,12 +843,12 @@ func hasAutomaticPlacementOnlyAddFlags(input AddInput) bool {
 		input.NoLunch
 }
 
-func (s *Service) validateConflicts(cfg config.EffectiveConfig, candidate LocalWorklog, excludeID string, force bool) error {
+func (s *Service) validateConflicts(ctx context.Context, cfg config.EffectiveConfig, candidate LocalWorklog, excludeID string, force bool) error {
 	if force {
 		return nil
 	}
 
-	existing, err := s.listActive(EffectiveFilters{})
+	existing, err := s.listActive(ctx, EffectiveFilters{})
 	if err != nil {
 		return err
 	}
@@ -740,12 +891,16 @@ func (s *Service) validateConflicts(cfg config.EffectiveConfig, candidate LocalW
 	}
 }
 
-func (s *Service) validateAddConflicts(cfg config.EffectiveConfig, candidates []LocalWorklog, force bool) error {
+func (s *Service) validateAddConflicts(ctx context.Context, cfg config.EffectiveConfig, candidates []LocalWorklog, force bool) error {
+	return s.validateAddConflictsWithQueryer(ctx, cfg, candidates, force, s.store.DB())
+}
+
+func (s *Service) validateAddConflictsWithQueryer(ctx context.Context, cfg config.EffectiveConfig, candidates []LocalWorklog, force bool, queryer sqlQueryer) error {
 	if force || len(candidates) == 0 {
 		return nil
 	}
 
-	existing, err := s.listActive(EffectiveFilters{})
+	existing, err := s.listActiveWithQueryer(ctx, EffectiveFilters{}, queryer)
 	if err != nil {
 		return err
 	}
@@ -789,13 +944,17 @@ func (s *Service) validateAddConflicts(cfg config.EffectiveConfig, candidates []
 	return nil
 }
 
-func (s *Service) listActive(filters EffectiveFilters) ([]LocalWorklog, error) {
-	query := `SELECT id, issue_key, started_at_utc, duration_seconds, description, revision FROM worklogs`
+func (s *Service) listActive(ctx context.Context, filters EffectiveFilters) ([]LocalWorklog, error) {
+	return s.listActiveWithQueryer(ctx, filters, s.store.DB())
+}
+
+func (s *Service) listActiveWithQueryer(ctx context.Context, filters EffectiveFilters, queryer sqlQueryer) ([]LocalWorklog, error) {
+	query := `SELECT id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision FROM worklogs`
 	args := make([]any, 0)
 	where := buildWhereClause(filters, false, &args)
 	query += where + ` ORDER BY started_at_utc ASC, id ASC`
 
-	rows, err := s.store.DB().Query(query, args...)
+	rows, err := queryer.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -813,7 +972,7 @@ func (s *Service) listActive(filters EffectiveFilters) ([]LocalWorklog, error) {
 	return items, rows.Err()
 }
 
-func (s *Service) searchActive(filters EffectiveFilters, query string) ([]LocalWorklog, error) {
+func (s *Service) searchActive(ctx context.Context, filters EffectiveFilters, query string) ([]LocalWorklog, error) {
 	args := make([]any, 0)
 	where := buildWhereClause(filters, false, &args)
 	if where == "" {
@@ -822,9 +981,9 @@ func (s *Service) searchActive(filters EffectiveFilters, query string) ([]LocalW
 		where += " AND "
 	}
 	args = append(args, literalSubstringPattern(query))
-	statement := `SELECT id, issue_key, started_at_utc, duration_seconds, description, revision FROM worklogs` + where + `description LIKE ? ESCAPE '\' COLLATE NOCASE ORDER BY started_at_utc DESC, id ASC`
+	statement := `SELECT id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision FROM worklogs` + where + `description LIKE ? ESCAPE '\' COLLATE NOCASE ORDER BY started_at_utc DESC, id ASC`
 
-	rows, err := s.store.DB().Query(statement, args...)
+	rows, err := s.store.DB().QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1240,6 +1399,18 @@ func totalSlotDuration(slots []ContextFreeSlot) int {
 	return total
 }
 
+func placementMatches(records []LocalWorklog, expected []PlacementExpectation) bool {
+	if len(records) != len(expected) {
+		return false
+	}
+	for index, record := range records {
+		if !record.StartedAtUTC.Equal(expected[index].StartedAtUTC) || record.DurationSeconds != expected[index].DurationSeconds {
+			return false
+		}
+	}
+	return true
+}
+
 func buildAddPlacementFreeSlots(cfg config.EffectiveConfig, selectedDate time.Time, window workdayWindow, active []LocalWorklog, overtime bool) []ContextFreeSlot {
 	dayStart := time.Date(selectedDate.Year(), selectedDate.Month(), selectedDate.Day(), 0, 0, 0, 0, cfg.Location)
 	dayEnd := dayStart.AddDate(0, 0, 1)
@@ -1316,7 +1487,9 @@ func overlaps(a, b LocalWorklog) bool {
 func scanWorklog(scanner interface{ Scan(dest ...any) error }) (LocalWorklog, error) {
 	var worklog LocalWorklog
 	var startedAt string
-	if err := scanner.Scan(&worklog.ID, &worklog.IssueKey, &startedAt, &worklog.DurationSeconds, &worklog.Description, &worklog.Revision); err != nil {
+	var createdAt string
+	var updatedAt string
+	if err := scanner.Scan(&worklog.ID, &worklog.IssueKey, &startedAt, &worklog.DurationSeconds, &worklog.Description, &createdAt, &updatedAt, &worklog.Revision); err != nil {
 		return LocalWorklog{}, err
 	}
 
@@ -1325,6 +1498,14 @@ func scanWorklog(scanner interface{ Scan(dest ...any) error }) (LocalWorklog, er
 		return LocalWorklog{}, err
 	}
 	worklog.StartedAtUTC = parsed.UTC()
+	if worklog.CreatedAt, err = time.Parse(time.RFC3339, createdAt); err != nil {
+		return LocalWorklog{}, err
+	}
+	worklog.CreatedAt = worklog.CreatedAt.UTC()
+	if worklog.UpdatedAt, err = time.Parse(time.RFC3339, updatedAt); err != nil {
+		return LocalWorklog{}, err
+	}
+	worklog.UpdatedAt = worklog.UpdatedAt.UTC()
 
 	return worklog, nil
 }

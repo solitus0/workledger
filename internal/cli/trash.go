@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -21,7 +22,86 @@ func (a *app) newTrashCommand() *cobra.Command {
 	cmd.AddCommand(a.newTrashListCommand())
 	cmd.AddCommand(a.newTrashSearchCommand())
 	cmd.AddCommand(a.newTrashShowCommand())
+	cmd.AddCommand(a.newTrashRestoreCommand())
 	return cmd
+}
+
+func (a *app) newTrashRestoreCommand() *cobra.Command {
+	var issue, issuePrefix, from, to string
+	var today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday bool
+	var currentWeek, lastWeek, currentMonth, lastMonth bool
+	var weekOffset int
+	var dry, yes bool
+	cmd := &cobra.Command{
+		Use: "restore [id]", Short: "Restore local trashed worklogs", Args: cobra.MaximumNArgs(1),
+		Example: "  workledger trash restore <id>\n  workledger trash restore --today --dry\n  workledger trash restore --from 2026-05-14 --to 2026-05-16 --yes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode := outputMode(cmd)
+			cfg, service, cleanup, err := a.loadService(mode, true, "trash restore")
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			weekOffsetSet := cmd.Flags().Changed("week-offset")
+			raw := worklogs.ListFilters{Issue: issue, IssuePrefix: issuePrefix, Today: today, Yesterday: yesterday, Tomorrow: tomorrow, Monday: monday, Tuesday: tuesday, Wednesday: wednesday, Thursday: thursday, Friday: friday, Saturday: saturday, Sunday: sunday, CurrentWeek: currentWeek, LastWeek: lastWeek, CurrentMonth: currentMonth, LastMonth: lastMonth, From: from, To: to, WeekOffset: weekOffset, WeekOffsetSet: weekOffsetSet}
+			if len(args) == 1 {
+				if dry || yes || hasAnyTrashRestoreSelector(raw) {
+					return a.fail(mode, 2, "validation_error", "single restore cannot be combined with batch restore flags", nil)
+				}
+				item, err := service.RestoreTrash(cmd.Context(), cfg, args[0])
+				if err != nil {
+					return a.handleTrashError(mode, cfg, err)
+				}
+				if mode == "json" {
+					return a.writeJSON(map[string]any{"trash_id": item.TrashID, "record": worklogRecordJSON(item.Record, cfg.Location)})
+				}
+				return renderTable(a.stdout, []string{"TRASH ID", "RESTORED ID", "ISSUE", "WINDOW"}, trashRestoreRows([]worklogs.TrashRestoreItem{item}, cfg.Location))
+			}
+			if dry == yes {
+				return a.fail(mode, 2, "validation_error", "filtered batch restore requires exactly one of --dry or --yes", nil)
+			}
+			result, err := service.RestoreTrashBatch(cmd.Context(), cfg, worklogs.TrashFilters{ListFilters: raw, StorageScope: worklogs.TrashScopeLocal}, dry)
+			if err != nil {
+				return a.handleTrashError(mode, cfg, err)
+			}
+			if mode == "json" {
+				return a.renderTrashRestoreBatchJSON(raw, result, cfg.Location)
+			}
+			return renderTable(a.stdout, []string{"TRASH ID", "RESTORED ID", "ISSUE", "WINDOW"}, trashRestoreRows(result.Items, cfg.Location))
+		},
+	}
+	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
+	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
+	addDateWindowFlags(cmd, dateWindowFlagValues{Today: &today, Yesterday: &yesterday, Tomorrow: &tomorrow, Monday: &monday, Tuesday: &tuesday, Wednesday: &wednesday, Thursday: &thursday, Friday: &friday, Saturday: &saturday, Sunday: &sunday, CurrentWeek: &currentWeek, LastWeek: &lastWeek, CurrentMonth: &currentMonth, LastMonth: &lastMonth, From: &from, To: &to, WeekOffset: &weekOffset}, filterDateWindowHelp)
+	cmd.Flags().BoolVar(&dry, "dry", false, "Preview the complete restore")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Restore the complete matching set")
+	return cmd
+}
+
+func hasAnyTrashRestoreSelector(filters worklogs.ListFilters) bool {
+	return filters.Issue != "" || filters.IssuePrefix != "" || filters.Today || filters.Yesterday || filters.Tomorrow || filters.Monday || filters.Tuesday || filters.Wednesday || filters.Thursday || filters.Friday || filters.Saturday || filters.Sunday || filters.CurrentWeek || filters.LastWeek || filters.CurrentMonth || filters.LastMonth || filters.From != "" || filters.To != "" || filters.WeekOffsetSet
+}
+
+func (a *app) renderTrashRestoreBatchJSON(raw worklogs.ListFilters, result worklogs.TrashRestoreResult, location *time.Location) error {
+	items := make([]map[string]any, 0, len(result.Items))
+	for _, item := range result.Items {
+		items = append(items, map[string]any{"trash_id": item.TrashID, "record": worklogRecordJSON(item.Record, location)})
+	}
+	filters := selectorFiltersJSON(raw, result.Filters, location)
+	addTrashScopeJSON(filters, worklogs.TrashScopeLocal)
+	restored := 0
+	if !result.DryRun {
+		restored = len(items)
+	}
+	return a.writeJSON(map[string]any{"filters": filters, "dry_run": result.DryRun, "matched_count": len(items), "restored_count": restored, "items": items})
+}
+
+func trashRestoreRows(items []worklogs.TrashRestoreItem, location *time.Location) [][]string {
+	rows := make([][]string, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, []string{item.TrashID, item.Record.ID, item.Record.IssueKey, localizedWorklogWindow(item.Record.StartedAtUTC, item.Record.DurationSeconds, location)})
+	}
+	return rows
 }
 
 func (a *app) newTrashListCommand() *cobra.Command {
@@ -44,6 +124,7 @@ func (a *app) newTrashListCommand() *cobra.Command {
 	var from string
 	var to string
 	var weekOffset int
+	var scope string
 
 	cmd := &cobra.Command{
 		Use:     "list",
@@ -79,13 +160,13 @@ func (a *app) newTrashListCommand() *cobra.Command {
 				WeekOffset:    weekOffset,
 				WeekOffsetSet: cmd.Flags().Changed("week-offset"),
 			}
-			items, effectiveFilters, err := service.ListTrash(effective, raw)
+			items, effectiveFilters, err := service.ListTrash(effective, worklogs.TrashFilters{ListFilters: raw, StorageScope: scope})
 			if err != nil {
 				return a.handleTrashError(mode, effective, err)
 			}
 
 			if mode == "json" {
-				return a.renderTrashListJSON(effective, raw, effectiveFilters, items)
+				return a.renderTrashListJSON(effective, raw, scope, effectiveFilters, items)
 			}
 			if err := renderTable(a.stdout, []string{"ID", "SCOPE", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION", "REASON", "TRASHED"}, trashRows(items, effective.Location)); err != nil {
 				return err
@@ -96,6 +177,7 @@ func (a *app) newTrashListCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
 	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
+	cmd.Flags().StringVar(&scope, "scope", "", "Filter by storage scope (local or remote)")
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
@@ -138,6 +220,7 @@ func (a *app) newTrashSearchCommand() *cobra.Command {
 	var from string
 	var to string
 	var weekOffset int
+	var scope string
 
 	cmd := &cobra.Command{
 		Use:     "search <query>",
@@ -174,16 +257,16 @@ func (a *app) newTrashSearchCommand() *cobra.Command {
 				WeekOffset:    weekOffset,
 				WeekOffsetSet: cmd.Flags().Changed("week-offset"),
 			}
-			items, effectiveFilters, normalizedQuery, err := service.SearchTrash(effective, worklogs.SearchInput{
-				Query:       args[0],
-				ListFilters: raw,
+			items, effectiveFilters, normalizedQuery, err := service.SearchTrash(effective, worklogs.TrashSearchInput{
+				Query:        args[0],
+				TrashFilters: worklogs.TrashFilters{ListFilters: raw, StorageScope: scope},
 			})
 			if err != nil {
 				return a.handleTrashError(mode, effective, err)
 			}
 
 			if mode == "json" {
-				return a.renderTrashSearchJSON(effective, args[0], raw, effectiveFilters, normalizedQuery, items)
+				return a.renderTrashSearchJSON(effective, args[0], raw, scope, effectiveFilters, normalizedQuery, items)
 			}
 			if err := renderTable(a.stdout, []string{"ID", "SCOPE", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION", "REASON", "TRASHED"}, trashRows(items, effective.Location)); err != nil {
 				return err
@@ -194,6 +277,7 @@ func (a *app) newTrashSearchCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
 	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
+	cmd.Flags().StringVar(&scope, "scope", "", "Filter by storage scope (local or remote)")
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
@@ -250,7 +334,11 @@ func (a *app) handleTrashError(mode string, cfg config.EffectiveConfig, err erro
 	case errors.Is(err, worklogs.ErrValidation), errors.Is(err, worklogs.ErrConflict):
 		var validationErr worklogs.ValidationError
 		if errors.As(err, &validationErr) {
-			return a.fail(mode, 2, "validation_error", err.Error(), validationErr.Issues)
+			details := any(validationErr.Issues)
+			if validationErr.Conflict != nil {
+				details = validationErr.Conflict
+			}
+			return a.fail(mode, 2, "validation_error", err.Error(), details)
 		}
 		return a.fail(mode, 2, "validation_error", err.Error(), nil)
 	default:
@@ -258,20 +346,23 @@ func (a *app) handleTrashError(mode string, cfg config.EffectiveConfig, err erro
 	}
 }
 
-func (a *app) renderTrashListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilters, effective worklogs.EffectiveFilters, items []worklogs.TrashRecord) error {
+func (a *app) renderTrashListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilters, scope string, effective worklogs.EffectiveFilters, items []worklogs.TrashRecord) error {
 	records := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		records = append(records, trashRecordJSON(item, cfg.Location))
 	}
+	filters := selectorFiltersJSON(raw, effective, cfg.Location)
+	addTrashScopeJSON(filters, scope)
 	return a.writeJSON(map[string]any{
-		"filters": selectorFiltersJSON(raw, effective, cfg.Location),
+		"filters": filters,
 		"items":   records,
 		"total":   len(records),
 	})
 }
 
-func (a *app) renderTrashSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw worklogs.ListFilters, effective worklogs.EffectiveFilters, normalizedQuery string, items []worklogs.TrashRecord) error {
+func (a *app) renderTrashSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw worklogs.ListFilters, scope string, effective worklogs.EffectiveFilters, normalizedQuery string, items []worklogs.TrashRecord) error {
 	filters := selectorFiltersJSON(raw, effective, cfg.Location)
+	addTrashScopeJSON(filters, scope)
 	filters["raw"].(map[string]any)["query"] = rawQuery
 	filters["effective"].(map[string]any)["query"] = normalizedQuery
 	records := make([]map[string]any, 0, len(items))
@@ -283,6 +374,15 @@ func (a *app) renderTrashSearchJSON(cfg config.EffectiveConfig, rawQuery string,
 		"items":   records,
 		"total":   len(records),
 	})
+}
+
+func addTrashScopeJSON(filters map[string]any, scope string) {
+	value := any(nil)
+	if scope != "" {
+		value = scope
+	}
+	filters["raw"].(map[string]any)["scope"] = value
+	filters["effective"].(map[string]any)["scope"] = value
 }
 
 func trashRecordJSON(item worklogs.TrashRecord, location *time.Location) map[string]any {
@@ -309,6 +409,9 @@ func trashRecordJSON(item worklogs.TrashRecord, location *time.Location) map[str
 		"id":                item.ID,
 		"storage_scope":     item.StorageScope,
 		"source_worklog_id": nil,
+		"source_created_at": nil,
+		"source_updated_at": nil,
+		"source_revision":   nil,
 		"issue_key":         item.IssueKey,
 		"started_at":        item.StartedAtUTC.In(location).Format(time.RFC3339),
 		"started_at_utc":    item.StartedAtUTC.UTC().Format(time.RFC3339),
@@ -321,6 +424,15 @@ func trashRecordJSON(item worklogs.TrashRecord, location *time.Location) map[str
 	}
 	if item.SourceWorklogID != nil {
 		record["source_worklog_id"] = *item.SourceWorklogID
+	}
+	if item.SourceCreatedAt != nil {
+		record["source_created_at"] = item.SourceCreatedAt.UTC().Format(time.RFC3339)
+	}
+	if item.SourceUpdatedAt != nil {
+		record["source_updated_at"] = item.SourceUpdatedAt.UTC().Format(time.RFC3339)
+	}
+	if item.SourceRevision != nil {
+		record["source_revision"] = *item.SourceRevision
 	}
 	return record
 }
@@ -357,6 +469,15 @@ func trashShowRows(item worklogs.TrashRecord, location *time.Location) [][]strin
 	}
 	if item.SourceWorklogID != nil {
 		rows = append(rows, []string{"SOURCE_WORKLOG_ID", *item.SourceWorklogID})
+	}
+	if item.SourceCreatedAt != nil {
+		rows = append(rows, []string{"SOURCE_CREATED_AT", item.SourceCreatedAt.UTC().Format(time.RFC3339)})
+	}
+	if item.SourceUpdatedAt != nil {
+		rows = append(rows, []string{"SOURCE_UPDATED_AT", item.SourceUpdatedAt.UTC().Format(time.RFC3339)})
+	}
+	if item.SourceRevision != nil {
+		rows = append(rows, []string{"SOURCE_REVISION", fmt.Sprint(*item.SourceRevision)})
 	}
 	if item.Origin.PlanID != nil {
 		rows = append(rows, []string{"PLAN_ID", *item.Origin.PlanID})

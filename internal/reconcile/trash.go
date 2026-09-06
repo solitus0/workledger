@@ -101,7 +101,7 @@ func (s *Service) archiveRemoteTrashRows(ctx context.Context, item PlanItem, row
 	if err != nil {
 		return 0, err
 	}
-	if err := worklogs.InsertTrashRowsTx(tx, inputs); err != nil {
+	if _, err := worklogs.InsertTrashRowsTx(tx, inputs); err != nil {
 		_ = tx.Rollback()
 		return 0, err
 	}

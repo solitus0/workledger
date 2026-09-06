@@ -4011,10 +4011,10 @@ func countTrashRecords(t *testing.T, store *sqlitestore.Store) int {
 func listTrashRecords(t *testing.T, store *sqlitestore.Store) []worklogs.TrashRecord {
 	t.Helper()
 	service := worklogs.NewService(store)
-	items, _, err := service.ListTrash(config.EffectiveConfig{Location: time.UTC}, worklogs.ListFilters{
+	items, _, err := service.ListTrash(config.EffectiveConfig{Location: time.UTC}, worklogs.TrashFilters{ListFilters: worklogs.ListFilters{
 		From: "2026-05-01",
 		To:   "2026-05-31",
-	})
+	}})
 	if err != nil {
 		t.Fatalf("list trash records: %v", err)
 	}

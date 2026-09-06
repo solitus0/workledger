@@ -29,7 +29,7 @@ Placement rule:
 - [ ] NFR-011e: Preview-driven update and delete operations shall reject a stale expected worklog revision rather than overwrite newer state.
 - [ ] NFR-014a: SQLite shall persist trashed worklogs in a `trashed_worklogs` table.
 - [ ] NFR-014b: The `trashed_worklogs` table shall use a dedicated archive `id` as its CLI identity.
-- [ ] NFR-014c: The `trashed_worklogs` table shall retain `storage_scope`, nullable `source_worklog_id`, canonical worklog fields, `trashed_at`, reason fields, `plan_direction`, nullable plan lineage, and nullable adapter lineage.
+- [ ] NFR-014c: The `trashed_worklogs` table shall retain `storage_scope`, nullable `source_worklog_id`, nullable `source_created_at`, nullable `source_updated_at`, nullable `source_revision`, canonical worklog fields, `trashed_at`, reason fields, `plan_direction`, nullable plan lineage, and nullable adapter lineage.
 - [ ] NFR-014d: The SQLite schema shall define indexes on `trashed_worklogs(issue_key, started_at_utc)`, `trashed_worklogs(trashed_at)`, `trashed_worklogs(reason_code)`, and `trashed_worklogs(storage_scope, trashed_at)`.
 - [ ] NFR-015: Additive storage shall use `issue_metadata`, `saved_plans`, `saved_plan_items`, and `delivery_attempts` tables.
 - [ ] NFR-016: The `issue_metadata` table shall include `issue_key`, `max_estimate_seconds`, `source_adapter_family`, `source_adapter_instance`, and `refreshed_at`.
@@ -244,14 +244,14 @@ Placement rule:
 - [ ] NFR-201: `worklogs shift` overlap validation shall evaluate selected and non-selected active worklogs using final shifted timestamps.
 - [ ] NFR-202: `worklogs apply` duplicate and overlap validation shall evaluate the final resulting active worklog set.
 - [ ] NFR-203: `worklogs apply` duplicate and overlap validation shall include conflicts introduced between add operations inside the same payload.
-- [ ] NFR-204: Duplicate and overlap enforcement shall apply to `add`, `update`, `apply`, and `shift` only.
+- [ ] NFR-204: Duplicate and overlap enforcement shall apply to `add`, `update`, `apply`, `shift`, and local trash restoration.
 - [ ] NFR-205: Delete paths shall not bypass duplicate or overlap validation because they remove active rows instead of creating them.
-- [ ] NFR-206: Duplicate and overlap enforcement shall not introduce a restore-only validation path.
+- [ ] NFR-206: Local trash restoration shall reuse active-worklog duplicate and overlap rules and additionally reject occupied original IDs and conflicts among batch candidates.
 - [ ] NFR-207: Duplicate and overlap enforcement shall not apply to `delete`.
 
 ## Delete Semantics
-- [ ] NFR-208: Default delete shall remove a worklog from the active `worklogs` set without persisting delete intent.
-- [ ] NFR-209: Local delete shall not provide a built-in restore or undo model.
+- [ ] NFR-208: Default local delete shall archive the complete active row and source metadata with reason `local_user_deleted` before removing it from the active `worklogs` set in the same transaction.
+- [ ] NFR-209: Local trash shall provide conflict-checked restoration; successful restoration shall consume its archive row.
 - [ ] NFR-210: `worklogs update <id> --issue <new-key>` shall not persist delete intent for the previous issue allocation.
 - [ ] NFR-211: A later pull may re-import a remotely existing row that was previously deleted locally.
 
@@ -265,7 +265,7 @@ Placement rule:
 - [ ] NFR-233: All timestamps in JSON shall use RFC3339.
 - [ ] NFR-234: The default active-worklog JSON record shape shall include `id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description`.
 - [ ] NFR-235: No deleted-only JSON record shape shall exist.
-- [ ] NFR-235a: The trash JSON record shape shall include `id`, `storage_scope`, `source_worklog_id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, `description`, `trashed_at`, `reason_code`, `reason_detail`, and `origin`.
+- [ ] NFR-235a: The trash JSON record shape shall include `id`, `storage_scope`, `source_worklog_id`, nullable `source_created_at`, nullable `source_updated_at`, nullable `source_revision`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, `description`, `trashed_at`, `reason_code`, `reason_detail`, and `origin`.
 - [ ] NFR-235b: Trash JSON `origin` shall include `plan_direction`, `plan_id`, `plan_item_id`, `adapter_family`, and `adapter_instance`.
 - [ ] NFR-236: `workledger version --output json` shall return an object with `version`.
 - [ ] NFR-237: `workledger init --output json` shall return either success output with `config`, `sqlite`, `config_path`, and `sqlite_path`, or unrecoverable SQLite failure output with exactly `reason`, `message`, and `sqlite_path`.
@@ -309,9 +309,11 @@ Placement rule:
 - [ ] NFR-267: `worklogs apply --output json` shall return `dry_run`, `summary`, and `items`.
 - [ ] NFR-268: `worklogs apply --output json` `summary.add_count` shall equal the number of add operations in the effective payload.
 - [ ] NFR-269: `worklogs apply --output json` each `items[*].index` shall identify the zero-based payload row.
-- [ ] NFR-270: Single-delete JSON output shall use `id`, `issue_key`, and `deleted_at`.
+- [ ] NFR-270: Single-delete JSON output shall use `id`, `trash_id`, `issue_key`, and `deleted_at`.
 - [ ] NFR-271: Filtered batch delete dry-run JSON output shall use `filters`, `dry_run`, `matched`, and `items`.
-- [ ] NFR-272: Executed filtered batch delete JSON output shall use `filters`, `dry_run`, `deleted`, and `items`.
+- [ ] NFR-272: Executed filtered batch delete JSON output shall use `filters`, `dry_run`, `deleted_count`, and ordered `{id, trash_id}` `items`.
+- [ ] NFR-272a: Single trash restore JSON output shall use `trash_id` and `record`.
+- [ ] NFR-272b: Filtered trash restore JSON output shall use `filters`, `dry_run`, `matched_count`, `restored_count`, and ordered `{trash_id, record}` items.
 - [ ] NFR-275: `workledger status --output json` shall use `{"items":[...]}`.
 - [ ] NFR-276: Each status `items[]` entry shall include `category`, `target`, `status`, and `message`.
 - [ ] NFR-276a: Successful status connectivity items shall clearly identify the checked target and authenticated principal.
@@ -357,12 +359,14 @@ Placement rule:
 - [ ] NFR-309: SQLite worklog mutations shall use explicit SQLite write transactions.
 - [ ] NFR-310: `worklogs add` atomic scope shall insert one active worklog for explicit `--started`, `--started-utc`, or `--fit` placement and one-or-more active worklogs for `--fill`.
 - [ ] NFR-311: `worklogs update` atomic scope shall validate and update one active worklog.
-- [ ] NFR-312: `worklogs delete <id>` atomic scope shall remove one active worklog.
-- [ ] NFR-313: Filtered batch delete atomic scope shall remove all matched active worklogs.
+- [ ] NFR-312: `worklogs delete <id>` atomic scope shall insert one local trash row and remove one active worklog.
+- [ ] NFR-313: Filtered batch delete atomic scope shall insert one local trash row per matched active worklog and remove all matched active worklogs.
 - [ ] NFR-315: `worklogs apply` shall validate the entire payload before any write.
 - [ ] NFR-316: `worklogs apply` shall execute all writes atomically when validation succeeds and `--dry` is not set.
 - [ ] NFR-317: `worklogs shift` shall validate the full resulting active-worklog set atomically before writing.
-- [ ] NFR-318: Delete paths shall not add secondary persistence work beyond removing active rows.
+- [ ] NFR-318: Direct local delete paths shall archive and remove active rows atomically; archival or revision failure shall roll back the complete operation.
+- [ ] NFR-318a: Local trash restoration shall validate its complete candidate set, insert active rows, and consume archive rows in one transaction; a dry-run shall perform no writes.
+- [ ] NFR-318b: Restoration shall preserve archived creation time, set updated time to restoration time, and set revision to archived revision plus one; legacy rows missing archived metadata shall use restoration time for both timestamps and revision `1`.
 - [ ] NFR-319: Validation failures shall not produce partial writes.
 - [ ] NFR-320: Per-item plan apply or retry execution shall use explicit transaction boundaries for SQLite writes.
 - [ ] NFR-320a: Pull-apply trash inserts, removed active-row deletes, and new active-row inserts shall commit in one SQLite transaction per saved pull scope.
@@ -524,7 +528,7 @@ Placement rule:
 - [ ] NFR-451: `plan apply` shall consume the saved plan payload snapshot.
 - [ ] NFR-452: `plan apply` shall consume the saved inspection snapshot.
 - [ ] NFR-452a: Push apply trash archival shall record apply-time remote rows actually deleted during cleanup, not reconcile-time remote snapshots.
-- [ ] NFR-452b: Trash rows shall be read-only audit history and shall not participate in totals, duplicate checks, overlap checks, restore, pull protection, or push planning.
+- [ ] NFR-452b: Remote trash rows shall remain read-only audit history. Local trash rows may participate only as restoration inputs; trash shall not participate in totals, pull protection, or push planning.
 - [ ] NFR-453: Local SQL changes after planning shall not alter an existing saved plan.
 - [ ] NFR-454: Remote adapter state changes after planning shall not alter an existing saved plan scope or payload.
 - [ ] NFR-455: A saved plan shall not freeze exact remote row identities.

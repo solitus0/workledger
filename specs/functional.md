@@ -32,6 +32,7 @@ Placement rule:
 - [ ] FUNC-013c: Completion script generation shall write the generated script to stdout and shall not require config or initialized SQLite storage.
 - [ ] FUNC-013e: Shell completion shall suggest fixed CLI enum values plus locally known worklog IDs, plan IDs, issue keys, configured adapter instances, and configured Jira route profiles where relevant.
 - [ ] FUNC-013f: Missing or invalid local config or storage shall suppress only affected dynamic completion candidates without emitting an operator-facing error.
+- [ ] FUNC-013g: Locally known issue-key completion shall rank issue keys used by active local worklogs by their most recent `updated_at`, then rank metadata-only issue keys after them by `refreshed_at`, and use the normalized issue key as the deterministic tie-breaker.
 
 ## Workspace Bootstrap
 - [ ] FUNC-014: `workledger init` shall prepare the local config path.
@@ -229,10 +230,10 @@ Placement rule:
 ## Worklog Delete
 - [ ] FUNC-171: `workledger worklogs delete <id>` shall delete exactly one active local worklog.
 - [ ] FUNC-172: `workledger worklogs delete <id>` shall remove the selected worklog from the active worklog set.
-- [ ] FUNC-173: `workledger worklogs delete <id>` shall permanently remove the selected active local worklog.
+- [ ] FUNC-173: `workledger worklogs delete <id>` shall atomically move the selected active local worklog into local trash.
 - [ ] FUNC-174: `workledger worklogs delete` shall not expose delete-mode flags.
 - [ ] FUNC-175: `workledger worklogs delete <id>` shall remain non-interactive once validation passes.
-- [ ] FUNC-176: `workledger worklogs delete <id>` shall return deterministic success output with `id`, `issue_key`, and `deleted_at`.
+- [ ] FUNC-176: `workledger worklogs delete <id>` shall return deterministic success output with `id`, `trash_id`, `issue_key`, and `deleted_at`.
 - [ ] FUNC-177: `workledger worklogs delete <id>` shall be local-only.
 
 ## Batch Delete
@@ -240,14 +241,14 @@ Placement rule:
 - [ ] FUNC-179: Filtered batch delete shall reuse active-worklog selectors.
 - [ ] FUNC-180: Filtered batch delete shall accept any non-empty valid selector subset from the active-worklog selector set.
 - [ ] FUNC-181: Filtered batch delete shall require `--yes` for execution.
-- [ ] FUNC-182: Filtered batch delete shall permanently remove matched active worklogs when executed.
+- [ ] FUNC-182: Filtered batch delete shall atomically move every matched active worklog into local trash when executed.
 - [ ] FUNC-183: Single-delete by `<id>` and filtered batch-delete selectors shall be mutually exclusive modes.
 - [ ] FUNC-184: Filtered batch delete shall be a valid no-op when zero active worklogs match the selector set.
 - [ ] FUNC-185: Filtered batch delete shall apply to active worklogs only.
 - [ ] FUNC-186: Filtered batch delete shall remain valid when exactly one active worklog matches.
 - [ ] FUNC-187: Filtered batch delete shall support `--dry` to preview matched active worklogs without deleting them.
 - [ ] FUNC-188: Batch-delete dry-run shall return the full matched active records together with the matched count.
-- [ ] FUNC-189: Executed filtered batch delete shall return deleted IDs and deleted count rather than full deleted records.
+- [ ] FUNC-189: Executed filtered batch delete shall return ordered `{id, trash_id}` mappings and deleted count rather than full deleted records.
 
 ## Worklog Context
 - [ ] FUNC-204: `workledger worklogs context` shall return read-only planning snapshots over canonical local worklogs.
@@ -405,6 +406,11 @@ Placement rule:
 - [ ] FUNC-318d: `workledger trash search <query>` shall search trashed `description` values by partial, case-insensitive literal substring match.
 - [ ] FUNC-318e: `workledger trash show <id>` shall load one archived trash row by trash archive ID.
 - [ ] FUNC-318f: `workledger trash` records shall expose whether the archived row origin is `local` or `remote`.
+- [ ] FUNC-318g: `trash list` and `trash search` shall accept `--scope local|remote`; omission shall include both storage scopes.
+- [ ] FUNC-318h: `trash restore <id>` shall restore one local trash row under its original worklog ID and consume the trash row atomically.
+- [ ] FUNC-318i: Filtered `trash restore` shall reuse trash issue and original-start date selectors, require exactly one of `--dry` or `--yes`, restore only local rows, and reject ID mode combined with batch flags.
+- [ ] FUNC-318j: Trash restoration shall have no force or partial mode; any active-ID, duplicate, overlap, internal-batch, or confirmed-membership conflict shall reject the complete operation without consuming trash.
+- [ ] FUNC-318k: Remote trash and local trash without `source_worklog_id` shall remain audit-only and non-restorable.
 
 ## Out of Scope
 - [ ] FUNC-303: `workledger tui` shall be the only deferred command surface in this organized spec.

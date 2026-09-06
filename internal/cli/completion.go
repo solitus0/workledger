@@ -85,10 +85,15 @@ func (a *app) configureCompletions(root *cobra.Command) {
 				completionCandidate{value: "uncertain", description: "Retry uncertain items"},
 			))
 		}
+		if cmd.LocalNonPersistentFlags().Lookup("scope") != nil {
+			mustRegisterFlagCompletion(cmd, "scope", fixedCompletion(completionCandidate{value: "local", description: "Local trash"}, completionCandidate{value: "remote", description: "Remote audit trash"}))
+		}
 
 		switch cmd.CommandPath() {
 		case "workledger worklogs update", "workledger worklogs delete":
 			cmd.ValidArgsFunction = a.completeWorklogIDs
+		case "workledger trash restore":
+			cmd.ValidArgsFunction = a.completeTrashIDs
 		case "workledger plan show", "workledger plan apply", "workledger plan retry":
 			cmd.ValidArgsFunction = a.completePlanIDs
 		case "workledger route explain":
@@ -112,6 +117,26 @@ func (a *app) configureCompletions(root *cobra.Command) {
 			mustRegisterFlagCompletion(cmd, "route-profile", a.completeRouteProfiles)
 		}
 	})
+}
+
+func (a *app) completeTrashIDs(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	effective, service, cleanup, ok := completionWorklogService()
+	if !ok {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	defer cleanup()
+	items, err := service.ListRestorableTrashByIDPrefix(toComplete, completionCandidateLimit)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	candidates := make([]completionCandidate, 0, len(items))
+	for _, item := range items {
+		candidates = append(candidates, completionCandidate{value: item.ID, description: fmt.Sprintf("%s · %s · %s", item.IssueKey, item.StartedAtUTC.In(effective.Location).Format("2006-01-02 15:04"), item.Description)})
+	}
+	return renderCompletionCandidates(candidates, toComplete, nil), cobra.ShellCompDirectiveNoFileComp
 }
 
 func visitCommands(command *cobra.Command, visit func(*cobra.Command)) {
@@ -228,14 +253,14 @@ func (a *app) completePlanIDs(_ *cobra.Command, args []string, toComplete string
 	return renderCompletionCandidates(candidates, toComplete, nil), cobra.ShellCompDirectiveNoFileComp
 }
 
-func (a *app) completeIssueKeys(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+func (a *app) completeIssueKeys(cmd *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	_, service, cleanup, ok := completionWorklogService()
 	if !ok {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	defer cleanup()
 
-	items, err := service.ListKnownIssueKeys(toComplete, completionCandidateLimit)
+	items, err := service.ListKnownIssueKeys(cmd.Context(), toComplete, completionCandidateLimit)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
