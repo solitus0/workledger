@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/solitus0/workledger/internal/config"
+	"github.com/solitus0/workledger/internal/presets"
 	"github.com/solitus0/workledger/internal/reconcile"
 	sqlitestore "github.com/solitus0/workledger/internal/store/sqlite"
 	"github.com/solitus0/workledger/internal/worklogs"
@@ -96,6 +97,8 @@ func (a *app) configureCompletions(root *cobra.Command) {
 			cmd.ValidArgsFunction = a.completeTrashIDs
 		case "workledger plan show", "workledger plan apply", "workledger plan retry":
 			cmd.ValidArgsFunction = a.completePlanIDs
+		case "workledger presets show", "workledger presets update", "workledger presets delete", "workledger presets apply":
+			cmd.ValidArgsFunction = a.completePresetNames
 		case "workledger route explain":
 			cmd.ValidArgsFunction = a.completeIssueKeyArgs
 		case "workledger issue-metadata refresh":
@@ -117,6 +120,26 @@ func (a *app) configureCompletions(root *cobra.Command) {
 			mustRegisterFlagCompletion(cmd, "route-profile", a.completeRouteProfiles)
 		}
 	})
+}
+
+func (a *app) completePresetNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	_, service, cleanup, ok := completionPresetService()
+	if !ok {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	defer cleanup()
+	items, err := service.List(cmd.Context(), toComplete, completionCandidateLimit)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	candidates := make([]completionCandidate, 0, len(items))
+	for _, item := range items {
+		candidates = append(candidates, completionCandidate{value: item.Name, description: formatPresetSummary(item)})
+	}
+	return renderCompletionCandidates(candidates, toComplete, nil), cobra.ShellCompDirectiveNoFileComp
 }
 
 func (a *app) completeTrashIDs(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -423,6 +446,14 @@ func completionWorklogService() (config.EffectiveConfig, *worklogs.Service, func
 		return config.EffectiveConfig{}, nil, nil, false
 	}
 	return effective, worklogs.NewService(store), cleanup, true
+}
+
+func completionPresetService() (config.EffectiveConfig, *presets.Service, func(), bool) {
+	effective, store, cleanup, ok := completionStore()
+	if !ok {
+		return config.EffectiveConfig{}, nil, nil, false
+	}
+	return effective, presets.NewService(store), cleanup, true
 }
 
 func completionPlanService() (config.EffectiveConfig, *reconcile.Service, func(), bool) {

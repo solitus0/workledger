@@ -284,6 +284,7 @@ func (a *app) newRootCommand() *cobra.Command {
 	root.AddCommand(a.newConfigCommand())
 	root.AddCommand(a.newSetupCommand())
 	root.AddCommand(a.newWorklogsCommand())
+	root.AddCommand(a.newPresetsCommand())
 	root.AddCommand(a.newTrashCommand())
 	root.AddCommand(a.newTotalsCommand())
 	root.AddCommand(a.newStatusCommand())

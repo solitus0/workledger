@@ -334,6 +334,28 @@ func TestBootstrapCreatesTrashTableAndIndexes(t *testing.T) {
 	}
 }
 
+func TestBootstrapCreatesWorklogPresetSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+	store, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	defer store.Close()
+
+	for _, name := range []string{"worklog_presets", "idx_worklog_presets_name", "idx_worklog_presets_last_used_name"} {
+		var count int
+		if err := store.DB().QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE name = ?`, name).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("schema object %s count=%d err=%v", name, count, err)
+		}
+	}
+	for _, column := range []string{"id", "name", "issue_key", "start_time", "duration_seconds", "description", "created_at", "updated_at", "last_used_at", "revision"} {
+		var count int
+		if err := store.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('worklog_presets') WHERE name = ?`, column).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("preset column %s count=%d err=%v", column, count, err)
+		}
+	}
+}
+
 func TestOpenExistingRejectsSchemaMissingTrashTable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "worklogs.db")
 	seedLegacyStoreMissingTrashTable(t, path)

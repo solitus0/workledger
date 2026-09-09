@@ -113,6 +113,18 @@ var schemaStatements = []string{
 		source_adapter_instance TEXT NOT NULL,
 		refreshed_at TEXT NOT NULL
 	)`,
+	`CREATE TABLE IF NOT EXISTS worklog_presets (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		issue_key TEXT NOT NULL,
+		start_time TEXT NOT NULL,
+		duration_seconds INTEGER NOT NULL,
+		description TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		last_used_at TEXT NULL,
+		revision INTEGER NOT NULL DEFAULT 1
+	)`,
 	`CREATE TABLE IF NOT EXISTS saved_plans (
 		id TEXT PRIMARY KEY,
 		plan_direction TEXT NOT NULL,
@@ -179,6 +191,8 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_trashed_worklogs_scope_trashed_at ON trashed_worklogs(storage_scope, trashed_at)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_issue_metadata_issue_key ON issue_metadata(issue_key)`,
 	`CREATE INDEX IF NOT EXISTS idx_issue_metadata_refreshed_at ON issue_metadata(refreshed_at)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_worklog_presets_name ON worklog_presets(name)`,
+	`CREATE INDEX IF NOT EXISTS idx_worklog_presets_last_used_name ON worklog_presets(last_used_at, name)`,
 	`CREATE INDEX IF NOT EXISTS idx_saved_plans_created_at ON saved_plans(created_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_saved_plan_items_plan_id ON saved_plan_items(plan_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_saved_plan_items_issue_window ON saved_plan_items(issue_key, window_from_utc, window_to_utc)`,
@@ -544,6 +558,21 @@ var requiredSchema = []tableRequirement{
 			{column: "source_adapter_family", typ: "TEXT", notNull: true},
 			{column: "source_adapter_instance", typ: "TEXT", notNull: true},
 			{column: "refreshed_at", typ: "TEXT", notNull: true},
+		},
+	},
+	{
+		table: "worklog_presets",
+		columns: []columnRequirement{
+			{column: "id", typ: "TEXT", notNull: false},
+			{column: "name", typ: "TEXT", notNull: true},
+			{column: "issue_key", typ: "TEXT", notNull: true},
+			{column: "start_time", typ: "TEXT", notNull: true},
+			{column: "duration_seconds", typ: "INTEGER", notNull: true},
+			{column: "description", typ: "TEXT", notNull: true},
+			{column: "created_at", typ: "TEXT", notNull: true},
+			{column: "updated_at", typ: "TEXT", notNull: true},
+			{column: "last_used_at", typ: "TEXT", notNull: false},
+			{column: "revision", typ: "INTEGER", notNull: true},
 		},
 	},
 	{

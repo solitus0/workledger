@@ -46,6 +46,22 @@ func NormalizeDescription(value string) (string, error) {
 	return normalizeDescription(value)
 }
 
+// NormalizeCoreFields applies the canonical issue, duration, and description
+// rules shared by worklog creation and reusable preset definitions.
+func NormalizeCoreFields(cfg config.EffectiveConfig, issueKey, duration, description string) (LocalWorklog, error) {
+	return buildAddBaseCandidate(cfg, issueKey, duration, description)
+}
+
+// ResolveLocalDateAt resolves one supported date value in the effective local
+// timezone. The returned value is normalized to the selected local date.
+func ResolveLocalDateAt(cfg config.EffectiveConfig, value string, now func() time.Time) (time.Time, error) {
+	resolved, err := parseDateSelectorAt(value, cfg.Location, now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Date(resolved.Year(), resolved.Month(), resolved.Day(), 0, 0, 0, 0, cfg.Location), nil
+}
+
 type LocalWorklog struct {
 	ID              string
 	IssueKey        string
