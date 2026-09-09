@@ -8,6 +8,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
+- Reusable local worklog presets with full CLI management, selected-day application, editable overrides, dry-run and conflict handling, and local preset-name completion.
 - Conflict-checked local trash restoration through `workledger trash restore`.
 - `--scope local|remote` filtering for trash list and search commands.
 - Bash, Zsh, and Fish completion script generation with local, read-only suggestions for command values, configured targets, issue keys, worklog IDs, and saved plan IDs.

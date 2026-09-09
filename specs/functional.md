@@ -12,7 +12,7 @@ Placement rule:
 
 ## Product Scope
 - [ ] FUNC-001: Workledger shall ship as one local CLI binary named `workledger`.
-- [ ] FUNC-002: Workledger shall provide local configuration bootstrap, configuration validation, and canonical local worklog management from the CLI.
+- [ ] FUNC-002: Workledger shall provide local configuration bootstrap, configuration validation, reusable worklog preset management, and canonical local worklog management from the CLI.
 - [ ] FUNC-003: Workledger shall provide adapter status, totals comparison, issue metadata, reconcile planning, plan review, plan apply, and plan retry command surfaces from the CLI.
 
 ## Root and Help
@@ -203,6 +203,18 @@ Placement rule:
 - [ ] FUNC-150: `workledger worklogs update <id>` shall return not found when the requested active local worklog ID does not exist.
 - [ ] FUNC-151: `workledger worklogs update <id>` shall return the updated canonical worklog on success.
 
+## Worklog Presets
+- [ ] FUNC-151a: `workledger presets` shall provide `add`, `list`, `show`, `update`, `delete`, and `apply` subcommands for operator-local reusable worklog presets.
+- [ ] FUNC-151b: A preset shall contain a unique lowercase slug, issue key, local `HH:MM` start time, duration, and description.
+- [ ] FUNC-151c: `workledger presets update <slug>` shall support patch-style `--name`, `--issue`, `--start`, `--duration`, and `--description` flags and require at least one field.
+- [ ] FUNC-151d: `workledger presets apply <slug> --date <value>` shall create exactly one canonical local worklog by combining the selected local date with the preset start time.
+- [ ] FUNC-151e: Preset application shall accept one-off `--issue`, `--start`, `--duration`, and `--description` overrides without mutating the preset.
+- [ ] FUNC-151f: Preset application shall support `--dry` and `--force` with the same preview, duplicate, and overlap semantics as single-record `worklogs add`.
+- [ ] FUNC-151g: Preset `--date` shall accept `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun`, and signed day offsets in `+Nd` or `-Nd` form.
+- [ ] FUNC-151h: Successful non-dry preset application shall update preset recency without changing its content revision; dry application shall remain read-only.
+- [ ] FUNC-151i: Renaming or deleting a preset shall not mutate worklogs previously created from it.
+- [ ] FUNC-151j: Shell completion shall suggest bounded, recency-ordered local preset slugs for preset show, update, delete, and apply commands.
+
 ## Batch Shift
 - [ ] FUNC-152: `workledger worklogs shift` shall shift selected active local worklogs by one signed duration delta.
 - [ ] FUNC-153: `workledger worklogs shift` shall reuse active-worklog selectors.
@@ -322,7 +334,7 @@ Placement rule:
 - [ ] FUNC-247: `workledger plan show` shall load the most recent saved plan when no plan ID is provided.
 - [ ] FUNC-248: `workledger plan show` shall render the saved reconciliation report without new external requests.
 - [ ] FUNC-249: `workledger plan show` shall render deterministic output suitable for operator review.
-- [ ] FUNC-250: `workledger plan show` shall report `plan_status` per scope.
+- [ ] FUNC-250: `workledger plan show` shall report the plan's immutable `planning_status`, derived `execution_state`, and `plan_status` per scope.
 - [ ] FUNC-251: `workledger plan show` shall report `planned_action` per scope.
 - [ ] FUNC-252: `workledger plan show` shall report comparison status per scope.
 - [ ] FUNC-253: `workledger plan show` shall report target adapter family, route profile when present, target issue, saved reconcile time window, local row count, remote row count, saved change counts, and execution state per scope.
@@ -333,7 +345,7 @@ Placement rule:
 ## Plan Listing
 - [ ] FUNC-254: `workledger plan list` shall load saved-plan metadata from SQLite only.
 - [ ] FUNC-255: `workledger plan list` shall render saved plans ordered by `created_at desc`, then stable plan ID.
-- [ ] FUNC-256: `workledger plan list` shall include deterministic summary counts for total items, ready items, and terminally succeeded items.
+- [ ] FUNC-256: `workledger plan list` shall include each plan's immutable `planning_status`, derived `execution_state`, and deterministic summary counts for total, actionable, open, and terminally succeeded items.
 - [ ] FUNC-257: `workledger plan list` shall expose `plan_direction`, saved target adapter families, saved target instances, and saved reconcile time window.
 - [ ] FUNC-258: `workledger plan list` shall support shared date-window selectors against saved plan `created_at` in the effective local timezone.
 
@@ -341,13 +353,14 @@ Placement rule:
 - [ ] FUNC-259: `workledger plan apply` shall load the requested plan ID when provided.
 - [ ] FUNC-260: `workledger plan apply` shall load the most recent saved plan when no plan ID is provided.
 - [ ] FUNC-261: `workledger plan apply` shall build tasks only from `ready` items whose execution state is `not_attempted`.
-- [ ] FUNC-262: `workledger plan apply` shall succeed as a no-op when the saved plan contains zero executable `ready` items.
+- [ ] FUNC-262: `workledger plan apply` shall fail validation when the saved plan contains zero unapplied `ready` items.
 - [ ] FUNC-263: `workledger plan apply` shall use the saved scope definition and saved payload snapshot for execution.
 - [ ] FUNC-264: `workledger plan apply` shall execute according to the saved `plan_direction`.
 - [ ] FUNC-265: `workledger plan apply` shall execute only one saved plan at a time.
 - [ ] FUNC-266: `workledger plan apply` shall record delete and create outcomes separately when one saved push item requires both steps.
 - [ ] FUNC-267: `workledger plan apply` shall continue executing other eligible scopes when one scope fails.
 - [ ] FUNC-268: `workledger plan apply` shall persist per-scope results independently.
+- [ ] FUNC-268a: A saved plan shall set `applied_at` only after every actionable item has terminally succeeded.
 - [ ] FUNC-269: `workledger plan apply` for `plan_direction=pull` shall merge the saved normalized remote payload into canonical local SQLite state.
 - [ ] FUNC-270: `workledger plan apply` for `plan_direction=push` shall re-discover current remote worklogs inside the saved issue/window scope at execution time when cleanup is required.
 - [ ] FUNC-271: `workledger plan apply` for `plan_direction=push` shall apply apply-time remote cleanup only for remote rows inside the saved target scope that are unmatched by the saved payload before creating missing replacement worklogs.
@@ -363,6 +376,7 @@ Placement rule:
 - [ ] FUNC-274: `workledger plan retry` shall require an explicit retry scope such as `--only failed` or `--only uncertain`.
 - [ ] FUNC-275: `workledger plan retry <id> --only failed` shall process `ready` items with `execution_state=failed`.
 - [ ] FUNC-276: `workledger plan retry <id> --only uncertain` shall process `ready` items with `execution_state=uncertain`.
+- [ ] FUNC-276a: `workledger plan retry` shall fail validation when the selected retry scope contains no matching `ready` items.
 - [ ] FUNC-277: `workledger plan retry` shall reuse the same saved scope and the same saved payload.
 - [ ] FUNC-278: `workledger plan retry` may re-list the current remote row set only when `plan_direction=push` and the planned action requires cleanup or safety checks.
 
@@ -411,6 +425,16 @@ Placement rule:
 - [ ] FUNC-318i: Filtered `trash restore` shall reuse trash issue and original-start date selectors, require exactly one of `--dry` or `--yes`, restore only local rows, and reject ID mode combined with batch flags.
 - [ ] FUNC-318j: Trash restoration shall have no force or partial mode; any active-ID, duplicate, overlap, internal-batch, or confirmed-membership conflict shall reject the complete operation without consuming trash.
 - [ ] FUNC-318k: Remote trash and local trash without `source_worklog_id` shall remain audit-only and non-restorable.
+
+## Activity History
+- [ ] FUNC-319: Workledger shall persist diagnostic CLI activity in the configured local SQLite store with source, canonical operation, safe summary and attributes, lifecycle state, UTC timestamps, duration, optional exit code, and sanitized failure details.
+- [ ] FUNC-319a: Activity history shall retain the newest 500 entries in deterministic `started_at desc`, then `id desc` order and shall remain diagnostic rather than an immutable audit log.
+- [ ] FUNC-319b: CLI activity shall be best-effort and silent, shall never change stdout, stderr, or exit status, and shall be omitted when valid configuration and compatible SQLite storage are unavailable.
+- [ ] FUNC-319c: CLI activity shall record resolvable executable leaf commands, including validation failures, dry runs, completion generation, version, and activity listing, while excluding help, unknown commands, hidden completion callbacks, and the TUI.
+- [ ] FUNC-319d: CLI activity shall persist canonical command paths and allow-listed identifiers or selectors only and shall not persist raw argv, descriptions, search text, URLs, emails, paths, configuration values, input payloads, or credential-related values.
+- [ ] FUNC-319e: CLI terminal activity states shall map exit `0` to `succeeded`, exit `6` to `partial`, exit `130` to `canceled`, and other non-zero exits to `failed`.
+- [ ] FUNC-319f: `workledger activity list` shall support table and JSON output, default `--limit` to 50, accept limits from 1 through 500, and support optional `--source=cli|tui` and `--state=running|succeeded|failed|partial|canceled` filters.
+- [ ] FUNC-319g: `workledger activity list` shall exclude its own running entry from the current result while retaining its completed entry for later reads.
 
 ## Out of Scope
 - [ ] FUNC-303: `workledger tui` shall be the only deferred command surface in this organized spec.

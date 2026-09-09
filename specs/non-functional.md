@@ -33,9 +33,11 @@ Placement rule:
 - [ ] NFR-014d: The SQLite schema shall define indexes on `trashed_worklogs(issue_key, started_at_utc)`, `trashed_worklogs(trashed_at)`, `trashed_worklogs(reason_code)`, and `trashed_worklogs(storage_scope, trashed_at)`.
 - [ ] NFR-015: Additive storage shall use `issue_metadata`, `saved_plans`, `saved_plan_items`, and `delivery_attempts` tables.
 - [ ] NFR-016: The `issue_metadata` table shall include `issue_key`, `max_estimate_seconds`, `source_adapter_family`, `source_adapter_instance`, and `refreshed_at`.
-- [ ] NFR-017: The `saved_plans` table shall include `id`, `created_at`, `plan_direction`, `adapter_family`, `config_fingerprint`, `window_from_utc`, `window_to_utc`, `aggregate_status`, and `applied_at`.
+- [ ] NFR-017: The `saved_plans` table shall include `id`, `created_at`, `plan_direction`, `adapter_family`, `config_fingerprint`, `window_from_utc`, `window_to_utc`, immutable planning status in `aggregate_status`, and terminal-success time in `applied_at`.
 - [ ] NFR-018: The `saved_plan_items` table shall include `id`, `plan_id`, `issue_key`, `target_issue`, `route_profile`, `plan_direction`, `target_adapter_family`, `target_adapter_instance`, `window_from_utc`, `window_to_utc`, `plan_status`, `planned_action`, `comparison_status`, `reason_code`, `reason_detail`, `payload_json`, `inspection_summary_json`, `delivery_key`, `content_hash`, `local_row_count`, `local_total_seconds`, `remote_row_count`, `remote_total_seconds`, `applied_state`, `applied_at`, and `apply_message`.
 - [ ] NFR-019: The `delivery_attempts` table shall include `id`, `plan_id`, `plan_item_id`, `attempt_state`, `message`, and `created_at`.
+- [ ] NFR-019a: The `worklog_presets` table shall include `id`, `name`, `issue_key`, `start_time`, `duration_seconds`, `description`, `created_at`, `updated_at`, nullable `last_used_at`, and `revision`.
+- [ ] NFR-019b: SQLite shall define a unique index on `worklog_presets(name)` and an index supporting last-used and name ordering.
 - [ ] NFR-021: Additive storage shall define a unique index on `issue_metadata(issue_key)`.
 - [ ] NFR-022: Additive storage shall define an index on `issue_metadata(refreshed_at)`.
 - [ ] NFR-023: Additive storage shall define an index on `saved_plans(created_at)`.
@@ -83,6 +85,8 @@ Placement rule:
 - [ ] NFR-059: The effective local worklog minimum duration shall default to `900` when `worklogs.minimum_duration_seconds` is absent, the effective daily minimum quota shall default to `28800` when `worklogs.daily_minimum_quota_seconds` is absent, the effective workday start shall default to `08:00` when `worklogs.day_start` is absent, the effective workday end shall default to `17:00` when `worklogs.day_end` is absent, and the effective default lunch shall default to `12:00-12:45` when `worklogs.daily_lunch` is absent.
 - [ ] NFR-059a: `worklogs.day_start` and `worklogs.day_end`, when present, shall use `HH:MM`, and `worklogs.day_start` shall be earlier than `worklogs.day_end`.
 - [ ] NFR-059b: `worklogs.daily_lunch`, when present, shall use `HH:MM-HH:MM`, define a positive interval, and fit strictly inside the configured workday when config also defines the effective workday window.
+- [ ] NFR-059c: Preset names shall contain 1 through 64 lowercase alphanumeric characters arranged as non-empty segments separated by single hyphens.
+- [ ] NFR-059d: Preset start times shall use zero-padded local `HH:MM` values from `00:00` through `23:59`.
 - [ ] NFR-060: `local_timezone`, when present, shall be a valid timezone.
 - [ ] NFR-061: Local timestamp resolution and date selection shall fall back to the system local timezone when `local_timezone` is absent.
 - [ ] NFR-062: `default_output`, when present, shall be `table` or `json`.
@@ -245,6 +249,7 @@ Placement rule:
 - [ ] NFR-202: `worklogs apply` duplicate and overlap validation shall evaluate the final resulting active worklog set.
 - [ ] NFR-203: `worklogs apply` duplicate and overlap validation shall include conflicts introduced between add operations inside the same payload.
 - [ ] NFR-204: Duplicate and overlap enforcement shall apply to `add`, `update`, `apply`, `shift`, and local trash restoration.
+- [ ] NFR-204a: Preset application shall reuse canonical worklog add normalization and conflict enforcement after resolving the preset and all one-off overrides.
 - [ ] NFR-205: Delete paths shall not bypass duplicate or overlap validation because they remove active rows instead of creating them.
 - [ ] NFR-206: Local trash restoration shall reuse active-worklog duplicate and overlap rules and additionally reject occupied original IDs and conflicts among batch candidates.
 - [ ] NFR-207: Duplicate and overlap enforcement shall not apply to `delete`.
@@ -374,6 +379,7 @@ Placement rule:
 - [ ] NFR-321a: Commands that persist local SQLite state shall run one shared storage-writability preflight after config resolution and before opening a write transaction.
 - [ ] NFR-321b: `worklogs apply --dry` shall remain read-only and shall not require local storage writability.
 - [ ] NFR-321c: `worklogs add --dry` shall remain read-only and shall not require local storage writability.
+- [ ] NFR-321d: `presets apply --dry` shall remain read-only, shall not update `last_used_at`, and shall not require local storage writability.
 
 ## Determinism
 - [ ] NFR-322: `worklogs list` sorting shall be fixed by `started_at asc`, then stable local `id`.
@@ -544,10 +550,16 @@ Placement rule:
 
 ## Execution State
 - [ ] NFR-465: `plan_status` shall be immutable after planning.
+- [ ] NFR-465a: A saved plan's `planning_status` shall be the immutable planning-time aggregate represented by stored `aggregate_status`; CLI and TUI contracts shall call it `planning_status`.
 - [ ] NFR-466: Attempt history shall be append-only.
 - [ ] NFR-467: Attempt states shall be `pending`, `succeeded`, `failed`, and `uncertain`.
 - [ ] NFR-468: Derived execution states shall be `not_attempted`, `pending`, `succeeded`, `failed`, and `uncertain`.
 - [ ] NFR-469: A succeeded item shall be terminal.
+- [ ] NFR-469a: A saved plan's execution state shall be derived from the effective execution states of items whose `plan_status` is `ready`, without persisting a second mutable aggregate.
+- [ ] NFR-469b: Derived plan execution states shall be `not_applicable`, `ready`, `pending`, `partially_applied`, `failed`, `uncertain`, and `succeeded`.
+- [ ] NFR-469c: A saved plan shall be `succeeded` only when every actionable item has terminally succeeded; skipped items shall not prevent success.
+- [ ] NFR-469d: A plan with no actionable items shall have execution state `not_applicable`; its planning status shall communicate whether planning was skipped, blocked, invalid, or failed.
+- [ ] NFR-469e: Open plan items shall be actionable items whose effective execution state is not `succeeded`.
 - [ ] NFR-470: A succeeded item shall not be retried.
 - [ ] NFR-471: Plain `plan apply` shall never start a new execution for an item whose effective state is `pending`, `failed`, or `uncertain`.
 - [ ] NFR-472: Before local merge or remote delete/create, execution shall reserve the execution locally.
@@ -557,7 +569,7 @@ Placement rule:
 - [ ] NFR-476: After ambiguous outcome, execution shall mark the attempt `uncertain`.
 - [ ] NFR-476a: Cancellation before a remote attempt is reserved shall leave the item `not_attempted`.
 - [ ] NFR-476b: Cancellation after a remote attempt is reserved but before its outcome is confirmed shall append an `uncertain` attempt.
-- [ ] NFR-476c: Cancellation shall not replace a confirmed `succeeded` outcome or mark the aggregate plan applied.
+- [ ] NFR-476c: Cancellation shall not replace a confirmed `succeeded` outcome or set the plan's `applied_at`.
 - [ ] NFR-477: A `pending` attempt older than 15 minutes shall be treated as effective `uncertain`.
 - [ ] NFR-478: Historical attempt rows shall not be rewritten solely because they became stale.
 - [ ] NFR-479: Uncertain push retries shall first perform best-effort target-adapter reconciliation where supported.
@@ -661,3 +673,6 @@ Placement rule:
 - [ ] NFR-564: Workers shall never print progress directly.
 - [ ] NFR-565: Progress state shall remain in memory only.
 - [ ] NFR-566: Progress state shall never be persisted.
+- [ ] NFR-567: Activity persistence shall be owned by an `internal/activity` service with consumer-facing operations that accept `context.Context`.
+- [ ] NFR-568: Activity logging failures shall never replace or modify the result of the operation being observed.
+- [ ] NFR-569: Activity error persistence shall use fixed sanitized codes and messages rather than arbitrary raw errors.

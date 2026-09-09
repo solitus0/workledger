@@ -75,6 +75,20 @@ workledger status
 
 `init` creates the config file when needed and provisions local SQLite storage. `status` runs setup diagnostics and shows authenticated identity details for successful remote checks.
 
+## Activity history
+
+Workledger keeps the newest 500 CLI commands as diagnostic activity in the local SQLite store. It records safe command identifiers and selectors, outcomes, and timing without storing raw command lines, descriptions, payloads, credentials, or other free-text inputs. Logging is silent and best-effort, so it never changes command output or exit status and is unavailable until configuration and SQLite storage are valid.
+
+Inspect recent activity from the CLI:
+
+```sh
+workledger activity list
+workledger activity list --source cli --state failed --limit 20
+workledger activity list --output json
+```
+
+Activity history is intended for diagnosis and is not an immutable audit log.
+
 ## Daily workflow
 
 Add work locally at an explicit time:
@@ -96,6 +110,16 @@ Fill a selected date window, splitting across free slots when needed:
 workledger worklogs add --issue PROJ-123 --fill --from 2026-05-14 --to 2026-05-14 --duration 5h --description "Implement reconciliation flow"
 workledger worklogs add --issue PROJ-123 --fill --tue --duration 3h --description "Prepare release notes"
 ```
+
+Save repeated work as a reusable preset and apply it to any explicit local day:
+
+```sh
+workledger presets add daily-standup --issue PROJ-123 --start 09:45 --duration 15m --description "Daily standup"
+workledger presets apply daily-standup --date tomorrow
+workledger presets apply daily-standup --date mon --start 10:00 --dry
+```
+
+Use `workledger presets list`, `show`, `update`, and `delete` to manage presets. Applying a preset creates one ordinary local worklog; one-off overrides do not change the saved preset. Shell completion suggests locally stored preset names.
 
 Automatic placement starts each worklog before the configured workday end by default, although a worklog that starts before the boundary may finish afterward. Use `--overtime` with `--fit` or `--fill` to allow placement to start at or after the workday end:
 
