@@ -256,7 +256,7 @@ func TestApplyPlanPullMergeArchivesRemovedLocalRowsAndPreservesIDs(t *testing.T)
 		WindowFromUTC:     mustTime("2026-05-01T00:00:00Z"),
 		WindowToUTC:       mustTime("2026-05-01T23:59:59Z"),
 		CreatedAt:         mustTime("2026-05-02T00:00:00Z"),
-		AggregateStatus:   "ready",
+		PlanningStatus:    "ready",
 		Items: []PlanItem{
 			{
 				ID:               "item-pull-trash",
@@ -295,6 +295,13 @@ func TestApplyPlanPullMergeArchivesRemovedLocalRowsAndPreservesIDs(t *testing.T)
 	}
 	if len(result.ScopeResults) != 1 || result.ScopeResults[0].TrashArchivedCount != 1 {
 		t.Fatalf("expected scope trash summary, got %#v", result.ScopeResults)
+	}
+	appliedPlan, err := service.LoadPlan(plan.ID)
+	if err != nil {
+		t.Fatalf("LoadPlan failed: %v", err)
+	}
+	if appliedPlan.ExecutionState != "succeeded" || appliedPlan.AppliedAt == nil {
+		t.Fatalf("expected terminally succeeded plan, got %#v", appliedPlan)
 	}
 
 	scopeRows, err := service.listLocalScope("AAPP-1", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"))
@@ -1029,6 +1036,16 @@ func TestApplyPlanPushMixedResult(t *testing.T) {
 	if states["AAPP-1"] != "succeeded" || states["BAPP-1"] != "failed" {
 		t.Fatalf("unexpected applied states %#v", states)
 	}
+	if appliedPlan.ExecutionState != "failed" || appliedPlan.AppliedAt != nil {
+		t.Fatalf("mixed result marked plan complete: %#v", appliedPlan)
+	}
+	plans, err := service.ListPlans()
+	if err != nil {
+		t.Fatalf("ListPlans failed: %v", err)
+	}
+	if len(plans) != 1 || plans[0].ExecutionState != "failed" || plans[0].ActionableItems != 2 || plans[0].OpenItems != 1 || plans[0].SucceededItems != 1 {
+		t.Fatalf("unexpected plan list lifecycle %#v", plans)
+	}
 
 	var attempts int
 	if err := store.DB().QueryRow(`SELECT COUNT(1) FROM delivery_attempts`).Scan(&attempts); err != nil {
@@ -1085,6 +1102,14 @@ func TestApplyPlanSkipsNonNotAttemptedReadyItems(t *testing.T) {
 	}
 	if states["AAPP-1"] != "succeeded" || states["BAPP-1"] != "failed" || states["CAPP-1"] != "pending" || states["DAPP-1"] != "uncertain" {
 		t.Fatalf("unexpected execution states %#v", states)
+	}
+	plans, err := service.ListPlans()
+	if err != nil {
+		t.Fatalf("ListPlans failed: %v", err)
+	}
+	if len(plans) != 1 || plans[0].ExecutionState != "pending" || plans[0].ActionableItems != 4 || plans[0].OpenItems != 3 || plans[0].SucceededItems != 1 ||
+		plans[0].NotAttemptedItems != 0 || plans[0].FailedItems != 1 || plans[0].UncertainItems != 1 {
+		t.Fatalf("unexpected aggregate execution state %#v", plans)
 	}
 }
 
@@ -1343,7 +1368,7 @@ func TestRetryPlanUncertainClockifyHandlesSuccessReplayAndAmbiguous(t *testing.T
 	}
 }
 
-func TestRetryPlanRejectsFingerprintMismatchAndNoEligibleReturnsNoOp(t *testing.T) {
+func TestSavedPlanExecutionRejectsFingerprintMismatchAndUnavailableScopes(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
 	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Done")
@@ -1364,12 +1389,11 @@ func TestRetryPlanRejectsFingerprintMismatchAndNoEligibleReturnsNoOp(t *testing.
 		t.Fatalf("expected fingerprint mismatch, got %v", err)
 	}
 
-	result, err := service.RetryPlan(context.Background(), testClockifyConfig(true), plan.ID, "failed")
-	if err != nil {
-		t.Fatalf("RetryPlan failed: %v", err)
+	if _, err := service.RetryPlan(context.Background(), testClockifyConfig(true), plan.ID, "failed"); err == nil || err.Error() != "saved plan has no failed ready scopes" {
+		t.Fatalf("expected no-eligible-scope validation, got %v", err)
 	}
-	if !result.NoOp || result.AppliedCount != 0 || result.SkippedCount != 1 {
-		t.Fatalf("expected noop retry result, got %#v", result)
+	if _, err := service.ApplyPlan(context.Background(), testClockifyConfig(true), plan.ID); err == nil || err.Error() != "saved plan has no unapplied ready scopes" {
+		t.Fatalf("expected no-unapplied-scope validation, got %v", err)
 	}
 }
 
@@ -2291,7 +2315,7 @@ func TestReconcileJiraCloudPushPlanReturnsBlockedPlanWhenRoutesDoNotMatch(t *tes
 	if result.Plan == nil || result.NoPlan != nil {
 		t.Fatalf("unexpected reconcile result %#v", result)
 	}
-	if result.Plan.AggregateStatus != "blocked" || len(result.Plan.Items) != 2 {
+	if result.Plan.PlanningStatus != "blocked" || len(result.Plan.Items) != 2 {
 		t.Fatalf("expected blocked reporting plan with preserved target scope, got %#v", result.Plan)
 	}
 }
@@ -2462,7 +2486,7 @@ func TestReconcileJiraCloudPushPlanPartialCurrentUserFailurePersistsPlan(t *test
 	if result.NoPlan != nil || result.Plan == nil {
 		t.Fatalf("expected saved plan, got %#v", result)
 	}
-	if result.Plan.AggregateStatus != "check_failed" || len(result.Plan.Items) != 2 {
+	if result.Plan.PlanningStatus != "check_failed" || len(result.Plan.Items) != 2 {
 		t.Fatalf("unexpected partial plan %#v", result.Plan)
 	}
 
@@ -2521,7 +2545,7 @@ func TestReconcileJiraCloudPushPlanPartialWorklogFailureMarksSingleScope(t *test
 	if result.NoPlan != nil || result.Plan == nil {
 		t.Fatalf("expected saved plan, got %#v", result)
 	}
-	if result.Plan.AggregateStatus != "check_failed" || len(result.Plan.Items) != 2 {
+	if result.Plan.PlanningStatus != "check_failed" || len(result.Plan.Items) != 2 {
 		t.Fatalf("unexpected partial plan %#v", result.Plan)
 	}
 
@@ -2581,7 +2605,7 @@ func TestReconcileJiraCloudReportingExactMatchPlusFailedReadStillPersistsPlan(t 
 	if result.NoPlan != nil || result.Plan == nil {
 		t.Fatalf("expected saved plan instead of no-plan result, got %#v", result)
 	}
-	if result.Plan.AggregateStatus != "check_failed" || len(result.Plan.Items) != 2 {
+	if result.Plan.PlanningStatus != "check_failed" || len(result.Plan.Items) != 2 {
 		t.Fatalf("unexpected reporting plan %#v", result.Plan)
 	}
 
@@ -2623,7 +2647,7 @@ func TestReconcileJiraDataPushPlanPartialWorklogFailureMarksSingleScope(t *testi
 	if result.NoPlan != nil || result.Plan == nil {
 		t.Fatalf("expected saved plan, got %#v", result)
 	}
-	if result.Plan.AggregateStatus != "check_failed" || len(result.Plan.Items) != 2 {
+	if result.Plan.PlanningStatus != "check_failed" || len(result.Plan.Items) != 2 {
 		t.Fatalf("unexpected partial plan %#v", result.Plan)
 	}
 
@@ -2661,7 +2685,7 @@ func TestReconcileJiraDataPushPlanCurrentUserFailureMarksAllScopes(t *testing.T)
 	if result.NoPlan != nil || result.Plan == nil {
 		t.Fatalf("expected saved plan, got %#v", result)
 	}
-	if result.Plan.AggregateStatus != "check_failed" || len(result.Plan.Items) != 2 {
+	if result.Plan.PlanningStatus != "check_failed" || len(result.Plan.Items) != 2 {
 		t.Fatalf("unexpected plan %#v", result.Plan)
 	}
 	for _, item := range result.Plan.Items {
@@ -3481,8 +3505,8 @@ func TestReconcileMultiPushPlanPersistsPartialPlanWhenJiraCloudSearchFails(t *te
 	if result.Plan == nil || result.NoPlan != nil {
 		t.Fatalf("expected saved partial plan, got %#v", result)
 	}
-	if result.Plan.AggregateStatus != "check_failed" {
-		t.Fatalf("expected check_failed aggregate status, got %#v", result.Plan)
+	if result.Plan.PlanningStatus != "check_failed" {
+		t.Fatalf("expected check_failed planning status, got %#v", result.Plan)
 	}
 
 	foundClockify := false
@@ -3593,7 +3617,7 @@ func TestReconcileMultiPushPlanAutoSkipsUnreachableJiraCloudInstanceWithoutMatch
 	if result.NoPlan != nil || result.Plan == nil {
 		t.Fatalf("expected saved jira-cloud plan, got %#v", result)
 	}
-	if result.Plan.AggregateStatus != "ready" || len(result.Plan.Items) != 1 {
+	if result.Plan.PlanningStatus != "ready" || len(result.Plan.Items) != 1 {
 		t.Fatalf("expected only matched reachable scope, got %#v", result.Plan)
 	}
 	if len(result.ProfileSummaries) != 2 {
@@ -3671,7 +3695,7 @@ func TestReconcileMultiPushPlanAutoSkipsUnreachableJiraDataInstanceWithoutMatchi
 	if result.NoPlan != nil || result.Plan == nil {
 		t.Fatalf("expected saved jira-data-center plan, got %#v", result)
 	}
-	if result.Plan.AggregateStatus != "ready" || len(result.Plan.Items) != 1 {
+	if result.Plan.PlanningStatus != "ready" || len(result.Plan.Items) != 1 {
 		t.Fatalf("expected only matched reachable scope, got %#v", result.Plan)
 	}
 	if len(result.ProfileSummaries) != 2 {
@@ -4084,6 +4108,30 @@ func testJiraDataConfig() config.EffectiveConfig {
 				},
 			},
 		},
+	}
+}
+
+func TestDerivePlanExecutionState(t *testing.T) {
+	tests := []struct {
+		name  string
+		items []PlanItem
+		want  string
+	}{
+		{name: "not applicable", items: []PlanItem{{PlanStatus: "skipped"}}, want: "not_applicable"},
+		{name: "ready", items: []PlanItem{{PlanStatus: "ready", ExecutionState: "not_attempted"}}, want: "ready"},
+		{name: "pending takes active precedence", items: []PlanItem{{PlanStatus: "ready", ExecutionState: "pending"}, {PlanStatus: "ready", ExecutionState: "uncertain"}}, want: "pending"},
+		{name: "uncertain", items: []PlanItem{{PlanStatus: "ready", ExecutionState: "succeeded"}, {PlanStatus: "ready", ExecutionState: "uncertain"}}, want: "uncertain"},
+		{name: "failed", items: []PlanItem{{PlanStatus: "ready", ExecutionState: "succeeded"}, {PlanStatus: "ready", ExecutionState: "failed"}}, want: "failed"},
+		{name: "partially applied", items: []PlanItem{{PlanStatus: "ready", ExecutionState: "succeeded"}, {PlanStatus: "ready", ExecutionState: "not_attempted"}}, want: "partially_applied"},
+		{name: "succeeded despite skipped scopes", items: []PlanItem{{PlanStatus: "ready", ExecutionState: "succeeded"}, {PlanStatus: "skipped"}}, want: "succeeded"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := derivePlanExecutionState(test.items); got != test.want {
+				t.Fatalf("derivePlanExecutionState() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

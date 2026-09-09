@@ -283,7 +283,7 @@ func (a *app) completePlanIDs(_ *cobra.Command, args []string, toComplete string
 	}
 	candidates := make([]completionCandidate, 0, len(items))
 	for _, item := range items {
-		description := fmt.Sprintf("%s · %s · %s", item.Direction, item.AggregateStatus, item.CreatedAt.In(effective.Location).Format("2006-01-02 15:04"))
+		description := fmt.Sprintf("%s · %s · %s", item.Direction, item.ExecutionState, item.CreatedAt.In(effective.Location).Format("2006-01-02 15:04"))
 		candidates = append(candidates, completionCandidate{value: item.ID, description: description})
 	}
 	return renderCompletionCandidates(candidates, toComplete, nil), cobra.ShellCompDirectiveNoFileComp

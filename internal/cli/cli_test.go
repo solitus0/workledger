@@ -3432,8 +3432,14 @@ func TestClockifyPlanReconcileAndApply(t *testing.T) {
 	if plan["plan_direction"].(string) != "pull" {
 		t.Fatalf("unexpected plan direction %s", reconcileResult.stdout)
 	}
+	if plan["planning_status"] != "ready" || plan["execution_state"] != "ready" {
+		t.Fatalf("unexpected initial plan lifecycle %s", reconcileResult.stdout)
+	}
+	if _, exists := plan["aggregate_status"]; exists {
+		t.Fatalf("obsolete aggregate_status remained in plan output %s", reconcileResult.stdout)
+	}
 	summary := plan["summary"].(map[string]any)
-	if summary["ready_items"].(float64) != 1 {
+	if summary["actionable_items"].(float64) != 1 {
 		t.Fatalf("expected one ready item, got %s", reconcileResult.stdout)
 	}
 	if summary["invalid_findings"].(float64) != 2 {
@@ -3444,6 +3450,18 @@ func TestClockifyPlanReconcileAndApply(t *testing.T) {
 	apply := runCLI(t, "plan", "apply", planID, "--output", "json")
 	if apply.code != 0 {
 		t.Fatalf("apply failed: code=%d stdout=%s stderr=%s", apply.code, apply.stdout, apply.stderr)
+	}
+	appliedPlanResult := runCLI(t, "plan", "show", planID, "--output", "json")
+	if appliedPlanResult.code != 0 {
+		t.Fatalf("show applied plan failed: code=%d stdout=%s stderr=%s", appliedPlanResult.code, appliedPlanResult.stdout, appliedPlanResult.stderr)
+	}
+	appliedPlan := decodeJSONMap(t, []byte(appliedPlanResult.stdout))
+	if appliedPlan["planning_status"] != "ready" || appliedPlan["execution_state"] != "succeeded" || appliedPlan["applied_at"] == nil {
+		t.Fatalf("expected terminally succeeded plan, got %s", appliedPlanResult.stdout)
+	}
+	appliedSummary := appliedPlan["summary"].(map[string]any)
+	if appliedSummary["open_items"].(float64) != 0 || appliedSummary["succeeded_items"].(float64) != 1 {
+		t.Fatalf("unexpected terminal plan summary %s", appliedPlanResult.stdout)
 	}
 
 	list := runCLI(t, "worklogs", "list", "--from", "2026-04-01", "--to", "2026-04-30", "--output", "json")
@@ -3461,7 +3479,7 @@ func TestClockifyPlanReconcileAndApply(t *testing.T) {
 	}
 	secondPayload := decodeJSONMap(t, []byte(second.stdout))
 	secondSummary := secondPayload["summary"].(map[string]any)
-	if secondSummary["ready_items"].(float64) != 0 {
+	if secondSummary["actionable_items"].(float64) != 0 {
 		t.Fatalf("expected zero ready items after apply, got %s", second.stdout)
 	}
 }
@@ -3839,7 +3857,7 @@ func TestPlanReconcilePullMixedInstancesPersistsPartialPlanOnAdapterFailures(t *
 	}
 
 	payload := decodeJSONMap(t, []byte(result.stdout))
-	if payload["aggregate_status"] != "check_failed" {
+	if payload["planning_status"] != "check_failed" {
 		t.Fatalf("expected check_failed plan, got %s", result.stdout)
 	}
 	items := payload["items"].([]any)
@@ -3945,8 +3963,8 @@ func TestPlanReconcilePushMixedAdaptersPersistsPartialPlanWhenJiraCloudSearchFai
 	}
 
 	payload := decodeJSONMap(t, []byte(result.stdout))
-	if payload["aggregate_status"] != "check_failed" {
-		t.Fatalf("expected check_failed aggregate status, got %s", result.stdout)
+	if payload["planning_status"] != "check_failed" {
+		t.Fatalf("expected check_failed planning status, got %s", result.stdout)
 	}
 	items := payload["items"].([]any)
 	foundClockify := false
@@ -4415,8 +4433,8 @@ func TestJiraCloudPushReconcileCheckFailedPlanUsesExitSixAndNormalJSON(t *testin
 	}
 
 	payload := decodeJSONMap(t, []byte(reconcileResult.stdout))
-	if payload["aggregate_status"] != "check_failed" {
-		t.Fatalf("expected check_failed aggregate status, got %s", reconcileResult.stdout)
+	if payload["planning_status"] != "check_failed" {
+		t.Fatalf("expected check_failed planning status, got %s", reconcileResult.stdout)
 	}
 	if payload["error"] != nil {
 		t.Fatalf("expected normal plan payload, got %s", reconcileResult.stdout)
@@ -5218,7 +5236,7 @@ func TestPlanShowDefaultFiltersToReady(t *testing.T) {
 			t.Fatalf("expected only ready item, got %#v", item)
 		}
 		summary := payload["summary"].(map[string]any)
-		if summary["total_items"].(float64) != 1 || summary["ready_items"].(float64) != 1 {
+		if summary["total_items"].(float64) != 1 || summary["actionable_items"].(float64) != 1 {
 			t.Fatalf("expected filtered summary counts, got %#v", summary)
 		}
 	})
@@ -5258,6 +5276,40 @@ func TestPlanRetryValidatesOnlyAndNotFound(t *testing.T) {
 	notFound := runCLI(t, "plan", "retry", "missing-plan", "--only", "failed", "--output", "json")
 	if notFound.code != 3 {
 		t.Fatalf("expected not-found exit 3, got code=%d stdout=%s stderr=%s", notFound.code, notFound.stdout, notFound.stderr)
+	}
+
+	effective, err := config.LoadEffective()
+	if err != nil {
+		t.Fatalf("load effective config: %v", err)
+	}
+	fingerprint, err := config.FingerprintEffective(effective)
+	if err != nil {
+		t.Fatalf("fingerprint config: %v", err)
+	}
+	seedSavedPlan(t, savedPlanSeed{
+		planID:      "plan-succeeded",
+		fingerprint: fingerprint,
+		itemID:      "item-succeeded",
+		direction:   "pull",
+		adapter:     "clockify",
+		target:      "AAPP-1",
+		action:      "merge",
+		payloadJSON: `[]`,
+		attempts: []savedAttemptSeed{
+			{state: "succeeded", createdAt: "2026-05-02T10:00:00Z"},
+		},
+	})
+
+	for _, scope := range []string{"failed", "uncertain"} {
+		result := runCLI(t, "plan", "retry", "plan-succeeded", "--only", scope, "--output", "json")
+		if result.code != 2 || !strings.Contains(result.stdout+result.stderr, "saved plan has no "+scope+" ready scopes") {
+			t.Fatalf("expected unavailable %s scope validation, got code=%d stdout=%s stderr=%s", scope, result.code, result.stdout, result.stderr)
+		}
+	}
+
+	apply := runCLI(t, "plan", "apply", "plan-succeeded", "--output", "json")
+	if apply.code != 2 || !strings.Contains(apply.stdout+apply.stderr, "saved plan has no unapplied ready scopes") {
+		t.Fatalf("expected unavailable apply validation, got code=%d stdout=%s stderr=%s", apply.code, apply.stdout, apply.stderr)
 	}
 }
 

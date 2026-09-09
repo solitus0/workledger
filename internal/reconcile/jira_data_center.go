@@ -65,7 +65,7 @@ func (s *Service) buildJiraDataPullPlan(ctx context.Context, cfg config.Effectiv
 		WindowFromUTC:     windowFrom.UTC(),
 		WindowToUTC:       windowTo.UTC(),
 		CreatedAt:         s.now().UTC(),
-		AggregateStatus:   "ready",
+		PlanningStatus:    "ready",
 	}
 
 	exclusions, err := config.JiraExcludedIssuesForInstance(cfg, "jira-data-center", instance.name)
@@ -184,7 +184,7 @@ func (s *Service) buildJiraDataPullPlan(ctx context.Context, cfg config.Effectiv
 	}
 	plan.Items = items
 	plan.Findings = findings
-	plan.AggregateStatus = deriveAggregateStatus(items, findings)
+	plan.PlanningStatus = derivePlanningStatus(items, findings)
 	normalizePlanSummary(&plan)
 	opts.Reporter.Event(progress.Event{Phase: "finalizing", ScopeDone: len(items), ScopeTotal: len(items), Message: "built jira-data-center pull plan"})
 	return plan, nil
@@ -266,7 +266,7 @@ func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.Effectiv
 		WindowFromUTC:     windowFrom.UTC(),
 		WindowToUTC:       windowTo.UTC(),
 		CreatedAt:         s.now().UTC(),
-		AggregateStatus:   "ready",
+		PlanningStatus:    "ready",
 	}
 	if routes.isReportingOnly() {
 		return s.buildJiraDataReportingPushPlan(ctx, cfg, routeProfile, windowFrom, windowTo, onlyDeleted, plan, routes, activeRows, opts)
@@ -419,7 +419,7 @@ func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.Effectiv
 		return items[i].IssueKey < items[j].IssueKey
 	})
 	plan.Items = items
-	plan.AggregateStatus = deriveAggregateStatus(items, nil)
+	plan.PlanningStatus = derivePlanningStatus(items, nil)
 	normalizePlanSummary(&plan)
 	opts.Reporter.Event(progress.Event{Phase: "finalizing", ScopeDone: len(items), ScopeTotal: len(items), Message: "saved jira-data-center push plan"})
 	return plan, nil
@@ -560,7 +560,7 @@ func (s *Service) buildJiraDataReportingPushPlan(ctx context.Context, cfg config
 		return items[i].IssueKey < items[j].IssueKey
 	})
 	plan.Items = items
-	plan.AggregateStatus = deriveAggregateStatus(items, nil)
+	plan.PlanningStatus = derivePlanningStatus(items, nil)
 	normalizePlanSummary(&plan)
 	opts.Reporter.Event(progress.Event{Phase: "finalizing", ScopeDone: len(items), ScopeTotal: len(items), Message: "saved jira-data-center push plan"})
 	return plan, nil

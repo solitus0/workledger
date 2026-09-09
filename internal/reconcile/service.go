@@ -79,7 +79,8 @@ type Plan struct {
 	WindowFromUTC     time.Time
 	WindowToUTC       time.Time
 	CreatedAt         time.Time
-	AggregateStatus   string
+	PlanningStatus    string
+	ExecutionState    string
 	AppliedAt         *time.Time
 	Items             []PlanItem
 	Findings          []PlanFinding
@@ -112,6 +113,21 @@ type PlanItem struct {
 	AppliedAt             *time.Time
 	ApplyMessage          string
 	Payload               []model.Row
+}
+
+// HasDiffMetrics reports whether the inspection counts form a complete diff
+// for this saved scope rather than a legacy or failed inspection summary.
+func (item PlanItem) HasDiffMetrics() bool {
+	if item.ComparisonStatus == "not_checked" || item.ComparisonStatus == "check_failed" {
+		return false
+	}
+	matched := item.InspectionSummary.MatchedRowCount
+	created := item.InspectionSummary.CreateRowCount
+	deleted := item.InspectionSummary.DeleteRowCount
+	if item.PlanDirection == "pull" {
+		return matched+created == item.RemoteRowCount && matched+deleted == item.LocalRowCount
+	}
+	return matched+created == item.LocalRowCount && matched+deleted == item.RemoteRowCount
 }
 
 type DeliveryAttempt struct {
@@ -158,18 +174,23 @@ type PlanFinding struct {
 }
 
 type ListEntry struct {
-	ID              string
-	Direction       string
-	AdapterFamily   string
-	AdapterFamilies []string
-	TargetInstances []string
-	WindowFromUTC   time.Time
-	WindowToUTC     time.Time
-	CreatedAt       time.Time
-	AggregateStatus string
-	TotalItems      int
-	ReadyItems      int
-	SucceededItems  int
+	ID                string
+	Direction         string
+	AdapterFamily     string
+	AdapterFamilies   []string
+	TargetInstances   []string
+	WindowFromUTC     time.Time
+	WindowToUTC       time.Time
+	CreatedAt         time.Time
+	PlanningStatus    string
+	ExecutionState    string
+	TotalItems        int
+	ActionableItems   int
+	OpenItems         int
+	SucceededItems    int
+	NotAttemptedItems int
+	FailedItems       int
+	UncertainItems    int
 }
 
 type ApplyResult struct {
@@ -198,6 +219,19 @@ type ReconcileResult struct {
 	NoPlan                             *ReconcileNoPlanResult
 	ProfileSummaries                   []ReconcileProfileSummary
 	PreserveNonActionableReportingPlan bool
+	Targets                            []ReconcileTarget
+	SkippedTargets                     []SkippedTarget
+}
+
+// ReconcileRequest is the frontend-independent contract for creating a saved
+// reconciliation plan. Frontends resolve date selectors before submitting it.
+type ReconcileRequest struct {
+	Direction    string
+	Adapters     []string
+	Instances    []string
+	RouteProfile string
+	WindowFrom   time.Time
+	WindowTo     time.Time
 }
 
 type ReconcileNoPlanResult struct {
@@ -249,6 +283,52 @@ func NewService(store *sqlitestore.Store) *Service {
 	}
 }
 
+// Reconcile validates target selection and creates a pull or push plan without
+// mutating local or remote worklogs.
+func (s *Service) Reconcile(ctx context.Context, cfg config.EffectiveConfig, request ReconcileRequest, options ...PlanOptions) (ReconcileResult, error) {
+	if request.Direction != "pull" && request.Direction != "push" {
+		return ReconcileResult{}, ValidationError{Message: "reconcile direction must be pull or push"}
+	}
+	if request.WindowFrom.IsZero() || request.WindowTo.IsZero() || request.WindowTo.Before(request.WindowFrom) {
+		return ReconcileResult{}, ValidationError{Message: "reconcile requires a valid date window"}
+	}
+
+	selection, err := ResolveSelection(cfg, SelectionRequest{
+		Adapters:     request.Adapters,
+		Instances:    request.Instances,
+		Direction:    request.Direction,
+		RouteProfile: request.RouteProfile,
+	})
+	if err != nil {
+		var selectionErr SelectionError
+		if errors.As(err, &selectionErr) {
+			return ReconcileResult{}, err
+		}
+		return ReconcileResult{}, ValidationError{Message: err.Error()}
+	}
+	result := ReconcileResult{
+		Targets:        append([]ReconcileTarget(nil), selection.Targets...),
+		SkippedTargets: append([]SkippedTarget(nil), selection.SkippedTargets...),
+	}
+	scope := ReconcileScope{Targets: selection.Targets}
+	if request.Direction == "pull" {
+		plan, err := s.CreateMultiPullPlan(ctx, cfg, scope, request.WindowFrom, request.WindowTo, options...)
+		if err != nil {
+			return result, err
+		}
+		result.Plan = &plan
+		return result, nil
+	}
+
+	planned, err := s.ReconcileMultiPushPlan(ctx, cfg, scope, request.RouteProfile, request.WindowFrom, request.WindowTo, false, options...)
+	if err != nil {
+		return result, err
+	}
+	planned.Targets = result.Targets
+	planned.SkippedTargets = result.SkippedTargets
+	return planned, nil
+}
+
 type ReconcileScope struct {
 	Targets []ReconcileTarget
 }
@@ -257,6 +337,7 @@ func normalizePlanSummary(plan *Plan) {
 	if plan == nil {
 		return
 	}
+	plan.ExecutionState = derivePlanExecutionState(plan.Items)
 	if len(plan.AdapterFamilies) == 0 {
 		plan.AdapterFamilies = collectPlanAdapterFamilies(plan.Items)
 	}
@@ -602,7 +683,7 @@ func mergePlans(direction string, cfg config.EffectiveConfig, windowFrom, window
 	})
 	merged.Items = items
 	merged.Findings = findings
-	merged.AggregateStatus = deriveAggregateStatus(items, findings)
+	merged.PlanningStatus = derivePlanningStatus(items, findings)
 	normalizePlanSummary(&merged)
 	return merged, nil
 }
@@ -733,7 +814,7 @@ func (s *Service) buildCheckFailedPullPlan(cfg config.EffectiveConfig, family, i
 		WindowFromUTC:     windowFrom.UTC(),
 		WindowToUTC:       windowTo.UTC(),
 		CreatedAt:         s.now().UTC(),
-		AggregateStatus:   "check_failed",
+		PlanningStatus:    "check_failed",
 	}
 
 	scopeID := instance
@@ -1204,7 +1285,7 @@ func (s *Service) buildClockifyPullPlanFromRows(cfg config.EffectiveConfig, wind
 		WindowFromUTC:     windowFrom.UTC(),
 		WindowToUTC:       windowTo.UTC(),
 		CreatedAt:         s.now().UTC(),
-		AggregateStatus:   "ready",
+		PlanningStatus:    "ready",
 	}
 
 	findings := make([]PlanFinding, 0, len(invalidRows))
@@ -1260,7 +1341,7 @@ func (s *Service) buildClockifyPullPlanFromRows(cfg config.EffectiveConfig, wind
 	}
 
 	plan.Items = items
-	plan.AggregateStatus = deriveAggregateStatus(items, findings)
+	plan.PlanningStatus = derivePlanningStatus(items, findings)
 	normalizePlanSummary(&plan)
 	return plan, nil
 }
@@ -1297,7 +1378,7 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 		WindowFromUTC:     windowFrom.UTC(),
 		WindowToUTC:       windowTo.UTC(),
 		CreatedAt:         s.now().UTC(),
-		AggregateStatus:   "ready",
+		PlanningStatus:    "ready",
 	}
 
 	opts.Reporter.Start(progress.Event{Phase: "fetching", Message: "plan reconcile clockify push"})
@@ -1343,7 +1424,7 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 	}
 	if len(activeRows) == 0 && len(remoteOwnedIssues) == 0 {
 		plan.Items = nil
-		plan.AggregateStatus = "ready"
+		plan.PlanningStatus = "ready"
 		normalizePlanSummary(&plan)
 		return plan, nil
 	}
@@ -1458,7 +1539,7 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 	}
 
 	plan.Items = items
-	plan.AggregateStatus = deriveAggregateStatus(items, nil)
+	plan.PlanningStatus = derivePlanningStatus(items, nil)
 	normalizePlanSummary(&plan)
 	opts.Reporter.Event(progress.Event{Phase: "finalizing", ScopeDone: len(items), ScopeTotal: len(items), Message: "built clockify push plan"})
 	return plan, nil
@@ -1474,7 +1555,7 @@ func (s *Service) LoadPlan(id string) (Plan, error) {
 	var windowFrom string
 	var windowTo string
 	var createdAt string
-	var aggregate string
+	var planningStatus string
 	var appliedAt sql.NullString
 
 	query := `SELECT id, plan_direction, adapter_family, adapter_families_json, target_instances_json, config_fingerprint, window_from_utc, window_to_utc, created_at, aggregate_status, applied_at FROM saved_plans`
@@ -1486,7 +1567,7 @@ func (s *Service) LoadPlan(id string) (Plan, error) {
 		query += ` ORDER BY created_at DESC, id DESC LIMIT 1`
 	}
 
-	err := s.store.DB().QueryRow(query, args...).Scan(&rowID, &direction, &adapter, &adapterFamiliesJSON, &targetInstancesJSON, &fingerprint, &windowFrom, &windowTo, &createdAt, &aggregate, &appliedAt)
+	err := s.store.DB().QueryRow(query, args...).Scan(&rowID, &direction, &adapter, &adapterFamiliesJSON, &targetInstancesJSON, &fingerprint, &windowFrom, &windowTo, &createdAt, &planningStatus, &appliedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Plan{}, ErrPlanNotFound
 	}
@@ -1499,7 +1580,7 @@ func (s *Service) LoadPlan(id string) (Plan, error) {
 		Direction:         direction,
 		AdapterFamily:     adapter,
 		ConfigFingerprint: fingerprint,
-		AggregateStatus:   aggregate,
+		PlanningStatus:    planningStatus,
 	}
 	_ = json.Unmarshal([]byte(adapterFamiliesJSON), &plan.AdapterFamilies)
 	_ = json.Unmarshal([]byte(targetInstancesJSON), &plan.TargetInstances)
@@ -1526,7 +1607,28 @@ func (s *Service) LoadPlan(id string) (Plan, error) {
 }
 
 func (s *Service) ListPlans() ([]ListEntry, error) {
-	return s.listPlansByIDPrefix("", 0)
+	return s.listPlansByIDPrefix("", 0, nil)
+}
+
+// ListRecentPlans returns the newest saved plans with a caller-supplied bound.
+func (s *Service) ListRecentPlans(limit int) ([]ListEntry, error) {
+	if limit <= 0 {
+		return []ListEntry{}, nil
+	}
+	return s.listPlansByIDPrefix("", limit, nil)
+}
+
+// ListRecentPlansInCreatedRange returns the newest saved plans created in the
+// half-open UTC interval [fromInclusiveUTC, toExclusiveUTC).
+func (s *Service) ListRecentPlansInCreatedRange(limit int, fromInclusiveUTC, toExclusiveUTC time.Time) ([]ListEntry, error) {
+	if limit <= 0 {
+		return []ListEntry{}, nil
+	}
+	if !fromInclusiveUTC.Before(toExclusiveUTC) {
+		return nil, errors.New("saved plan creation range end must be after start")
+	}
+	createdRange := planCreatedRange{fromInclusiveUTC: fromInclusiveUTC.UTC(), toExclusiveUTC: toExclusiveUTC.UTC()}
+	return s.listPlansByIDPrefix("", limit, &createdRange)
 }
 
 // ListPlansByIDPrefix returns recent saved plans whose IDs start with prefix.
@@ -1535,11 +1637,52 @@ func (s *Service) ListPlansByIDPrefix(prefix string, limit int) ([]ListEntry, er
 	if limit <= 0 {
 		return []ListEntry{}, nil
 	}
-	return s.listPlansByIDPrefix(strings.TrimSpace(prefix), limit)
+	return s.listPlansByIDPrefix(strings.TrimSpace(prefix), limit, nil)
 }
 
-func (s *Service) listPlansByIDPrefix(prefix string, limit int) ([]ListEntry, error) {
+type planCreatedRange struct {
+	fromInclusiveUTC time.Time
+	toExclusiveUTC   time.Time
+}
+
+func (s *Service) listPlansByIDPrefix(prefix string, limit int, createdRange *planCreatedRange) ([]ListEntry, error) {
 	query := `
+		WITH attempt_times AS (
+			SELECT
+				plan_item_id,
+				MAX(created_at) AS latest_created_at,
+				MAX(CASE WHEN attempt_state = 'succeeded' THEN 1 ELSE 0 END) AS has_succeeded
+			FROM delivery_attempts
+			GROUP BY plan_item_id
+		),
+		latest_attempts AS (
+			SELECT
+				t.plan_item_id,
+				t.latest_created_at,
+				t.has_succeeded,
+				MAX(CASE WHEN a.attempt_state = 'pending' THEN 1 ELSE 0 END) AS has_pending,
+				MAX(CASE WHEN a.attempt_state = 'failed' THEN 1 ELSE 0 END) AS has_failed,
+				MAX(CASE WHEN a.attempt_state = 'uncertain' THEN 1 ELSE 0 END) AS has_uncertain
+			FROM attempt_times t
+			JOIN delivery_attempts a
+				ON a.plan_item_id = t.plan_item_id
+				AND a.created_at = t.latest_created_at
+			GROUP BY t.plan_item_id, t.latest_created_at, t.has_succeeded
+		),
+		effective_items AS (
+			SELECT
+				i.*,
+				CASE
+					WHEN a.has_succeeded = 1 THEN 'succeeded'
+					WHEN a.has_uncertain = 1 THEN 'uncertain'
+					WHEN a.has_failed = 1 THEN 'failed'
+					WHEN a.has_pending = 1 AND a.latest_created_at < ? THEN 'uncertain'
+					WHEN a.has_pending = 1 THEN 'pending'
+					ELSE 'not_attempted'
+				END AS execution_state
+			FROM saved_plan_items i
+			LEFT JOIN latest_attempts a ON a.plan_item_id = i.id
+		)
 		SELECT
 			p.id,
 			p.plan_direction,
@@ -1552,14 +1695,27 @@ func (s *Service) listPlansByIDPrefix(prefix string, limit int) ([]ListEntry, er
 			p.aggregate_status,
 			COUNT(i.id),
 			COALESCE(SUM(CASE WHEN i.plan_status = 'ready' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN i.applied_state = 'succeeded' THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN i.plan_status = 'ready' AND i.execution_state != 'succeeded' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN i.plan_status = 'ready' AND i.execution_state = 'succeeded' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN i.plan_status = 'ready' AND i.execution_state = 'not_attempted' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN i.plan_status = 'ready' AND i.execution_state = 'pending' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN i.plan_status = 'ready' AND i.execution_state = 'failed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN i.plan_status = 'ready' AND i.execution_state = 'uncertain' THEN 1 ELSE 0 END), 0)
 		FROM saved_plans p
-		LEFT JOIN saved_plan_items i ON i.plan_id = p.id
+		LEFT JOIN effective_items i ON i.plan_id = p.id
 	`
-	args := []any{}
+	args := []any{sqlitestore.RFC3339UTC(s.now().UTC().Add(-15 * time.Minute))}
+	conditions := make([]string, 0, 3)
 	if prefix != "" {
-		query += ` WHERE instr(lower(p.id), lower(?)) = 1`
+		conditions = append(conditions, `instr(lower(p.id), lower(?)) = 1`)
 		args = append(args, prefix)
+	}
+	if createdRange != nil {
+		conditions = append(conditions, `p.created_at >= ?`, `p.created_at < ?`)
+		args = append(args, sqlitestore.RFC3339UTC(createdRange.fromInclusiveUTC), sqlitestore.RFC3339UTC(createdRange.toExclusiveUTC))
+	}
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
 	}
 	query += `
 		GROUP BY p.id, p.plan_direction, p.adapter_family, p.adapter_families_json, p.target_instances_json, p.created_at, p.aggregate_status
@@ -1578,14 +1734,21 @@ func (s *Service) listPlansByIDPrefix(prefix string, limit int) ([]ListEntry, er
 	items := make([]ListEntry, 0)
 	for rows.Next() {
 		var entry ListEntry
+		var pendingItems int
 		var adapterFamiliesJSON string
 		var targetInstancesJSON string
 		var windowFromUTC string
 		var windowToUTC string
 		var createdAt string
-		if err := rows.Scan(&entry.ID, &entry.Direction, &entry.AdapterFamily, &adapterFamiliesJSON, &targetInstancesJSON, &windowFromUTC, &windowToUTC, &createdAt, &entry.AggregateStatus, &entry.TotalItems, &entry.ReadyItems, &entry.SucceededItems); err != nil {
+		if err := rows.Scan(
+			&entry.ID, &entry.Direction, &entry.AdapterFamily, &adapterFamiliesJSON, &targetInstancesJSON,
+			&windowFromUTC, &windowToUTC, &createdAt, &entry.PlanningStatus, &entry.TotalItems,
+			&entry.ActionableItems, &entry.OpenItems, &entry.SucceededItems, &entry.NotAttemptedItems, &pendingItems,
+			&entry.FailedItems, &entry.UncertainItems,
+		); err != nil {
 			return nil, err
 		}
+		entry.ExecutionState = derivePlanExecutionStateCounts(entry.ActionableItems, entry.NotAttemptedItems, pendingItems, entry.SucceededItems, entry.FailedItems, entry.UncertainItems)
 		_ = json.Unmarshal([]byte(adapterFamiliesJSON), &entry.AdapterFamilies)
 		_ = json.Unmarshal([]byte(targetInstancesJSON), &entry.TargetInstances)
 		entry.WindowFromUTC, _ = time.Parse(time.RFC3339, windowFromUTC)
@@ -1656,7 +1819,10 @@ func (s *Service) executeSavedPlan(ctx context.Context, cfg config.EffectiveConf
 		skipped++
 	}
 	if len(ready) == 0 {
-		return ApplyResult{PlanID: plan.ID, RetryScope: retryScope, SkippedCount: skipped, NoOp: true}, nil
+		if retryScope != "" {
+			return ApplyResult{}, fmt.Errorf("saved plan has no %s ready scopes", retryScope)
+		}
+		return ApplyResult{}, fmt.Errorf("saved plan has no unapplied ready scopes")
 	}
 
 	sort.Slice(ready, func(i, j int) bool {
@@ -1744,9 +1910,14 @@ func (s *Service) executeSavedPlan(ctx context.Context, cfg config.EffectiveConf
 		return result, err
 	}
 
-	appliedAt := s.now().UTC()
-	if err := s.markPlanApplied(plan.ID, appliedAt); err != nil {
+	completedPlan, err := s.LoadPlan(plan.ID)
+	if err != nil {
 		return ApplyResult{}, err
+	}
+	if completedPlan.ExecutionState == "succeeded" {
+		if err := s.markPlanApplied(plan.ID, s.now().UTC()); err != nil {
+			return ApplyResult{}, err
+		}
 	}
 	result.MixedResult = result.AppliedCount > 0 && result.FailedCount > 0
 	opts.Reporter.Finish(progress.Event{
@@ -1776,11 +1947,20 @@ func (s *Service) executePullItem(ctx context.Context, item PlanItem) (applyItem
 	if err := ctx.Err(); err != nil {
 		return applyItemExecution{}, err
 	}
+	if err := s.recordPendingGroup(ctx, []PlanItem{item}); err != nil {
+		return applyItemExecution{}, err
+	}
 	appliedAt := s.now().UTC()
 	message := "merged saved pull payload into local ledger"
 	archivedCount, err := s.applyPullItem(ctx, item, appliedAt, message)
 	if err != nil {
-		return applyItemExecution{}, err
+		if attemptErr := s.recordDeliveryAttempt(item.PlanID, item.ID, "failed", err.Error()); attemptErr != nil {
+			return applyItemExecution{}, attemptErr
+		}
+		if markErr := s.markItemApplied(item.ID, appliedAt, "failed", err.Error()); markErr != nil {
+			return applyItemExecution{}, markErr
+		}
+		return applyItemExecution{failed: true, applyMessage: err.Error()}, nil
 	}
 	return applyItemExecution{
 		executed:           true,
@@ -1903,6 +2083,13 @@ func (s *Service) applyPullItem(ctx context.Context, item PlanItem, appliedAt ti
 			_ = tx.Rollback()
 			return 0, err
 		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO delivery_attempts(id, plan_id, plan_item_id, attempt_state, message, created_at) VALUES(?, ?, ?, 'succeeded', ?, ?)`,
+		uuid.NewString(), item.PlanID, item.ID, message, sqlitestore.RFC3339UTC(appliedAt),
+	); err != nil {
+		_ = tx.Rollback()
+		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE saved_plan_items SET applied_state = ?, applied_at = ?, apply_message = ? WHERE id = ?`, "succeeded", sqlitestore.RFC3339UTC(appliedAt), message, item.ID); err != nil {
 		_ = tx.Rollback()
@@ -2263,7 +2450,7 @@ func (s *Service) insertPlan(ctx context.Context, plan Plan) error {
 		sqlitestore.RFC3339UTC(plan.WindowFromUTC),
 		sqlitestore.RFC3339UTC(plan.WindowToUTC),
 		sqlitestore.RFC3339UTC(plan.CreatedAt),
-		plan.AggregateStatus,
+		plan.PlanningStatus,
 	); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -2883,7 +3070,7 @@ func pushApplySuccessMessage(adapterFamily string) string {
 	}
 }
 
-func deriveAggregateStatus(items []PlanItem, findings []PlanFinding) string {
+func derivePlanningStatus(items []PlanItem, findings []PlanFinding) string {
 	if len(items) == 0 {
 		if len(findings) > 0 {
 			return "invalid"
@@ -2925,6 +3112,55 @@ func deriveAggregateStatus(items []PlanItem, findings []PlanFinding) string {
 		return "invalid"
 	case allSkipped:
 		return "skipped"
+	default:
+		return "ready"
+	}
+}
+
+func derivePlanExecutionState(items []PlanItem) string {
+	actionable := 0
+	notAttempted := 0
+	pending := 0
+	succeeded := 0
+	failed := 0
+	uncertain := 0
+	for _, item := range items {
+		if item.PlanStatus != "ready" {
+			continue
+		}
+		actionable++
+		switch item.ExecutionState {
+		case "", "not_attempted":
+			notAttempted++
+		case "pending":
+			pending++
+		case "succeeded":
+			succeeded++
+		case "failed":
+			failed++
+		case "uncertain":
+			uncertain++
+		default:
+			notAttempted++
+		}
+	}
+	return derivePlanExecutionStateCounts(actionable, notAttempted, pending, succeeded, failed, uncertain)
+}
+
+func derivePlanExecutionStateCounts(actionable, notAttempted, pending, succeeded, failed, uncertain int) string {
+	switch {
+	case actionable == 0:
+		return "not_applicable"
+	case succeeded == actionable:
+		return "succeeded"
+	case pending > 0:
+		return "pending"
+	case uncertain > 0:
+		return "uncertain"
+	case failed > 0:
+		return "failed"
+	case succeeded > 0 && notAttempted > 0:
+		return "partially_applied"
 	default:
 		return "ready"
 	}

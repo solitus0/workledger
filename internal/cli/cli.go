@@ -2147,10 +2147,6 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 			if err != nil {
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
-			if direction == "pull" && strings.TrimSpace(routeProfile) != "" {
-				return a.fail(mode, 2, "validation_error", "--route-profile can only be used with --push", nil)
-			}
-
 			effective, store, cleanup, err := a.loadStore(mode, true, "plan reconcile")
 			if err != nil {
 				return err
@@ -2168,78 +2164,66 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 				return a.fail(mode, 2, "validation_error", err.Error(), nil)
 			}
 
-			selection, err := reconcile.ResolveSelection(effective, reconcile.SelectionRequest{
+			plans := reconcile.NewService(store)
+			result, err := plans.Reconcile(cmd.Context(), effective, reconcile.ReconcileRequest{
+				Direction:    direction,
 				Adapters:     adapters,
 				Instances:    instances,
-				Direction:    direction,
 				RouteProfile: routeProfile,
-			})
+				WindowFrom:   windowFrom,
+				WindowTo:     windowTo,
+			}, reconcile.PlanOptions{Reporter: reporter})
 			if err != nil {
 				var selectionErr reconcile.SelectionError
 				if errors.As(err, &selectionErr) {
 					return a.fail(mode, 2, "validation_error", selectionErr.Error(), reconcileSkippedTargetsDetails(selectionErr.SkippedTargets))
 				}
-				return a.fail(mode, 2, "validation_error", err.Error(), nil)
-			}
-
-			plans := reconcile.NewService(store)
-			var plan reconcile.Plan
-			var result reconcile.ReconcileResult
-			scope := reconcile.ReconcileScope{Targets: selection.Targets}
-			if direction == "pull" {
-				plan, err = plans.CreateMultiPullPlan(cmd.Context(), effective, scope, windowFrom, windowTo, reconcile.PlanOptions{Reporter: reporter})
-			} else {
-				result, err = plans.ReconcileMultiPushPlan(cmd.Context(), effective, scope, routeProfile, windowFrom, windowTo, false, reconcile.PlanOptions{Reporter: reporter})
-				if err == nil && result.Plan != nil {
-					plan = *result.Plan
-				}
-			}
-			if err != nil {
 				var validationErr reconcile.ValidationError
 				if errors.As(err, &validationErr) {
 					return a.fail(mode, 2, "validation_error", err.Error(), nil)
 				}
-				return a.handleReconcileAdapterError(mode, strings.Join(reconcileSelectionAdapterFamilies(selection.Targets), ","), err)
+				return a.handleReconcileAdapterError(mode, strings.Join(reconcileSelectionAdapterFamilies(result.Targets), ","), err)
 			}
 
 			if result.NoPlan != nil {
 				if mode == "json" {
-					if err := a.writeJSON(reconcileNoPlanJSON(*result.NoPlan, selection.SkippedTargets)); err != nil {
+					if err := a.writeJSON(reconcileNoPlanJSON(*result.NoPlan, result.SkippedTargets)); err != nil {
 						return err
 					}
 				} else {
 					if err := renderReconcileNoPlanTable(a.stdout, *result.NoPlan, effective.Location); err != nil {
 						return err
 					}
-					if err := renderReconcileSkippedTargetsTable(a.stdout, selection.SkippedTargets); err != nil {
+					if err := renderReconcileSkippedTargetsTable(a.stdout, result.SkippedTargets); err != nil {
 						return err
 					}
 				}
-				if len(selection.SkippedTargets) > 0 {
+				if len(result.SkippedTargets) > 0 {
 					return exitError{code: 6}
 				}
 				return nil
 			}
 
+			plan := *result.Plan
 			if mode == "json" {
-				if err := a.writeJSON(planJSON(plan, selection.SkippedTargets, result.ProfileSummaries)); err != nil {
+				if err := a.writeJSON(planJSON(plan, result.SkippedTargets, result.ProfileSummaries)); err != nil {
 					return err
 				}
 			} else {
-				if err := renderTable(a.stdout, []string{"PLAN_ID", "STATUS", "ACTIONABLE", "INVALID_FINDINGS"}, [][]string{{plan.ID, plan.AggregateStatus, fmt.Sprint(countPlanItemsByStatus(plan.Items, "ready")), fmt.Sprint(len(plan.Findings))}}); err != nil {
+				if err := renderTable(a.stdout, []string{"PLAN_ID", "PLANNING", "STATE", "ACTIONABLE", "INVALID_FINDINGS"}, [][]string{{plan.ID, plan.PlanningStatus, plan.ExecutionState, fmt.Sprint(countPlanItemsByStatus(plan.Items, "ready")), fmt.Sprint(len(plan.Findings))}}); err != nil {
 					return err
 				}
 				if err := renderReconcileProfileBreakdownTable(a.stdout, result.ProfileSummaries); err != nil {
 					return err
 				}
-				if err := renderReconcileSkippedTargetsTable(a.stdout, selection.SkippedTargets); err != nil {
+				if err := renderReconcileSkippedTargetsTable(a.stdout, result.SkippedTargets); err != nil {
 					return err
 				}
 				if err := renderReconcilePlanNextSteps(a.stdout, plan); err != nil {
 					return err
 				}
 			}
-			if hasPlanItemsWithStatus(plan.Items, "check_failed") || len(selection.SkippedTargets) > 0 {
+			if hasPlanItemsWithStatus(plan.Items, "check_failed") || len(result.SkippedTargets) > 0 {
 				return exitError{code: 6}
 			}
 			return nil
@@ -2372,12 +2356,15 @@ func (a *app) newPlanListCommand() *cobra.Command {
 					joinOrDash(item.TargetInstances),
 					formatSavedPlanWindow(item.WindowFromUTC, item.WindowToUTC, effective.Location),
 					item.CreatedAt.Format(time.RFC3339),
+					item.PlanningStatus,
+					item.ExecutionState,
 					fmt.Sprint(item.TotalItems),
-					fmt.Sprint(item.ReadyItems),
+					fmt.Sprint(item.ActionableItems),
+					fmt.Sprint(item.OpenItems),
 					fmt.Sprint(item.SucceededItems),
 				})
 			}
-			return renderTable(a.stdout, []string{"PLAN_ID", "DIRECTION", "ADAPTERS", "INSTANCES", "WINDOW", "CREATED_AT", "ITEMS", "READY", "SUCCEEDED"}, rows)
+			return renderTable(a.stdout, []string{"PLAN_ID", "DIRECTION", "ADAPTERS", "INSTANCES", "WINDOW", "CREATED_AT", "PLANNING", "STATE", "ITEMS", "ACTIONABLE", "OPEN", "SUCCEEDED"}, rows)
 		},
 	}
 
@@ -2828,25 +2815,10 @@ func planShowProfileValue(item reconcile.PlanItem) string {
 }
 
 func planShowDiffMetricValue(item reconcile.PlanItem, value int) string {
-	if !planShowHasDiffCounts(item) {
-		return "-"
-	}
-	if item.ComparisonStatus == "not_checked" || item.ComparisonStatus == "check_failed" {
+	if !item.HasDiffMetrics() {
 		return "-"
 	}
 	return fmt.Sprint(value)
-}
-
-func planShowHasDiffCounts(item reconcile.PlanItem) bool {
-	matched := item.InspectionSummary.MatchedRowCount
-	create := item.InspectionSummary.CreateRowCount
-	deleteCount := item.InspectionSummary.DeleteRowCount
-	switch item.PlanDirection {
-	case "pull":
-		return matched+create == item.RemoteRowCount && matched+deleteCount == item.LocalRowCount
-	default:
-		return matched+create == item.LocalRowCount && matched+deleteCount == item.RemoteRowCount
-	}
 }
 
 func planJSON(plan reconcile.Plan, skippedTargets []reconcile.SkippedTarget, profileSummaries []reconcile.ReconcileProfileSummary) map[string]any {
@@ -2909,9 +2881,10 @@ func planJSON(plan reconcile.Plan, skippedTargets []reconcile.SkippedTarget, pro
 		"window_from_utc":    plan.WindowFromUTC.Format(time.RFC3339),
 		"window_to_utc":      plan.WindowToUTC.Format(time.RFC3339),
 		"created_at":         plan.CreatedAt.Format(time.RFC3339),
-		"aggregate_status":   plan.AggregateStatus,
+		"planning_status":    plan.PlanningStatus,
+		"execution_state":    plan.ExecutionState,
 		"applied_at":         plan.AppliedAt,
-		"summary":            map[string]any{"total_items": len(plan.Items), "ready_items": countPlanItemsByStatus(plan.Items, "ready"), "skipped_items": countPlanItemsByStatus(plan.Items, "skipped"), "invalid_findings": len(plan.Findings)},
+		"summary":            map[string]any{"total_items": len(plan.Items), "actionable_items": countPlanItemsByStatus(plan.Items, "ready"), "open_items": countOpenPlanItems(plan.Items), "succeeded_items": countPlanItemsByExecutionState(plan.Items, "succeeded"), "skipped_items": countPlanItemsByStatus(plan.Items, "skipped"), "invalid_findings": len(plan.Findings)},
 		"skipped_targets":    reconcileSkippedTargetsDetails(skippedTargets),
 		"items":              items,
 		"findings":           findings,
@@ -2932,9 +2905,11 @@ func planListJSON(items []reconcile.ListEntry) []map[string]any {
 			"adapter_families": item.AdapterFamilies,
 			"target_instances": item.TargetInstances,
 			"created_at":       item.CreatedAt.Format(time.RFC3339),
-			"aggregate_status": item.AggregateStatus,
+			"planning_status":  item.PlanningStatus,
+			"execution_state":  item.ExecutionState,
 			"total_items":      item.TotalItems,
-			"ready_items":      item.ReadyItems,
+			"actionable_items": item.ActionableItems,
+			"open_items":       item.OpenItems,
 			"succeeded_items":  item.SucceededItems,
 		})
 	}
@@ -3057,6 +3032,20 @@ func countPlanItemsByStatus(items []reconcile.PlanItem, status string) int {
 		}
 	}
 	return count
+}
+
+func countPlanItemsByExecutionState(items []reconcile.PlanItem, state string) int {
+	count := 0
+	for _, item := range items {
+		if item.PlanStatus == "ready" && item.ExecutionState == state {
+			count++
+		}
+	}
+	return count
+}
+
+func countOpenPlanItems(items []reconcile.PlanItem) int {
+	return countPlanItemsByStatus(items, "ready") - countPlanItemsByExecutionState(items, "succeeded")
 }
 
 func hasPlanItemsWithStatus(items []reconcile.PlanItem, status string) bool {

@@ -65,7 +65,7 @@ func (s *Service) buildJiraCloudPullPlan(ctx context.Context, cfg config.Effecti
 		WindowFromUTC:     windowFrom.UTC(),
 		WindowToUTC:       windowTo.UTC(),
 		CreatedAt:         s.now().UTC(),
-		AggregateStatus:   "ready",
+		PlanningStatus:    "ready",
 	}
 
 	exclusions, err := config.JiraExcludedIssuesForInstance(cfg, "jira-cloud", instance.name)
@@ -189,7 +189,7 @@ func (s *Service) buildJiraCloudPullPlan(ctx context.Context, cfg config.Effecti
 	}
 	plan.Items = items
 	plan.Findings = findings
-	plan.AggregateStatus = deriveAggregateStatus(items, findings)
+	plan.PlanningStatus = derivePlanningStatus(items, findings)
 	normalizePlanSummary(&plan)
 	opts.Reporter.Event(progress.Event{Phase: "finalizing", ScopeDone: len(items), ScopeTotal: len(items), Message: "built jira-cloud pull plan"})
 	return plan, nil
@@ -288,7 +288,7 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 		WindowFromUTC:     windowFrom.UTC(),
 		WindowToUTC:       windowTo.UTC(),
 		CreatedAt:         s.now().UTC(),
-		AggregateStatus:   "ready",
+		PlanningStatus:    "ready",
 	}
 	if routes.isReportingOnly() {
 		return s.buildJiraCloudReportingPushPlan(ctx, cfg, routeProfile, windowFrom, windowTo, onlyDeleted, plan, routes, activeRows, opts)
@@ -441,7 +441,7 @@ func (s *Service) buildJiraCloudPushPlan(ctx context.Context, cfg config.Effecti
 		return items[i].IssueKey < items[j].IssueKey
 	})
 	plan.Items = items
-	plan.AggregateStatus = deriveAggregateStatus(items, nil)
+	plan.PlanningStatus = derivePlanningStatus(items, nil)
 	normalizePlanSummary(&plan)
 	opts.Reporter.Event(progress.Event{Phase: "finalizing", ScopeDone: len(items), ScopeTotal: len(items), Message: "saved jira-cloud push plan"})
 	return plan, nil
@@ -582,7 +582,7 @@ func (s *Service) buildJiraCloudReportingPushPlan(ctx context.Context, cfg confi
 		return items[i].IssueKey < items[j].IssueKey
 	})
 	plan.Items = items
-	plan.AggregateStatus = deriveAggregateStatus(items, nil)
+	plan.PlanningStatus = derivePlanningStatus(items, nil)
 	normalizePlanSummary(&plan)
 	opts.Reporter.Event(progress.Event{Phase: "finalizing", ScopeDone: len(items), ScopeTotal: len(items), Message: "saved jira-cloud push plan"})
 	return plan, nil
