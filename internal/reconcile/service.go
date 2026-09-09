@@ -108,10 +108,7 @@ type PlanItem struct {
 	RemoteTotal           int
 	InspectionSummary     InspectionSummary
 	DeliveryKey           string
-	AppliedState          string
 	ExecutionState        string
-	AppliedAt             *time.Time
-	ApplyMessage          string
 	Payload               []model.Row
 }
 
@@ -836,7 +833,6 @@ func (s *Service) buildCheckFailedPullPlan(cfg config.EffectiveConfig, family, i
 		ComparisonStatus:      "check_failed",
 		ReasonCode:            failure.reasonCode,
 		ReasonDetail:          failure.reasonDetail,
-		AppliedState:          "not_attempted",
 		InspectionSummary: InspectionSummary{
 			ResolvedTargetInstance: instance,
 			ResolvedTargetIssue:    scopeID,
@@ -1646,14 +1642,38 @@ type planCreatedRange struct {
 }
 
 func (s *Service) listPlansByIDPrefix(prefix string, limit int, createdRange *planCreatedRange) ([]ListEntry, error) {
-	query := `
-		WITH attempt_times AS (
+	query := `WITH selected_plans AS (
+		SELECT p.*
+		FROM saved_plans p`
+	args := make([]any, 0, 6)
+	conditions := make([]string, 0, 4)
+	if prefix != "" {
+		lower, upper := sqlitestore.PrefixRange(strings.ToLower(prefix))
+		conditions = append(conditions, `p.id >= ?`, `p.id < ?`)
+		args = append(args, lower, upper)
+	}
+	if createdRange != nil {
+		conditions = append(conditions, `p.created_at >= ?`, `p.created_at < ?`)
+		args = append(args, sqlitestore.RFC3339UTC(createdRange.fromInclusiveUTC), sqlitestore.RFC3339UTC(createdRange.toExclusiveUTC))
+	}
+	if len(conditions) > 0 {
+		query += ` WHERE ` + strings.Join(conditions, ` AND `)
+	}
+	if limit > 0 {
+		query += ` ORDER BY p.created_at DESC, p.id DESC LIMIT ?`
+		args = append(args, limit)
+	}
+	query += `
+	),
+		attempt_times AS (
 			SELECT
-				plan_item_id,
-				MAX(created_at) AS latest_created_at,
-				MAX(CASE WHEN attempt_state = 'succeeded' THEN 1 ELSE 0 END) AS has_succeeded
-			FROM delivery_attempts
-			GROUP BY plan_item_id
+				a.plan_item_id,
+				MAX(a.created_at) AS latest_created_at,
+				MAX(CASE WHEN a.attempt_state = 'succeeded' THEN 1 ELSE 0 END) AS has_succeeded
+			FROM selected_plans p
+			JOIN saved_plan_items i ON i.plan_id = p.id
+			JOIN delivery_attempts a ON a.plan_item_id = i.id
+			GROUP BY a.plan_item_id
 		),
 		latest_attempts AS (
 			SELECT
@@ -1680,7 +1700,8 @@ func (s *Service) listPlansByIDPrefix(prefix string, limit int, createdRange *pl
 					WHEN a.has_pending = 1 THEN 'pending'
 					ELSE 'not_attempted'
 				END AS execution_state
-			FROM saved_plan_items i
+			FROM selected_plans p
+			JOIN saved_plan_items i ON i.plan_id = p.id
 			LEFT JOIN latest_attempts a ON a.plan_item_id = i.id
 		)
 		SELECT
@@ -1701,29 +1722,13 @@ func (s *Service) listPlansByIDPrefix(prefix string, limit int, createdRange *pl
 			COALESCE(SUM(CASE WHEN i.plan_status = 'ready' AND i.execution_state = 'pending' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN i.plan_status = 'ready' AND i.execution_state = 'failed' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN i.plan_status = 'ready' AND i.execution_state = 'uncertain' THEN 1 ELSE 0 END), 0)
-		FROM saved_plans p
+		FROM selected_plans p
 		LEFT JOIN effective_items i ON i.plan_id = p.id
 	`
-	args := []any{sqlitestore.RFC3339UTC(s.now().UTC().Add(-15 * time.Minute))}
-	conditions := make([]string, 0, 3)
-	if prefix != "" {
-		conditions = append(conditions, `instr(lower(p.id), lower(?)) = 1`)
-		args = append(args, prefix)
-	}
-	if createdRange != nil {
-		conditions = append(conditions, `p.created_at >= ?`, `p.created_at < ?`)
-		args = append(args, sqlitestore.RFC3339UTC(createdRange.fromInclusiveUTC), sqlitestore.RFC3339UTC(createdRange.toExclusiveUTC))
-	}
-	if len(conditions) > 0 {
-		query += ` WHERE ` + strings.Join(conditions, ` AND `)
-	}
+	args = append(args, sqlitestore.RFC3339UTC(s.now().UTC().Add(-15*time.Minute)))
 	query += `
 		GROUP BY p.id, p.plan_direction, p.adapter_family, p.adapter_families_json, p.target_instances_json, p.created_at, p.aggregate_status
 		ORDER BY p.created_at DESC, p.id DESC`
-	if limit > 0 {
-		query += ` LIMIT ?`
-		args = append(args, limit)
-	}
 
 	rows, err := s.store.DB().Query(query, args...)
 	if err != nil {
@@ -1957,9 +1962,6 @@ func (s *Service) executePullItem(ctx context.Context, item PlanItem) (applyItem
 		if attemptErr := s.recordDeliveryAttempt(item.PlanID, item.ID, "failed", err.Error()); attemptErr != nil {
 			return applyItemExecution{}, attemptErr
 		}
-		if markErr := s.markItemApplied(item.ID, appliedAt, "failed", err.Error()); markErr != nil {
-			return applyItemExecution{}, markErr
-		}
 		return applyItemExecution{failed: true, applyMessage: err.Error()}, nil
 	}
 	return applyItemExecution{
@@ -1970,7 +1972,6 @@ func (s *Service) executePullItem(ctx context.Context, item PlanItem) (applyItem
 }
 
 func (s *Service) executePushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem, retryScope string) (applyItemExecution, error) {
-	appliedAt := s.now().UTC()
 	if retryScope == "uncertain" {
 		reconciledState, message, err := s.reconcileUncertainPushItem(ctx, cfg, item)
 		if err != nil {
@@ -1981,15 +1982,9 @@ func (s *Service) executePushItem(ctx context.Context, cfg config.EffectiveConfi
 			if err := s.recordDeliveryAttempt(item.PlanID, item.ID, "succeeded", message); err != nil {
 				return applyItemExecution{}, err
 			}
-			if err := s.markItemApplied(item.ID, appliedAt, "succeeded", message); err != nil {
-				return applyItemExecution{}, err
-			}
 			return applyItemExecution{executed: true, applyMessage: message}, nil
 		case "uncertain":
 			if err := s.recordDeliveryAttempt(item.PlanID, item.ID, "uncertain", message); err != nil {
-				return applyItemExecution{}, err
-			}
-			if err := s.markItemApplied(item.ID, appliedAt, "uncertain", message); err != nil {
 				return applyItemExecution{}, err
 			}
 			return applyItemExecution{failed: true, applyMessage: message}, nil
@@ -2006,9 +2001,6 @@ func (s *Service) executePushItem(ctx context.Context, cfg config.EffectiveConfi
 		if attemptErr := s.recordDeliveryAttempt(item.PlanID, item.ID, finalState, err.Error()); attemptErr != nil {
 			return applyItemExecution{}, attemptErr
 		}
-		if markErr := s.markItemApplied(item.ID, appliedAt, finalState, err.Error()); markErr != nil {
-			return applyItemExecution{}, markErr
-		}
 		return applyItemExecution{
 			failed:             true,
 			applyMessage:       err.Error(),
@@ -2021,9 +2013,6 @@ func (s *Service) executePushItem(ctx context.Context, cfg config.EffectiveConfi
 		message = message + " with warnings"
 	}
 	if err := s.recordDeliveryAttempt(item.PlanID, item.ID, "succeeded", "push delivery succeeded"); err != nil {
-		return applyItemExecution{}, err
-	}
-	if err := s.markItemApplied(item.ID, appliedAt, "succeeded", message); err != nil {
 		return applyItemExecution{}, err
 	}
 	return applyItemExecution{
@@ -2069,9 +2058,17 @@ func (s *Service) applyPullItem(ctx context.Context, item PlanItem, appliedAt ti
 		return 0, err
 	}
 
+	var insertStatement *sql.Stmt
+	if len(inserted) > 0 {
+		insertStatement, err = tx.PrepareContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+		defer insertStatement.Close()
+	}
 	for _, row := range inserted {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		if _, err := insertStatement.ExecContext(ctx,
 			uuid.NewString(),
 			row.IssueKey,
 			sqlitestore.RFC3339UTC(row.StartedAtUTC),
@@ -2084,14 +2081,7 @@ func (s *Service) applyPullItem(ctx context.Context, item PlanItem, appliedAt ti
 			return 0, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO delivery_attempts(id, plan_id, plan_item_id, attempt_state, message, created_at) VALUES(?, ?, ?, 'succeeded', ?, ?)`,
-		uuid.NewString(), item.PlanID, item.ID, message, sqlitestore.RFC3339UTC(appliedAt),
-	); err != nil {
-		_ = tx.Rollback()
-		return 0, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE saved_plan_items SET applied_state = ?, applied_at = ?, apply_message = ? WHERE id = ?`, "succeeded", sqlitestore.RFC3339UTC(appliedAt), message, item.ID); err != nil {
+	if err := insertDeliveryAttempt(ctx, tx, item.PlanID, item.ID, "succeeded", message, appliedAt); err != nil {
 		_ = tx.Rollback()
 		return 0, err
 	}
@@ -2429,6 +2419,7 @@ func (s *Service) insertPlan(ctx context.Context, plan Plan) error {
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 
 	adapterFamilies, err := json.Marshal(plan.AdapterFamilies)
 	if err != nil {
@@ -2456,6 +2447,19 @@ func (s *Service) insertPlan(ctx context.Context, plan Plan) error {
 		return err
 	}
 
+	var itemStatement *sql.Stmt
+	if len(plan.Items) > 0 {
+		itemStatement, err = tx.PrepareContext(ctx, `INSERT INTO saved_plan_items(
+			id, plan_id, issue_key, plan_direction, target_adapter_family, target_adapter_instance, target_issue, route_profile,
+			window_from_utc, window_to_utc, plan_status, planned_action, comparison_status, reason_code, reason_detail,
+			payload_json, inspection_summary_json, delivery_key, content_hash, local_row_count, local_total_seconds,
+			remote_row_count, remote_total_seconds
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer itemStatement.Close()
+	}
 	for _, item := range plan.Items {
 		payload, err := json.Marshal(item.Payload)
 		if err != nil {
@@ -2467,13 +2471,7 @@ func (s *Service) insertPlan(ctx context.Context, plan Plan) error {
 			_ = tx.Rollback()
 			return err
 		}
-		if _, err := tx.Exec(
-			`INSERT INTO saved_plan_items(
-				id, plan_id, issue_key, plan_direction, target_adapter_family, target_adapter_instance, target_issue, route_profile,
-				window_from_utc, window_to_utc, plan_status, planned_action, comparison_status, reason_code, reason_detail,
-				payload_json, inspection_summary_json, delivery_key, content_hash, local_row_count, local_total_seconds,
-				remote_row_count, remote_total_seconds, applied_state, applied_at, apply_message
-			) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+		if _, err := itemStatement.Exec(
 			item.ID,
 			item.PlanID,
 			item.IssueKey,
@@ -2497,22 +2495,27 @@ func (s *Service) insertPlan(ctx context.Context, plan Plan) error {
 			item.LocalTotal,
 			item.RemoteRowCount,
 			item.RemoteTotal,
-			item.AppliedState,
-			item.ApplyMessage,
 		); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
 	}
 
+	var findingStatement *sql.Stmt
+	if len(plan.Findings) > 0 {
+		findingStatement, err = tx.PrepareContext(ctx, `INSERT INTO saved_plan_findings(id, plan_id, source_row_id, reason_code, reason_detail, payload_json) VALUES(?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer findingStatement.Close()
+	}
 	for _, finding := range plan.Findings {
 		payload, err := json.Marshal(finding.Payload)
 		if err != nil {
 			_ = tx.Rollback()
 			return err
 		}
-		if _, err := tx.Exec(
-			`INSERT INTO saved_plan_findings(id, plan_id, source_row_id, reason_code, reason_detail, payload_json) VALUES(?, ?, ?, ?, ?, ?)`,
+		if _, err := findingStatement.Exec(
 			finding.ID,
 			finding.PlanID,
 			finding.SourceRowID,
@@ -2539,7 +2542,7 @@ func (s *Service) loadPlanItems(planID string) ([]PlanItem, error) {
 			id, plan_id, issue_key, plan_direction, target_adapter_family, target_adapter_instance, target_issue, route_profile,
 			window_from_utc, window_to_utc, plan_status, planned_action, comparison_status, reason_code, reason_detail,
 			payload_json, inspection_summary_json, delivery_key, local_row_count, local_total_seconds, remote_row_count,
-			remote_total_seconds, applied_state, applied_at, apply_message
+			remote_total_seconds
 		FROM saved_plan_items
 		WHERE plan_id = ?
 		ORDER BY target_issue ASC, target_adapter_family ASC, target_adapter_instance ASC, window_from_utc ASC, id ASC`, planID)
@@ -2556,12 +2559,11 @@ func (s *Service) loadPlanItems(planID string) ([]PlanItem, error) {
 		var toUTC string
 		var payload string
 		var inspection string
-		var appliedAt sql.NullString
 		if err := rows.Scan(
 			&item.ID, &item.PlanID, &item.IssueKey, &item.PlanDirection, &item.TargetAdapterFamily, &item.TargetAdapterInstance,
 			&item.TargetIssue, &routeProfile, &fromUTC, &toUTC, &item.PlanStatus, &item.PlannedAction, &item.ComparisonStatus,
 			&item.ReasonCode, &item.ReasonDetail, &payload, &inspection, &item.DeliveryKey, &item.LocalRowCount, &item.LocalTotal,
-			&item.RemoteRowCount, &item.RemoteTotal, &item.AppliedState, &appliedAt, &item.ApplyMessage,
+			&item.RemoteRowCount, &item.RemoteTotal,
 		); err != nil {
 			return nil, err
 		}
@@ -2588,10 +2590,6 @@ func (s *Service) loadPlanItems(planID string) ([]PlanItem, error) {
 		if item.DeliveryKey == "" {
 			item.DeliveryKey = buildDeliveryKey(item)
 		}
-		if appliedAt.Valid {
-			t, _ := time.Parse(time.RFC3339, appliedAt.String)
-			item.AppliedAt = &t
-		}
 		item.ExecutionState = deriveExecutionState(attemptsByItem[item.ID], s.now().UTC())
 		if item.ExecutionState == "" {
 			item.ExecutionState = "not_attempted"
@@ -2606,7 +2604,7 @@ func (s *Service) loadDeliveryAttempts(planID string) (map[string][]DeliveryAtte
 		SELECT plan_item_id, attempt_state, message, created_at
 		FROM delivery_attempts
 		WHERE plan_id = ?
-		ORDER BY created_at ASC, id ASC`, planID)
+		ORDER BY created_at ASC, CASE WHEN attempt_state = 'pending' THEN 0 ELSE 1 END, id ASC`, planID)
 	if err != nil {
 		return nil, err
 	}
@@ -2919,25 +2917,23 @@ func hashPayload(payload []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Service) markItemApplied(id string, appliedAt time.Time, state, message string) error {
-	_, err := s.store.DB().Exec(`UPDATE saved_plan_items SET applied_state = ?, applied_at = ?, apply_message = ? WHERE id = ?`, state, sqlitestore.RFC3339UTC(appliedAt), message, id)
-	return err
-}
-
 func (s *Service) markPlanApplied(id string, appliedAt time.Time) error {
 	_, err := s.store.DB().Exec(`UPDATE saved_plans SET applied_at = ? WHERE id = ?`, sqlitestore.RFC3339UTC(appliedAt), id)
 	return err
 }
 
 func (s *Service) recordDeliveryAttempt(planID, itemID, state, message string) error {
-	_, err := s.store.DB().Exec(
+	return insertDeliveryAttempt(context.Background(), s.store.DB(), planID, itemID, state, message, s.now().UTC())
+}
+
+type deliveryAttemptExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func insertDeliveryAttempt(ctx context.Context, execer deliveryAttemptExecer, planID, itemID, state, message string, createdAt time.Time) error {
+	_, err := execer.ExecContext(ctx,
 		`INSERT INTO delivery_attempts(id, plan_id, plan_item_id, attempt_state, message, created_at) VALUES(?, ?, ?, ?, ?, ?)`,
-		uuid.NewString(),
-		planID,
-		itemID,
-		state,
-		message,
-		sqlitestore.RFC3339UTC(s.now().UTC()),
+		uuid.NewString(), planID, itemID, state, message, sqlitestore.RFC3339UTC(createdAt),
 	)
 	return err
 }
@@ -2947,12 +2943,18 @@ func (s *Service) recordPendingGroup(ctx context.Context, items []PlanItem) erro
 	if err != nil {
 		return err
 	}
-	createdAt := sqlitestore.RFC3339UTC(s.now().UTC())
+	statement, err := tx.PrepareContext(ctx, `INSERT INTO delivery_attempts(id, plan_id, plan_item_id, attempt_state, message, created_at) VALUES(?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer statement.Close()
 	for _, item := range items {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO delivery_attempts(id, plan_id, plan_item_id, attempt_state, message, created_at) VALUES(?, ?, ?, 'pending', 'push delivery started', ?)`,
-			uuid.NewString(), item.PlanID, item.ID, createdAt,
-		); err != nil {
+		message := "push delivery started"
+		if item.PlanDirection == "" || item.PlanDirection == "pull" {
+			message = "pull merge started"
+		}
+		if _, err := statement.ExecContext(ctx, uuid.NewString(), item.PlanID, item.ID, "pending", message, sqlitestore.RFC3339UTC(s.now().UTC())); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -3013,7 +3015,6 @@ func newPlanItem(plan Plan, issueKey string, payload []model.Row) PlanItem {
 		WindowToUTC:           plan.WindowToUTC,
 		LocalRowCount:         len(payload),
 		LocalTotal:            sumRows(payload),
-		AppliedState:          "not_attempted",
 		Payload:               payload,
 	}
 }

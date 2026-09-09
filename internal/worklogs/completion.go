@@ -3,6 +3,8 @@ package worklogs
 import (
 	"context"
 	"strings"
+
+	sqlitestore "github.com/solitus0/workledger/internal/store/sqlite"
 )
 
 // ListActiveByIDPrefix returns recent active worklogs whose IDs start with the
@@ -12,13 +14,15 @@ func (s *Service) ListActiveByIDPrefix(prefix string, limit int) ([]LocalWorklog
 		return []LocalWorklog{}, nil
 	}
 
+	lower, upper := sqlitestore.PrefixRange(strings.ToLower(strings.TrimSpace(prefix)))
 	rows, err := s.store.DB().Query(
 		`SELECT id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision
 		 FROM worklogs
-		 WHERE instr(lower(id), lower(?)) = 1
+		 WHERE id >= ? AND id < ?
 		 ORDER BY updated_at DESC, id
 		 LIMIT ?`,
-		strings.TrimSpace(prefix),
+		lower,
+		upper,
 		limit,
 	)
 	if err != nil {
@@ -41,7 +45,8 @@ func (s *Service) ListRestorableTrashByIDPrefix(prefix string, limit int) ([]Tra
 	if limit <= 0 {
 		return []TrashRecord{}, nil
 	}
-	rows, err := s.store.DB().Query(`SELECT `+trashSelectColumns+` FROM trashed_worklogs WHERE storage_scope = ? AND source_worklog_id IS NOT NULL AND instr(lower(id), lower(?)) = 1 ORDER BY trashed_at DESC, id LIMIT ?`, TrashScopeLocal, strings.TrimSpace(prefix), limit)
+	lower, upper := sqlitestore.PrefixRange(strings.ToLower(strings.TrimSpace(prefix)))
+	rows, err := s.store.DB().Query(`SELECT `+trashSelectColumns+` FROM trashed_worklogs WHERE storage_scope = ? AND source_worklog_id IS NOT NULL AND id >= ? AND id < ? ORDER BY trashed_at DESC, id LIMIT ?`, TrashScopeLocal, lower, upper, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -65,17 +70,18 @@ func (s *Service) ListKnownIssueKeys(ctx context.Context, prefix string, limit i
 		return []string{}, nil
 	}
 
-	trimmedPrefix := strings.TrimSpace(prefix)
+	trimmedPrefix := strings.ToUpper(strings.TrimSpace(prefix))
+	lower, upper := sqlitestore.PrefixRange(trimmedPrefix)
 	rows, err := s.store.DB().QueryContext(ctx,
 		`WITH candidates AS (
 			SELECT issue_key, MAX(updated_at) AS recent_at, 0 AS metadata_only
 			FROM worklogs
-			WHERE instr(lower(issue_key), lower(?)) = 1
+			WHERE issue_key >= ? AND issue_key < ?
 			GROUP BY issue_key
 			UNION ALL
 			SELECT metadata.issue_key, metadata.refreshed_at AS recent_at, 1 AS metadata_only
 			FROM issue_metadata AS metadata
-			WHERE instr(lower(metadata.issue_key), lower(?)) = 1
+			WHERE metadata.issue_key >= ? AND metadata.issue_key < ?
 			  AND NOT EXISTS (
 				SELECT 1 FROM worklogs WHERE worklogs.issue_key = metadata.issue_key
 			  )
@@ -84,8 +90,10 @@ func (s *Service) ListKnownIssueKeys(ctx context.Context, prefix string, limit i
 		 FROM candidates
 		 ORDER BY metadata_only, recent_at DESC, issue_key COLLATE NOCASE, issue_key
 		 LIMIT ?`,
-		trimmedPrefix,
-		trimmedPrefix,
+		lower,
+		upper,
+		lower,
+		upper,
 		limit,
 	)
 	if err != nil {

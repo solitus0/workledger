@@ -142,42 +142,51 @@ func (s *Service) LookupIssueMetadata(ctx context.Context, issueKeys []string) (
 		return map[string]IssueMetadata{}, nil
 	}
 
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(unique)), ",")
-	args := make([]any, 0, len(unique))
-	for _, issueKey := range unique {
-		args = append(args, issueKey)
-	}
-
-	rows, err := s.store.DB().QueryContext(ctx,
-		`SELECT issue_key, max_estimate_seconds, source_adapter_family, source_adapter_instance, refreshed_at FROM issue_metadata WHERE issue_key IN (`+placeholders+`)`,
-		args...,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	items := make(map[string]IssueMetadata, len(unique))
-	for rows.Next() {
-		var item IssueMetadata
-		var maxEstimate sql.NullInt64
-		var refreshedAt string
-		if err := rows.Scan(&item.IssueKey, &maxEstimate, &item.SourceAdapterFamily, &item.SourceAdapterInst, &refreshedAt); err != nil {
-			return nil, err
+	for start := 0; start < len(unique); start += sqliteQueryBatchSize {
+		end := min(start+sqliteQueryBatchSize, len(unique))
+		batch := unique[start:end]
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
+		args := make([]any, len(batch))
+		for index, issueKey := range batch {
+			args[index] = issueKey
 		}
-		if maxEstimate.Valid {
-			value := maxEstimate.Int64
-			item.MaxEstimateSeconds = &value
-		}
-		parsed, err := time.Parse(time.RFC3339, refreshedAt)
+		rows, err := s.store.DB().QueryContext(ctx,
+			`SELECT issue_key, max_estimate_seconds, source_adapter_family, source_adapter_instance, refreshed_at FROM issue_metadata WHERE issue_key IN (`+placeholders+`)`,
+			args...,
+		)
 		if err != nil {
 			return nil, err
 		}
-		item.RefreshedAt = parsed.UTC()
-		items[item.IssueKey] = item
+		for rows.Next() {
+			var item IssueMetadata
+			var maxEstimate sql.NullInt64
+			var refreshedAt string
+			if err := rows.Scan(&item.IssueKey, &maxEstimate, &item.SourceAdapterFamily, &item.SourceAdapterInst, &refreshedAt); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			if maxEstimate.Valid {
+				value := maxEstimate.Int64
+				item.MaxEstimateSeconds = &value
+			}
+			parsed, err := time.Parse(time.RFC3339, refreshedAt)
+			if err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			item.RefreshedAt = parsed.UTC()
+			items[item.IssueKey] = item
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
 	}
-
-	return items, rows.Err()
+	return items, nil
 }
 
 func (s *Service) ListIssueMetadata(ctx context.Context, issueKeys []string) ([]IssueMetadata, error) {
@@ -221,15 +230,20 @@ func (s *Service) UpsertIssueMetadataBatch(ctx context.Context, items []IssueMet
 	if err != nil {
 		return err
 	}
+	statement, err := tx.PrepareContext(ctx, `INSERT INTO issue_metadata(issue_key, max_estimate_seconds, source_adapter_family, source_adapter_instance, refreshed_at)
+		 VALUES(?, ?, ?, ?, ?)
+		 ON CONFLICT(issue_key) DO UPDATE SET
+		   max_estimate_seconds = excluded.max_estimate_seconds,
+		   source_adapter_family = excluded.source_adapter_family,
+		   source_adapter_instance = excluded.source_adapter_instance,
+		   refreshed_at = excluded.refreshed_at`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	defer statement.Close()
 	for _, item := range items {
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO issue_metadata(issue_key, max_estimate_seconds, source_adapter_family, source_adapter_instance, refreshed_at)
-			 VALUES(?, ?, ?, ?, ?)
-			 ON CONFLICT(issue_key) DO UPDATE SET
-			   max_estimate_seconds = excluded.max_estimate_seconds,
-			   source_adapter_family = excluded.source_adapter_family,
-			   source_adapter_instance = excluded.source_adapter_instance,
-			   refreshed_at = excluded.refreshed_at`,
+		if _, err := statement.ExecContext(ctx,
 			item.IssueKey,
 			item.MaxEstimateSeconds,
 			item.SourceAdapterFamily,
@@ -271,7 +285,7 @@ func (s *Service) Context(ctx context.Context, cfg config.EffectiveConfig, input
 	}
 
 	selectedDates := selectedContextDates(filters.From, filters.To, cfg.Location)
-	active, err := s.listActive(ctx, EffectiveFilters{})
+	active, err := s.listActiveOverlappingWithQueryer(ctx, filters.From.UTC(), filters.To.UTC().Add(time.Second), s.store.DB())
 	if err != nil {
 		return ContextResult{}, err
 	}

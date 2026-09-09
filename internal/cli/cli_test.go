@@ -348,7 +348,7 @@ func TestWorklogsListKeepsDedicatedUnrecoverableSQLiteFailure(t *testing.T) {
 	if payload["reason"] != "sqlite_unrecoverable" {
 		t.Fatalf("expected sqlite_unrecoverable reason, got %#v", payload["reason"])
 	}
-	if payload["message"] != "Local SQLite store is corrupt or incompatible and cannot be repaired additively." {
+	if payload["message"] != "Local SQLite store is corrupt or incompatible and cannot be repaired safely." {
 		t.Fatalf("unexpected message %#v", payload["message"])
 	}
 	if payload["sqlite_path"] != sqlitePath {
@@ -513,7 +513,7 @@ func TestInitRejectsCorruptSQLiteWithDedicatedMessage(t *testing.T) {
 	if result.stdout != "" {
 		t.Fatalf("expected empty stdout, got %q", result.stdout)
 	}
-	if !strings.Contains(result.stderr, "Local SQLite store is corrupt or incompatible and cannot be repaired additively.") {
+	if !strings.Contains(result.stderr, "Local SQLite store is corrupt or incompatible and cannot be repaired safely.") {
 		t.Fatalf("expected unrecoverable sqlite message, got %s", result.stderr)
 	}
 	if !strings.Contains(result.stderr, "sqlite_path: "+sqlitePath) {
@@ -558,7 +558,7 @@ func TestInitRejectsIncompatibleSQLiteWithDedicatedJSONPayload(t *testing.T) {
 	if payload["reason"] != "sqlite_unrecoverable" {
 		t.Fatalf("expected sqlite_unrecoverable reason, got %#v", payload["reason"])
 	}
-	if payload["message"] != "Local SQLite store is corrupt or incompatible and cannot be repaired additively." {
+	if payload["message"] != "Local SQLite store is corrupt or incompatible and cannot be repaired safely." {
 		t.Fatalf("unexpected message %#v", payload["message"])
 	}
 	if payload["sqlite_path"] != sqlitePath {
@@ -4393,8 +4393,15 @@ func TestJiraCloudPushPlanAndApply(t *testing.T) {
 	}
 	showPayload := decodeJSONMap(t, []byte(show.stdout))
 	items := showPayload["items"].([]any)
-	if items[0].(map[string]any)["apply_message"] != "applied saved push payload to jira-cloud" {
-		t.Fatalf("unexpected apply message %s", show.stdout)
+	item := items[0].(map[string]any)
+	if item["execution_state"] != "succeeded" {
+		t.Fatalf("unexpected execution state %s", show.stdout)
+	}
+	if _, ok := item["applied_state"]; ok {
+		t.Fatalf("legacy applied_state leaked into plan JSON: %s", show.stdout)
+	}
+	if _, ok := item["apply_message"]; ok {
+		t.Fatalf("legacy apply_message leaked into plan JSON: %s", show.stdout)
 	}
 }
 
@@ -8145,8 +8152,8 @@ func seedSavedPlan(t *testing.T, seed savedPlanSeed) {
 				id, plan_id, issue_key, plan_direction, target_adapter_family, target_adapter_instance, target_issue, route_profile,
 				window_from_utc, window_to_utc, plan_status, planned_action, comparison_status, reason_code, reason_detail,
 				payload_json, inspection_summary_json, delivery_key, content_hash, local_row_count, local_total_seconds,
-				remote_row_count, remote_total_seconds, applied_state, applied_at, apply_message
-			) VALUES(?, ?, ?, ?, ?, '', ?, NULL, ?, ?, 'ready', ?, 'remote_diff', 'remote_diff', 'seeded', ?, '{}', ?, 'hash', 1, 3600, 0, 0, 'not_attempted', NULL, '')`,
+				remote_row_count, remote_total_seconds
+			) VALUES(?, ?, ?, ?, ?, '', ?, NULL, ?, ?, 'ready', ?, 'remote_diff', 'remote_diff', 'seeded', ?, '{}', ?, 'hash', 1, 3600, 0, 0)`,
 			item.itemID, seed.planID, item.target, item.direction, item.adapter, item.target,
 			"2026-05-01T00:00:00Z", "2026-05-01T23:59:59Z", item.action, item.payloadJSON, item.itemID+"-delivery",
 		); err != nil {

@@ -32,6 +32,7 @@ const (
 	localTimestampFormatMessage = "started must use YYYY-MM-DDTHH:MM, todayTHH:MM, yesterdayTHH:MM, tomorrowTHH:MM, monTHH:MM, tueTHH:MM, wedTHH:MM, thuTHH:MM, friTHH:MM, satTHH:MM, sunTHH:MM, +NdTHH:MM, or -NdTHH:MM (time must use HH:MM, e.g. 09:00)"
 	timeClockFormatMessage      = "time must use HH:MM, e.g. 09:00"
 	startedUTCFormatMessage     = "started_utc must use RFC3339 UTC, e.g. 2026-05-14T09:00:00Z"
+	sqliteQueryBatchSize        = 900
 )
 
 func IsValidIssueKey(value string) bool {
@@ -335,6 +336,11 @@ func (s *Service) Add(ctx context.Context, cfg config.EffectiveConfig, input Add
 
 	now := s.now().UTC()
 	created := make([]LocalWorklog, 0, len(result.Records))
+	statement, err := conn.PrepareContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return AddResult{}, err
+	}
+	defer statement.Close()
 	for _, candidate := range result.Records {
 		worklog := LocalWorklog{
 			ID:              uuid.NewString(),
@@ -347,8 +353,7 @@ func (s *Service) Add(ctx context.Context, cfg config.EffectiveConfig, input Add
 			Revision:        1,
 		}
 
-		_, err = conn.ExecContext(ctx,
-			`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		_, err = statement.ExecContext(ctx,
 			worklog.ID,
 			worklog.IssueKey,
 			sqlitestore.RFC3339UTC(worklog.StartedAtUTC),
@@ -458,7 +463,7 @@ func (s *Service) prepareAutomaticAddCandidates(ctx context.Context, cfg config.
 		return nil, err
 	}
 
-	active, err := s.listActiveWithQueryer(ctx, EffectiveFilters{}, queryer)
+	active, err := s.listActiveOverlappingWithQueryer(ctx, filters.From.UTC(), filters.To.UTC().Add(time.Second), queryer)
 	if err != nil {
 		return nil, err
 	}
@@ -708,8 +713,13 @@ func archiveAndDeleteWorklogsTx(ctx context.Context, tx *sql.Tx, items []LocalWo
 		return nil, err
 	}
 	deleted := make([]DeleteMapping, 0, len(items))
+	statement, err := tx.PrepareContext(ctx, `DELETE FROM worklogs WHERE id = ? AND revision = ?`)
+	if err != nil {
+		return nil, err
+	}
+	defer statement.Close()
 	for _, item := range items {
-		result, err := tx.ExecContext(ctx, `DELETE FROM worklogs WHERE id = ? AND revision = ?`, item.ID, item.Revision)
+		result, err := statement.ExecContext(ctx, item.ID, item.Revision)
 		if err != nil {
 			return nil, err
 		}
@@ -864,7 +874,7 @@ func (s *Service) validateConflicts(ctx context.Context, cfg config.EffectiveCon
 		return nil
 	}
 
-	existing, err := s.listActive(ctx, EffectiveFilters{})
+	existing, err := s.listActiveOverlappingWithQueryer(ctx, candidate.StartedAtUTC, worklogEnd(candidate), s.store.DB())
 	if err != nil {
 		return err
 	}
@@ -916,7 +926,8 @@ func (s *Service) validateAddConflictsWithQueryer(ctx context.Context, cfg confi
 		return nil
 	}
 
-	existing, err := s.listActiveWithQueryer(ctx, EffectiveFilters{}, queryer)
+	windowStart, windowEnd := worklogEnvelope(candidates)
+	existing, err := s.listActiveOverlappingWithQueryer(ctx, windowStart, windowEnd, queryer)
 	if err != nil {
 		return err
 	}
@@ -985,6 +996,32 @@ func (s *Service) listActiveWithQueryer(ctx context.Context, filters EffectiveFi
 		items = append(items, item)
 	}
 
+	return items, rows.Err()
+}
+
+func (s *Service) listActiveOverlappingWithQueryer(ctx context.Context, windowStart, windowEnd time.Time, queryer sqlQueryer) ([]LocalWorklog, error) {
+	rows, err := queryer.QueryContext(ctx, `
+		SELECT id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision
+		FROM worklogs
+		WHERE started_at_utc < ?
+		  AND unixepoch(started_at_utc) + duration_seconds > unixepoch(?)
+		ORDER BY started_at_utc ASC, id ASC`,
+		sqlitestore.RFC3339UTC(windowEnd.UTC()),
+		sqlitestore.RFC3339UTC(windowStart.UTC()),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]LocalWorklog, 0)
+	for rows.Next() {
+		item, err := scanWorklog(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
 	return items, rows.Err()
 }
 
@@ -1495,9 +1532,27 @@ func isDuplicate(a, b LocalWorklog) bool {
 }
 
 func overlaps(a, b LocalWorklog) bool {
-	aEnd := a.StartedAtUTC.Add(time.Duration(a.DurationSeconds) * time.Second)
-	bEnd := b.StartedAtUTC.Add(time.Duration(b.DurationSeconds) * time.Second)
+	aEnd := worklogEnd(a)
+	bEnd := worklogEnd(b)
 	return a.StartedAtUTC.Before(bEnd) && b.StartedAtUTC.Before(aEnd)
+}
+
+func worklogEnd(item LocalWorklog) time.Time {
+	return item.StartedAtUTC.Add(time.Duration(item.DurationSeconds) * time.Second)
+}
+
+func worklogEnvelope(items []LocalWorklog) (time.Time, time.Time) {
+	start := items[0].StartedAtUTC
+	end := worklogEnd(items[0])
+	for _, item := range items[1:] {
+		if item.StartedAtUTC.Before(start) {
+			start = item.StartedAtUTC
+		}
+		if itemEnd := worklogEnd(item); itemEnd.After(end) {
+			end = itemEnd
+		}
+	}
+	return start, end
 }
 
 func scanWorklog(scanner interface{ Scan(dest ...any) error }) (LocalWorklog, error) {
@@ -1533,8 +1588,9 @@ func buildWhereClause(filters EffectiveFilters, deleted bool, args *[]any) strin
 		*args = append(*args, *filters.IssueKey)
 	}
 	if filters.IssuePrefix != nil {
-		whereParts = append(whereParts, "issue_key LIKE ?")
-		*args = append(*args, *filters.IssuePrefix+"-%")
+		lower, upper := sqlitestore.PrefixRange(*filters.IssuePrefix + "-")
+		whereParts = append(whereParts, "issue_key >= ?", "issue_key < ?")
+		*args = append(*args, lower, upper)
 	}
 
 	column := "started_at_utc"

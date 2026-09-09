@@ -2853,9 +2853,7 @@ func planJSON(plan reconcile.Plan, skippedTargets []reconcile.SkippedTarget, pro
 			"remote_total":            item.RemoteTotal,
 			"inspection_summary":      item.InspectionSummary,
 			"delivery_key":            item.DeliveryKey,
-			"applied_state":           item.AppliedState,
 			"execution_state":         item.ExecutionState,
-			"apply_message":           emptyToNil(item.ApplyMessage),
 			"payload":                 payload,
 		})
 	}
@@ -3921,7 +3919,7 @@ func (a *app) failSQLiteStoreSchemaMismatch(mode string) error {
 }
 
 func (a *app) failUnrecoverableSQLite(mode, sqlitePath string) error {
-	message := "Local SQLite store is corrupt or incompatible and cannot be repaired additively."
+	message := "Local SQLite store is corrupt or incompatible and cannot be repaired safely."
 	next := "Next step: inspect, replace, or restore the SQLite file, then rerun workledger init."
 
 	_, _ = fmt.Fprintf(a.stderr, "%s\nsqlite_path: %s\n%s\n", message, sqlitePath, next)

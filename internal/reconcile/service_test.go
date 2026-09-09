@@ -278,7 +278,6 @@ func TestApplyPlanPullMergeArchivesRemovedLocalRowsAndPreservesIDs(t *testing.T)
 				LocalTotal:     5400,
 				RemoteRowCount: 2,
 				RemoteTotal:    4500,
-				AppliedState:   "not_attempted",
 			},
 		},
 	}
@@ -302,6 +301,13 @@ func TestApplyPlanPullMergeArchivesRemovedLocalRowsAndPreservesIDs(t *testing.T)
 	}
 	if appliedPlan.ExecutionState != "succeeded" || appliedPlan.AppliedAt == nil {
 		t.Fatalf("expected terminally succeeded plan, got %#v", appliedPlan)
+	}
+	attempts, err := service.loadDeliveryAttempts(plan.ID)
+	if err != nil {
+		t.Fatalf("load delivery attempts: %v", err)
+	}
+	if len(attempts[plan.Items[0].ID]) != 2 || attempts[plan.Items[0].ID][0].State != "pending" || attempts[plan.Items[0].ID][0].Message != "pull merge started" || attempts[plan.Items[0].ID][1].State != "succeeded" {
+		t.Fatalf("unexpected pull attempt history %#v", attempts[plan.Items[0].ID])
 	}
 
 	scopeRows, err := service.listLocalScope("AAPP-1", mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"))
@@ -1031,7 +1037,7 @@ func TestApplyPlanPushMixedResult(t *testing.T) {
 	}
 	states := map[string]string{}
 	for _, item := range appliedPlan.Items {
-		states[item.IssueKey] = item.AppliedState
+		states[item.IssueKey] = item.ExecutionState
 	}
 	if states["AAPP-1"] != "succeeded" || states["BAPP-1"] != "failed" {
 		t.Fatalf("unexpected applied states %#v", states)
@@ -1838,8 +1844,8 @@ func TestCreateJiraCloudPullPushAndApplyPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPlan failed: %v", err)
 	}
-	if appliedPlan.Items[0].ApplyMessage != "applied saved push payload to jira-cloud" {
-		t.Fatalf("unexpected apply message %q", appliedPlan.Items[0].ApplyMessage)
+	if appliedPlan.Items[0].ExecutionState != "succeeded" {
+		t.Fatalf("unexpected execution state %q", appliedPlan.Items[0].ExecutionState)
 	}
 }
 

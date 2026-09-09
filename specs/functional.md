@@ -54,14 +54,15 @@ Placement rule:
 - [ ] FUNC-030: `workledger init` shall create the SQLite file when the database does not exist.
 - [ ] FUNC-031: `workledger init` shall initialize the full empty local schema when the database does not exist.
 - [ ] FUNC-032: `workledger init` shall leave an existing compatible SQLite file unchanged.
-- [ ] FUNC-033: `workledger init` shall repair an existing SQLite file additively when required local tables are missing.
-- [ ] FUNC-034: `workledger init` shall fail clearly when an existing SQLite file is incompatible or corrupt and cannot be repaired additively, identifying local storage corruption or incompatibility, naming the configured `storage.sqlite_path`, and telling the operator to inspect, replace, or restore the SQLite file before rerunning init.
+- [ ] FUNC-033: `workledger init` shall repair an existing SQLite file when required local tables are missing, shall migrate legacy saved-plan item lifecycle results into delivery attempts before removing the legacy lifecycle columns, and shall preserve table rows when rebuilding explicit indexes after a single missing final database page is referenced exclusively by those indexes.
+- [ ] FUNC-034: `workledger init` shall fail clearly when an existing SQLite file is incompatible, has table or auto-index corruption, or otherwise cannot be repaired without guessing at persisted data, identifying local storage corruption or incompatibility, naming the configured `storage.sqlite_path`, and telling the operator to inspect, replace, or restore the SQLite file before rerunning init.
 - [ ] FUNC-035: `workledger init` shall attempt SQLite path provisioning and schema bootstrap from configured `storage.sqlite_path` even when a valid config file already exists.
 - [ ] FUNC-036: `workledger init` shall support `table` output.
 - [ ] FUNC-037: `workledger init` shall support `json` output.
 - [ ] FUNC-037a: Ordinary commands shall never create or repair the SQLite schema during startup.
 - [ ] FUNC-037b: Ordinary commands shall fail clearly when the configured SQLite file is missing, saying the SQLite store is not ready and telling the operator to run `workledger init`.
 - [ ] FUNC-037c: Ordinary commands shall fail clearly before feature SQL runs when the configured SQLite schema is outdated or mismatched, telling the operator to run `workledger init` to repair it.
+- [ ] FUNC-037d: Ordinary commands shall reject saved-plan schemas that still contain legacy item-level `applied_state`, `applied_at`, or `apply_message` columns until `workledger init` migrates them.
 
 ## Configuration Commands
 - [ ] FUNC-038: `workledger config` shall validate the effective local config before rendering configuration details.

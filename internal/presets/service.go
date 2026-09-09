@@ -114,7 +114,17 @@ func (s *Service) List(ctx context.Context, prefix string, limit int) ([]Preset,
 	if limit <= 0 {
 		limit = 10000
 	}
-	rows, err := s.store.DB().QueryContext(ctx, `SELECT id, name, issue_key, start_time, duration_seconds, description, created_at, updated_at, last_used_at, revision FROM worklog_presets WHERE instr(lower(name), lower(?)) = 1 ORDER BY last_used_at IS NULL, last_used_at DESC, name LIMIT ?`, strings.TrimSpace(prefix), limit)
+	query := `SELECT id, name, issue_key, start_time, duration_seconds, description, created_at, updated_at, last_used_at, revision FROM worklog_presets`
+	args := make([]any, 0, 3)
+	trimmedPrefix := strings.ToLower(strings.TrimSpace(prefix))
+	if trimmedPrefix != "" {
+		lower, upper := sqlitestore.PrefixRange(trimmedPrefix)
+		query += ` WHERE name >= ? AND name < ?`
+		args = append(args, lower, upper)
+	}
+	query += ` ORDER BY last_used_at IS NULL, last_used_at DESC, name LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.store.DB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

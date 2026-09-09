@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -93,6 +94,7 @@ type trashWriteQueryer interface {
 	sqlQueryer
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	PrepareContext(context.Context, string) (*sql.Stmt, error)
 }
 
 func (s *Service) ListTrash(cfg config.EffectiveConfig, filters TrashFilters) ([]TrashRecord, EffectiveFilters, error) {
@@ -324,6 +326,7 @@ func (s *Service) prepareTrashRestoreTx(ctx context.Context, cfg config.Effectiv
 	candidates := make([]LocalWorklog, 0, len(records))
 	items := make([]TrashRestoreItem, 0, len(records))
 	sourceIDs := make(map[string]struct{}, len(records))
+	orderedSourceIDs := make([]string, 0, len(records))
 	for _, record := range records {
 		if record.StorageScope != TrashScopeLocal {
 			return nil, ValidationError{Issues: []ValidationIssue{{Field: "scope", Message: "remote trash is audit-only and cannot be restored"}}}
@@ -335,11 +338,15 @@ func (s *Service) prepareTrashRestoreTx(ctx context.Context, cfg config.Effectiv
 			return nil, fmt.Errorf("%w: multiple trash rows reference active worklog id %s", ErrConflict, *record.SourceWorklogID)
 		}
 		sourceIDs[*record.SourceWorklogID] = struct{}{}
-		var occupied int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM worklogs WHERE id = ?`, *record.SourceWorklogID).Scan(&occupied); err != nil {
-			return nil, err
-		}
-		if occupied != 0 {
+		orderedSourceIDs = append(orderedSourceIDs, *record.SourceWorklogID)
+	}
+
+	occupiedIDs, err := existingWorklogIDs(ctx, tx, orderedSourceIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, record := range records {
+		if _, occupied := occupiedIDs[*record.SourceWorklogID]; occupied {
 			return nil, fmt.Errorf("%w: active worklog id %s already exists", ErrConflict, *record.SourceWorklogID)
 		}
 		createdAt := restoredAt
@@ -360,13 +367,56 @@ func (s *Service) prepareTrashRestoreTx(ctx context.Context, cfg config.Effectiv
 	return items, nil
 }
 
+func existingWorklogIDs(ctx context.Context, queryer sqlQueryer, ids []string) (map[string]struct{}, error) {
+	found := make(map[string]struct{})
+	for start := 0; start < len(ids); start += sqliteQueryBatchSize {
+		end := min(start+sqliteQueryBatchSize, len(ids))
+		batch := ids[start:end]
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
+		args := make([]any, len(batch))
+		for index, id := range batch {
+			args[index] = id
+		}
+		rows, err := queryer.QueryContext(ctx, `SELECT id FROM worklogs WHERE id IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			found[id] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+	return found, nil
+}
+
 func persistTrashRestoreTx(ctx context.Context, tx trashWriteQueryer, items []TrashRestoreItem) error {
+	insertStatement, err := tx.PrepareContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer insertStatement.Close()
+	deleteStatement, err := tx.PrepareContext(ctx, `DELETE FROM trashed_worklogs WHERE id = ? AND storage_scope = ?`)
+	if err != nil {
+		return err
+	}
+	defer deleteStatement.Close()
 	for _, item := range items {
 		record := item.Record
-		if _, err := tx.ExecContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, record.ID, record.IssueKey, sqlitestore.RFC3339UTC(record.StartedAtUTC), record.DurationSeconds, record.Description, sqlitestore.RFC3339UTC(record.CreatedAt), sqlitestore.RFC3339UTC(record.UpdatedAt), record.Revision); err != nil {
+		if _, err := insertStatement.ExecContext(ctx, record.ID, record.IssueKey, sqlitestore.RFC3339UTC(record.StartedAtUTC), record.DurationSeconds, record.Description, sqlitestore.RFC3339UTC(record.CreatedAt), sqlitestore.RFC3339UTC(record.UpdatedAt), record.Revision); err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM trashed_worklogs WHERE id = ? AND storage_scope = ?`, item.TrashID, TrashScopeLocal)
+		result, err := deleteStatement.ExecContext(ctx, item.TrashID, TrashScopeLocal)
 		if err != nil {
 			return err
 		}
@@ -393,10 +443,14 @@ func showTrashWithQueryer(ctx context.Context, queryer interface {
 
 func InsertTrashRowsTx(tx *sql.Tx, items []TrashArchiveInput) ([]string, error) {
 	ids := make([]string, 0, len(items))
+	statement, err := tx.Prepare(`INSERT INTO trashed_worklogs(id, storage_scope, source_worklog_id, source_created_at, source_updated_at, source_revision, issue_key, started_at_utc, duration_seconds, description, trashed_at, reason_code, reason_detail, plan_direction, origin_plan_id, origin_plan_item_id, adapter_family, adapter_instance) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return nil, err
+	}
+	defer statement.Close()
 	for _, item := range items {
 		id := uuid.NewString()
-		_, err := tx.Exec(
-			`INSERT INTO trashed_worklogs(id, storage_scope, source_worklog_id, source_created_at, source_updated_at, source_revision, issue_key, started_at_utc, duration_seconds, description, trashed_at, reason_code, reason_detail, plan_direction, origin_plan_id, origin_plan_item_id, adapter_family, adapter_instance) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		_, err := statement.Exec(
 			id,
 			item.StorageScope,
 			nullableString(item.SourceWorklogID),
@@ -634,8 +688,13 @@ func ArchiveLocalTrashTx(tx *sql.Tx, planID, planItemID string, rows []LocalWork
 }
 
 func DeleteActiveWorklogsTx(ctx context.Context, tx *sql.Tx, rows []LocalWorklog) error {
+	statement, err := tx.PrepareContext(ctx, `DELETE FROM worklogs WHERE id = ? AND revision = ?`)
+	if err != nil {
+		return err
+	}
+	defer statement.Close()
 	for _, row := range rows {
-		result, err := tx.ExecContext(ctx, `DELETE FROM worklogs WHERE id = ? AND revision = ?`, row.ID, row.Revision)
+		result, err := statement.ExecContext(ctx, row.ID, row.Revision)
 		if err != nil {
 			return err
 		}

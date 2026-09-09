@@ -17,8 +17,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - `workledger worklogs add --overtime` for explicitly allowing automatic `--fit` and `--fill` placement to start at or after the configured workday end.
 
 ### Changed
+- Saved-plan item execution now uses delivery attempts as its only persisted source of truth; `workledger init` migrates legacy terminal results and removes the duplicate item lifecycle columns in a clean schema cutover.
 - Local worklog deletion now atomically archives restorable source identity and revision metadata instead of permanently discarding the row.
 - Automatic `worklogs add --fit` and `--fill` placement now skips slots starting at or after `day_end` unless `--overtime` is supplied, while still allowing an eligible worklog that starts earlier to extend past `day_end`.
+
+### Fixed
+- Applied pull plans created by older binaries no longer reappear as unapplied after migration because their terminal item results are preserved as delivery attempts.
+- `workledger init` now rebuilds explicit indexes when a single truncated final SQLite page affects indexes only, preserving table rows and verifying full database integrity; writability checks no longer open the database outside SQLite and risk releasing active POSIX locks.
 
 ## [0.1.8] - 2026-07-02
 

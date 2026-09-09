@@ -27,6 +27,8 @@ Placement rule:
 - [ ] NFR-011c: Long-running frontends shall detect commits from other connections through a dedicated-connection `PRAGMA data_version` tracker.
 - [ ] NFR-011d: Active worklogs shall carry an integer revision that starts at `1` and increments on every in-place mutation.
 - [ ] NFR-011e: Preview-driven update and delete operations shall reject a stale expected worklog revision rather than overwrite newer state.
+- [ ] NFR-011f: SQLite writability checks shall never directly open the database file outside SQLite while an application database connection may be active.
+- [ ] NFR-011g: Single-final-page index-corruption repair shall run only during explicit bootstrap, reject any missing-page reference from a table or auto-index, rebuild affected explicit indexes from intact table data, reclaim orphaned index pages, and require a successful full SQLite integrity check before reporting success.
 - [ ] NFR-014a: SQLite shall persist trashed worklogs in a `trashed_worklogs` table.
 - [ ] NFR-014b: The `trashed_worklogs` table shall use a dedicated archive `id` as its CLI identity.
 - [ ] NFR-014c: The `trashed_worklogs` table shall retain `storage_scope`, nullable `source_worklog_id`, nullable `source_created_at`, nullable `source_updated_at`, nullable `source_revision`, canonical worklog fields, `trashed_at`, reason fields, `plan_direction`, nullable plan lineage, and nullable adapter lineage.
@@ -34,7 +36,7 @@ Placement rule:
 - [ ] NFR-015: Additive storage shall use `issue_metadata`, `saved_plans`, `saved_plan_items`, and `delivery_attempts` tables.
 - [ ] NFR-016: The `issue_metadata` table shall include `issue_key`, `max_estimate_seconds`, `source_adapter_family`, `source_adapter_instance`, and `refreshed_at`.
 - [ ] NFR-017: The `saved_plans` table shall include `id`, `created_at`, `plan_direction`, `adapter_family`, `config_fingerprint`, `window_from_utc`, `window_to_utc`, immutable planning status in `aggregate_status`, and terminal-success time in `applied_at`.
-- [ ] NFR-018: The `saved_plan_items` table shall include `id`, `plan_id`, `issue_key`, `target_issue`, `route_profile`, `plan_direction`, `target_adapter_family`, `target_adapter_instance`, `window_from_utc`, `window_to_utc`, `plan_status`, `planned_action`, `comparison_status`, `reason_code`, `reason_detail`, `payload_json`, `inspection_summary_json`, `delivery_key`, `content_hash`, `local_row_count`, `local_total_seconds`, `remote_row_count`, `remote_total_seconds`, `applied_state`, `applied_at`, and `apply_message`.
+- [ ] NFR-018: The `saved_plan_items` table shall include `id`, `plan_id`, `issue_key`, `target_issue`, `route_profile`, `plan_direction`, `target_adapter_family`, `target_adapter_instance`, `window_from_utc`, `window_to_utc`, `plan_status`, `planned_action`, `comparison_status`, `reason_code`, `reason_detail`, `payload_json`, `inspection_summary_json`, `delivery_key`, `content_hash`, `local_row_count`, `local_total_seconds`, `remote_row_count`, and `remote_total_seconds`; item execution state, time, and message shall not be duplicated outside delivery attempts.
 - [ ] NFR-019: The `delivery_attempts` table shall include `id`, `plan_id`, `plan_item_id`, `attempt_state`, `message`, and `created_at`.
 - [ ] NFR-019a: The `worklog_presets` table shall include `id`, `name`, `issue_key`, `start_time`, `duration_seconds`, `description`, `created_at`, `updated_at`, nullable `last_used_at`, and `revision`.
 - [ ] NFR-019b: SQLite shall define a unique index on `worklog_presets(name)` and an index supporting last-used and name ordering.
@@ -47,6 +49,10 @@ Placement rule:
 - [ ] NFR-027: Additive storage shall define an index on `saved_plan_items(delivery_key)`.
 - [ ] NFR-028: Additive storage shall define an index on `delivery_attempts(plan_item_id, created_at)`.
 - [ ] NFR-029: Additive storage shall define an index on `delivery_attempts(attempt_state, created_at)`.
+- [ ] NFR-030: SQLite shall define query-shape indexes for worklog interval ends, issue recency, issue-scoped description recency, preset recency, ordered saved-plan items and findings, and delivery attempts by plan.
+- [ ] NFR-030a: Date-window totals, context, automatic-placement, and candidate-based add, update, apply, or restore conflict reads shall query only worklogs whose intervals can overlap the requested or candidate window rather than loading the full active ledger.
+- [ ] NFR-030b: Bounded saved-plan listing shall select the requested plan page before aggregating its items and delivery-attempt history.
+- [ ] NFR-030c: Multi-row local persistence shall reuse prepared statements; set-based metadata and trash-restore lookups shall use bounded parameter batches; and batch trash restoration shall not issue one occupied-ID query per row.
 - [ ] NFR-031: Scope payload rows and inspection summaries shall be stored on `saved_plan_items`.
 - [ ] NFR-032: Scope payload rows and inspection summaries shall not be split into extra child tables in the first implementation.
 - [ ] NFR-033: Mutable adapter instance records shall not be persisted in SQLite.
@@ -552,6 +558,7 @@ Placement rule:
 - [ ] NFR-465: `plan_status` shall be immutable after planning.
 - [ ] NFR-465a: A saved plan's `planning_status` shall be the immutable planning-time aggregate represented by stored `aggregate_status`; CLI and TUI contracts shall call it `planning_status`.
 - [ ] NFR-466: Attempt history shall be append-only.
+- [ ] NFR-466a: Legacy terminal saved-plan item results without attempt history shall migrate to deterministic, provenance-labelled attempt rows using their saved result state and timestamp; malformed or contradictory legacy lifecycle data shall fail migration atomically.
 - [ ] NFR-467: Attempt states shall be `pending`, `succeeded`, `failed`, and `uncertain`.
 - [ ] NFR-468: Derived execution states shall be `not_attempted`, `pending`, `succeeded`, `failed`, and `uncertain`.
 - [ ] NFR-469: A succeeded item shall be terminal.

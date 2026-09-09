@@ -62,22 +62,22 @@ func (s *Service) SummarizeLocal(ctx context.Context, cfg config.EffectiveConfig
 }
 
 func (s *Service) SummarizeLocalFiltered(ctx context.Context, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, issuePrefixes []string, excludedIssueKeys map[string]struct{}) (Result, error) {
-	localEntries, err := s.loadLocalEntries(ctx, issuePrefixes, excludedIssueKeys)
+	windowEndExclusive := windowToUTC.Add(time.Second)
+	localEntries, err := s.loadLocalEntries(ctx, windowFromUTC, windowEndExclusive, issuePrefixes, excludedIssueKeys)
 	if err != nil {
 		return Result{}, err
 	}
 
-	windowEndExclusive := windowToUTC.Add(time.Second)
 	return summarizeLocalEntries(localEntries, windowFromUTC, windowEndExclusive, cfg.Location), nil
 }
 
 func (s *Service) CompareClockify(ctx context.Context, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, entries []clockifyadapter.TimeEntry) (Result, error) {
-	localEntries, err := s.loadLocalEntries(ctx, nil, nil)
+	windowEndExclusive := windowToUTC.Add(time.Second)
+	localEntries, err := s.loadLocalEntries(ctx, windowFromUTC, windowEndExclusive, nil, nil)
 	if err != nil {
 		return Result{}, err
 	}
 
-	windowEndExclusive := windowToUTC.Add(time.Second)
 	runningDays := map[string]struct{}{}
 
 	remoteEntries := make([]localEntry, 0, len(entries))
@@ -114,7 +114,8 @@ func (s *Service) CompareJiraData(ctx context.Context, cfg config.EffectiveConfi
 }
 
 func (s *Service) CompareJiraDataWithExclusions(ctx context.Context, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, rows []model.Row, issuePrefixes []string, excludedIssueKeys map[string]struct{}) (Result, error) {
-	localEntries, err := s.loadLocalEntries(ctx, issuePrefixes, excludedIssueKeys)
+	windowEndExclusive := windowToUTC.Add(time.Second)
+	localEntries, err := s.loadLocalEntries(ctx, windowFromUTC, windowEndExclusive, issuePrefixes, excludedIssueKeys)
 	if err != nil {
 		return Result{}, err
 	}
@@ -123,7 +124,8 @@ func (s *Service) CompareJiraDataWithExclusions(ctx context.Context, cfg config.
 }
 
 func (s *Service) CompareRowsWithLocalScope(ctx context.Context, cfg config.EffectiveConfig, windowFromUTC, windowToUTC time.Time, rows []model.Row, issuePrefixes []string, excludedIssueKeys map[string]struct{}) (Result, error) {
-	localEntries, err := s.loadLocalEntries(ctx, issuePrefixes, excludedIssueKeys)
+	windowEndExclusive := windowToUTC.Add(time.Second)
+	localEntries, err := s.loadLocalEntries(ctx, windowFromUTC, windowEndExclusive, issuePrefixes, excludedIssueKeys)
 	if err != nil {
 		return Result{}, err
 	}
@@ -149,8 +151,26 @@ func summarizeLocalEntries(localEntries []localEntry, windowFromUTC, windowEndEx
 	return compareFixedDurationEntries(localEntries, localEntries, windowFromUTC, windowEndExclusiveUTC, location, nil)
 }
 
-func (s *Service) loadLocalEntries(ctx context.Context, issuePrefixes []string, excludedIssueKeys map[string]struct{}) ([]localEntry, error) {
-	rows, err := s.store.DB().QueryContext(ctx, `SELECT issue_key, started_at_utc, duration_seconds FROM worklogs`)
+func (s *Service) loadLocalEntries(ctx context.Context, windowStart, windowEndExclusive time.Time, issuePrefixes []string, excludedIssueKeys map[string]struct{}) ([]localEntry, error) {
+	query := `
+		SELECT issue_key, started_at_utc, duration_seconds
+		FROM worklogs
+		WHERE started_at_utc < ?
+		  AND unixepoch(started_at_utc) + duration_seconds > unixepoch(?)`
+	args := []any{
+		sqlitestore.RFC3339UTC(windowEndExclusive.UTC()),
+		sqlitestore.RFC3339UTC(windowStart.UTC()),
+	}
+	if len(issuePrefixes) > 0 {
+		prefixConditions := make([]string, 0, len(issuePrefixes))
+		for _, prefix := range issuePrefixes {
+			lower, upper := sqlitestore.PrefixRange(prefix)
+			prefixConditions = append(prefixConditions, `(issue_key >= ? AND issue_key < ?)`)
+			args = append(args, lower, upper)
+		}
+		query += ` AND (` + strings.Join(prefixConditions, ` OR `) + `)`
+	}
+	rows, err := s.store.DB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -39,12 +39,13 @@ func CheckWritable(sqlitePath, operation string) error {
 		return writableError(sqlitePath, parentDir, operation, "parent path is not a directory")
 	}
 
-	if _, err := os.Stat(sqlitePath); err == nil {
-		file, openErr := os.OpenFile(sqlitePath, os.O_WRONLY|os.O_APPEND, 0)
-		if openErr != nil {
+	if sqliteInfo, err := os.Stat(sqlitePath); err == nil {
+		// Never open the database outside SQLite. On POSIX, closing an unrelated
+		// descriptor for the database can release locks held by SQLite connections
+		// elsewhere in this process.
+		if sqliteInfo.Mode().Perm()&0o222 == 0 {
 			return writableError(sqlitePath, parentDir, operation, "sqlite file is not writable")
 		}
-		_ = file.Close()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return writableError(sqlitePath, parentDir, operation, fmt.Sprintf("cannot inspect SQLite file: %v", err))
 	}

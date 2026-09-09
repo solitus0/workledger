@@ -219,11 +219,7 @@ func (s *Service) executeSavedPushGroups(ctx context.Context, cfg config.Effecti
 }
 
 func (s *Service) recordPushExecutionOutcome(summary *pushExecutionSummary, outcome pushExecutionOutcome, reporter progress.Reporter, scopeTotal, workTotal int) error {
-	appliedAt := s.now().UTC()
 	if err := s.recordDeliveryAttempt(outcome.item.PlanID, outcome.item.ID, outcome.finalState, outcome.attemptMessage); err != nil {
-		return err
-	}
-	if err := s.markItemApplied(outcome.item.ID, appliedAt, outcome.finalState, outcome.applyMessage); err != nil {
 		return err
 	}
 	if outcome.executed {

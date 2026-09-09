@@ -147,9 +147,14 @@ func (s *Service) Shift(ctx context.Context, cfg config.EffectiveConfig, filters
 		return ShiftResult{}, err
 	}
 	updatedAt := sqlitestore.RFC3339UTC(s.now().UTC())
+	statement, err := tx.PrepareContext(ctx, `UPDATE worklogs SET started_at_utc = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ?`)
+	if err != nil {
+		_ = tx.Rollback()
+		return ShiftResult{}, err
+	}
+	defer statement.Close()
 	for index, item := range shifted {
-		updateResult, err := tx.ExecContext(ctx,
-			`UPDATE worklogs SET started_at_utc = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ?`,
+		updateResult, err := statement.ExecContext(ctx,
 			sqlitestore.RFC3339UTC(item.StartedAtUTC),
 			updatedAt,
 			item.ID,
@@ -199,7 +204,8 @@ func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, payload
 		})
 	}
 
-	existing, err := s.listActive(ctx, EffectiveFilters{})
+	windowStart, windowEnd := worklogEnvelope(candidates)
+	existing, err := s.listActiveOverlappingWithQueryer(ctx, windowStart, windowEnd, s.store.DB())
 	if err != nil {
 		return ApplyResult{}, err
 	}
@@ -221,6 +227,12 @@ func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, payload
 	if err != nil {
 		return ApplyResult{}, err
 	}
+	statement, err := tx.PrepareContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		_ = tx.Rollback()
+		return ApplyResult{}, err
+	}
+	defer statement.Close()
 
 	now := s.now().UTC()
 	createdAt := sqlitestore.RFC3339UTC(now)
@@ -232,8 +244,7 @@ func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, payload
 		result.Items[index].Record = item
 		result.Records[index] = item
 
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		if _, err := statement.ExecContext(ctx,
 			item.ID,
 			item.IssueKey,
 			sqlitestore.RFC3339UTC(item.StartedAtUTC),
