@@ -89,6 +89,19 @@ func (a *app) configureCompletions(root *cobra.Command) {
 		if cmd.LocalNonPersistentFlags().Lookup("scope") != nil {
 			mustRegisterFlagCompletion(cmd, "scope", fixedCompletion(completionCandidate{value: "local", description: "Local trash"}, completionCandidate{value: "remote", description: "Remote audit trash"}))
 		}
+		if cmd.CommandPath() == "workledger activity list" {
+			mustRegisterFlagCompletion(cmd, "source", fixedCompletion(
+				completionCandidate{value: "cli", description: "CLI activity"},
+				completionCandidate{value: "tui", description: "TUI activity"},
+			))
+			mustRegisterFlagCompletion(cmd, "state", fixedCompletion(
+				completionCandidate{value: "running", description: "In progress"},
+				completionCandidate{value: "succeeded", description: "Completed successfully"},
+				completionCandidate{value: "failed", description: "Failed"},
+				completionCandidate{value: "partial", description: "Partially succeeded"},
+				completionCandidate{value: "canceled", description: "Canceled"},
+			))
+		}
 
 		switch cmd.CommandPath() {
 		case "workledger worklogs update", "workledger worklogs delete":

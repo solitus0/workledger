@@ -82,8 +82,11 @@ func (e exitError) Error() string {
 }
 
 type app struct {
-	stdout io.Writer
-	stderr io.Writer
+	stdout               io.Writer
+	stderr               io.Writer
+	activeActivityID     string
+	activityErrorCode    string
+	activityErrorMessage string
 }
 
 type dateWindowFlagValues struct {
@@ -245,18 +248,25 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	cmd.SetErr(stderr)
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
+	activityRun := a.startCLIActivity(cmd, args)
 
-	if err := cmd.ExecuteContext(ctx); err != nil {
+	err := cmd.ExecuteContext(ctx)
+	code := 0
+	if err != nil {
 		var exitErr exitError
 		if errors.As(err, &exitErr) {
-			return exitErr.code
+			code = exitErr.code
+		} else {
+			fmt.Fprintln(stderr, err.Error())
+			code = 1
 		}
-
-		fmt.Fprintln(stderr, err.Error())
-		return 1
+		if a.activityErrorCode == "" {
+			a.activityErrorCode = "unexpected_error"
+			a.activityErrorMessage = "operation failed"
+		}
 	}
-
-	return 0
+	a.finishCLIActivity(activityRun, code)
+	return code
 }
 
 func (a *app) newRootCommand() *cobra.Command {
@@ -294,6 +304,7 @@ func (a *app) newRootCommand() *cobra.Command {
 	root.AddCommand(a.newIssueMetadataCommand())
 	root.AddCommand(a.newPlanCommand())
 	root.AddCommand(a.newCompletionCommand())
+	root.AddCommand(a.newActivityCommand())
 	a.configureCompletions(root)
 
 	return root
@@ -3896,6 +3907,8 @@ func (a *app) renderPlanExecutionResult(mode string, result reconcile.ApplyResul
 }
 
 func (a *app) fail(mode string, code int, errorCode, message string, details any) error {
+	a.activityErrorCode = errorCode
+	a.activityErrorMessage = safeActivityErrorMessage(errorCode)
 	if mode == "json" {
 		_ = a.writeJSON(map[string]any{
 			"error": map[string]any{

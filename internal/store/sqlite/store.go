@@ -182,6 +182,20 @@ var schemaStatements = []string{
 		message TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	)`,
+	`CREATE TABLE IF NOT EXISTS activity_entries (
+		id TEXT PRIMARY KEY,
+		source TEXT NOT NULL,
+		operation TEXT NOT NULL,
+		summary TEXT NOT NULL,
+		attributes_json TEXT NOT NULL DEFAULT '{}',
+		state TEXT NOT NULL,
+		started_at TEXT NOT NULL,
+		finished_at TEXT NULL,
+		duration_ms INTEGER NULL,
+		exit_code INTEGER NULL,
+		error_code TEXT NOT NULL DEFAULT '',
+		error_message TEXT NOT NULL DEFAULT ''
+	)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_worklogs_id ON worklogs(id)`,
 	`CREATE INDEX IF NOT EXISTS idx_worklogs_issue_started ON worklogs(issue_key, started_at_utc)`,
 	`CREATE INDEX IF NOT EXISTS idx_worklogs_started ON worklogs(started_at_utc)`,
@@ -199,6 +213,8 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_saved_plan_findings_plan_id ON saved_plan_findings(plan_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_delivery_attempts_plan_item_created ON delivery_attempts(plan_item_id, created_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_delivery_attempts_state_created ON delivery_attempts(attempt_state, created_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_activity_started_id ON activity_entries(started_at DESC, id DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_activity_source_state_started ON activity_entries(source, state, started_at DESC)`,
 }
 
 func Bootstrap(path string) (*Store, BootstrapStatus, error) {
@@ -642,6 +658,23 @@ var requiredSchema = []tableRequirement{
 			{column: "attempt_state", typ: "TEXT", notNull: true},
 			{column: "message", typ: "TEXT", notNull: true},
 			{column: "created_at", typ: "TEXT", notNull: true},
+		},
+	},
+	{
+		table: "activity_entries",
+		columns: []columnRequirement{
+			{column: "id", typ: "TEXT", notNull: false},
+			{column: "source", typ: "TEXT", notNull: true},
+			{column: "operation", typ: "TEXT", notNull: true},
+			{column: "summary", typ: "TEXT", notNull: true},
+			{column: "attributes_json", typ: "TEXT", notNull: true},
+			{column: "state", typ: "TEXT", notNull: true},
+			{column: "started_at", typ: "TEXT", notNull: true},
+			{column: "finished_at", typ: "TEXT", notNull: false},
+			{column: "duration_ms", typ: "INTEGER", notNull: false},
+			{column: "exit_code", typ: "INTEGER", notNull: false},
+			{column: "error_code", typ: "TEXT", notNull: true},
+			{column: "error_message", typ: "TEXT", notNull: true},
 		},
 	},
 }
