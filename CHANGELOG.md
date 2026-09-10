@@ -10,6 +10,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Added
 - Interactive `workledger tui` workflows for status, worklogs, plans, presets, and trash.
 - Bounded diagnostic history through `workledger activity list` and the global TUI Activity drawer.
+- Recent local-ledger cleanup through `workledger worklogs delete --created-within <duration>`, with auditable dry-run output and recoverable trash archival.
 - Reusable local worklog presets with full CLI and TUI management, selected-day application, editable overrides, dry-run and conflict handling, and local preset-name completion.
 - Conflict-checked local trash restoration through `workledger trash restore` and a new TUI Trash tab with Day/Week and All/Local/Remote views.
 - `--scope local|remote` filtering for trash list and search commands.

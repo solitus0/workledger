@@ -204,6 +204,7 @@ var schemaStatements = []string{
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_worklogs_id ON worklogs(id)`,
 	`CREATE INDEX IF NOT EXISTS idx_worklogs_issue_started ON worklogs(issue_key, started_at_utc)`,
 	`CREATE INDEX IF NOT EXISTS idx_worklogs_started ON worklogs(started_at_utc)`,
+	`CREATE INDEX IF NOT EXISTS idx_worklogs_created_at ON worklogs(created_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_worklogs_interval_end ON worklogs(unixepoch(started_at_utc) + duration_seconds)`,
 	`CREATE INDEX IF NOT EXISTS idx_worklogs_updated_id ON worklogs(updated_at DESC, id)`,
 	`CREATE INDEX IF NOT EXISTS idx_worklogs_issue_updated_duration ON worklogs(issue_key, updated_at DESC, duration_seconds)`,

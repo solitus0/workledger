@@ -6332,6 +6332,69 @@ func TestWorklogsDeleteRejectsHardFlag(t *testing.T) {
 	}
 }
 
+func TestWorklogsDeleteCreatedWithinPreviewExecuteAndValidation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init failed: %+v", result)
+	}
+	add := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:00:00Z", "--duration", "15m", "--description", "Recent local row", "--output", "json")
+	if add.code != 0 {
+		t.Fatalf("add failed: %+v", add)
+	}
+	id := decodeJSONMap(t, []byte(add.stdout))["id"].(string)
+
+	dry := runCLI(t, "worklogs", "delete", "--created-within", "15m", "--dry", "--output", "json")
+	if dry.code != 0 {
+		t.Fatalf("dry delete failed: %+v", dry)
+	}
+	payload := decodeJSONMap(t, []byte(dry.stdout))
+	if payload["matched"].(float64) != 1 {
+		t.Fatalf("unexpected match count: %s", dry.stdout)
+	}
+	filters := payload["filters"].(map[string]any)
+	if filters["raw"].(map[string]any)["created_within"] != "15m" {
+		t.Fatalf("missing raw creation filter: %s", dry.stdout)
+	}
+	effective := filters["effective"].(map[string]any)
+	if effective["created_from"] == nil || effective["created_to"] == nil {
+		t.Fatalf("missing effective creation bounds: %s", dry.stdout)
+	}
+	item := payload["items"].([]any)[0].(map[string]any)
+	if item["id"] != id || item["created_at"] == nil {
+		t.Fatalf("preview is not creation-auditable: %s", dry.stdout)
+	}
+
+	table := runCLI(t, "worklogs", "delete", "--created-within", "15m", "--dry")
+	if table.code != 0 || !strings.Contains(table.stdout, "CREATED") || !strings.Contains(table.stdout, id) {
+		t.Fatalf("unexpected table preview: %+v", table)
+	}
+
+	combined := runCLI(t, "worklogs", "delete", id, "--created-within", "15m", "--output", "json")
+	if combined.code != 2 || !strings.Contains(combined.stdout, "single delete cannot be combined") {
+		t.Fatalf("expected single/batch mode conflict: %+v", combined)
+	}
+	for _, value := range []string{"invalid", "0s", "-1s", "1500ms"} {
+		invalid := runCLI(t, "worklogs", "delete", "--created-within="+value, "--dry", "--output", "json")
+		if invalid.code != 2 {
+			t.Fatalf("created-within %q code=%d stdout=%s stderr=%s", value, invalid.code, invalid.stdout, invalid.stderr)
+		}
+	}
+
+	exec := runCLI(t, "worklogs", "delete", "--created-within", "15m", "--yes", "--output", "json")
+	if exec.code != 0 {
+		t.Fatalf("execute delete failed: %+v", exec)
+	}
+	executed := decodeJSONMap(t, []byte(exec.stdout))
+	if executed["deleted_count"].(float64) != 1 || executed["items"].([]any)[0].(map[string]any)["trash_id"] == "" {
+		t.Fatalf("unexpected execution output: %s", exec.stdout)
+	}
+	zero := runCLI(t, "worklogs", "delete", "--created-within", "15m", "--yes", "--output", "json")
+	if zero.code != 0 || decodeJSONMap(t, []byte(zero.stdout))["deleted_count"].(float64) != 0 {
+		t.Fatalf("zero-match execution failed: %+v", zero)
+	}
+}
+
 func TestOverlapConflictAndBatchDelete(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTC(t)

@@ -1270,6 +1270,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 	var lastMonth bool
 	var from string
 	var to string
+	var createdWithin string
 	var weekOffset int
 	var dry bool
 	var yes bool
@@ -1278,7 +1279,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 		Use:     "delete [id]",
 		Short:   "Delete local worklogs",
 		Args:    cobra.MaximumNArgs(1),
-		Example: "  workledger worklogs delete <id>\n  workledger worklogs delete --from 2026-05-14 --to 2026-05-16 --dry\n  workledger worklogs delete --today --yes",
+		Example: "  workledger worklogs delete <id>\n  workledger worklogs delete --from 2026-05-14 --to 2026-05-16 --dry\n  workledger worklogs delete --created-within 15m --dry\n  workledger worklogs delete --created-within 15m --yes",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, true, "worklogs delete")
@@ -1289,7 +1290,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 
 			weekOffsetSet := cmd.Flags().Changed("week-offset")
 			if len(args) == 1 {
-				if dry || yes || issue != "" || issuePrefix != "" || today || yesterday || monday || tuesday || wednesday || thursday || friday || saturday || sunday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != "" || weekOffsetSet {
+				if dry || yes || issue != "" || issuePrefix != "" || today || yesterday || monday || tuesday || wednesday || thursday || friday || saturday || sunday || currentWeek || lastWeek || currentMonth || lastMonth || from != "" || to != "" || createdWithin != "" || weekOffsetSet {
 					return a.fail(mode, 2, "validation_error", "single delete cannot be combined with batch delete flags", nil)
 				}
 				current, err := service.Show(cmd.Context(), args[0])
@@ -1318,34 +1319,8 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 				return a.fail(mode, 2, "validation_error", "filtered batch delete requires --yes or --dry", nil)
 			}
 
-			result, err := service.DeleteBatch(cmd.Context(), effective, worklogs.ListFilters{
-				Issue:         issue,
-				IssuePrefix:   issuePrefix,
-				Today:         today,
-				Yesterday:     yesterday,
-				Tomorrow:      tomorrow,
-				Monday:        monday,
-				Tuesday:       tuesday,
-				Wednesday:     wednesday,
-				Thursday:      thursday,
-				Friday:        friday,
-				Saturday:      saturday,
-				Sunday:        sunday,
-				CurrentWeek:   currentWeek,
-				LastWeek:      lastWeek,
-				CurrentMonth:  currentMonth,
-				LastMonth:     lastMonth,
-				From:          from,
-				To:            to,
-				WeekOffset:    weekOffset,
-				WeekOffsetSet: weekOffsetSet,
-			}, dry)
-			if err != nil {
-				return a.handleWorklogError(mode, effective, err)
-			}
-
-			if mode == "json" {
-				return a.renderDeleteBatchJSON(worklogs.ListFilters{
+			raw := worklogs.DeleteFilters{
+				ListFilters: worklogs.ListFilters{
 					Issue:         issue,
 					IssuePrefix:   issuePrefix,
 					Today:         today,
@@ -1366,11 +1341,20 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 					To:            to,
 					WeekOffset:    weekOffset,
 					WeekOffsetSet: weekOffsetSet,
-				}, result, effective.Location)
+				},
+				CreatedWithin: createdWithin,
+			}
+			result, err := service.DeleteBatch(cmd.Context(), effective, raw, dry)
+			if err != nil {
+				return a.handleWorklogError(mode, effective, err)
+			}
+
+			if mode == "json" {
+				return a.renderDeleteBatchJSON(raw, result, effective.Location)
 			}
 
 			if dry {
-				return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows(result.Items, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
+				return renderTable(a.stdout, []string{"ID", "ISSUE", "CREATED", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows(result.Items, effective.Location, []string{"id", "issue_key", "created_at", "started_at", "duration_seconds", "description"}, 0))
 			}
 			rows := make([][]string, 0, len(result.Deleted))
 			for _, item := range result.Deleted {
@@ -1382,6 +1366,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
 	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Issue prefix")
+	cmd.Flags().StringVar(&createdWithin, "created-within", "", "Filter by local-ledger creation age (Go duration)")
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
@@ -3679,12 +3664,13 @@ func (a *app) renderContextJSON(raw worklogs.ContextInput, result worklogs.Conte
 	})
 }
 
-func (a *app) renderDeleteBatchJSON(raw worklogs.ListFilters, result worklogs.DeleteBatchResult, location *time.Location) error {
-	filters := selectorFiltersJSON(raw, result.Filters, location)
+func (a *app) renderDeleteBatchJSON(raw worklogs.DeleteFilters, result worklogs.DeleteBatchResult, location *time.Location) error {
+	filters := deleteSelectorFiltersJSON(raw, result.Filters, location)
 	if result.DryRun {
 		items := make([]map[string]any, 0, len(result.Items))
 		for _, item := range result.Items {
 			record := worklogRecordJSON(item, location)
+			record["created_at"] = item.CreatedAt.UTC().Format(time.RFC3339)
 			record["delete_preview"] = true
 			items = append(items, record)
 		}
@@ -3706,6 +3692,18 @@ func (a *app) renderDeleteBatchJSON(raw worklogs.ListFilters, result worklogs.De
 		"deleted_count": len(result.Deleted),
 		"items":         items,
 	})
+}
+
+func deleteSelectorFiltersJSON(raw worklogs.DeleteFilters, effective worklogs.EffectiveDeleteFilters, location *time.Location) map[string]any {
+	filters := selectorFiltersJSON(raw.ListFilters, effective.EffectiveFilters, location)
+	filters["raw"].(map[string]any)["created_within"] = emptyToNil(raw.CreatedWithin)
+	if effective.CreatedFrom != nil {
+		filters["effective"].(map[string]any)["created_from"] = effective.CreatedFrom.UTC().Format(time.RFC3339)
+	}
+	if effective.CreatedTo != nil {
+		filters["effective"].(map[string]any)["created_to"] = effective.CreatedTo.UTC().Format(time.RFC3339)
+	}
+	return filters
 }
 
 func selectorFiltersJSON(raw worklogs.ListFilters, effective worklogs.EffectiveFilters, location *time.Location) map[string]any {
@@ -4032,6 +4030,7 @@ func worklogTableRecord(item worklogs.LocalWorklog, location *time.Location) map
 	return map[string]any{
 		"id":               item.ID,
 		"issue_key":        item.IssueKey,
+		"created_at":       item.CreatedAt.UTC().Format(time.RFC3339),
 		"started_at":       localizedWorklogWindow(item.StartedAtUTC, item.DurationSeconds, location),
 		"started_at_utc":   item.StartedAtUTC.UTC().Format(time.RFC3339),
 		"duration_seconds": tableDurationMinutes(item.DurationSeconds),

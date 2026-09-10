@@ -110,6 +110,11 @@ type ListFilters struct {
 	Fields        []string
 }
 
+type DeleteFilters struct {
+	ListFilters
+	CreatedWithin string
+}
+
 type SearchInput struct {
 	Query string
 	ListFilters
@@ -122,6 +127,12 @@ type EffectiveFilters struct {
 	To          *time.Time
 	Timezone    string
 	Fields      []string
+}
+
+type EffectiveDeleteFilters struct {
+	EffectiveFilters
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
 }
 
 type AddInput struct {
@@ -180,7 +191,7 @@ type PatchInput struct {
 }
 
 type DeleteBatchResult struct {
-	Filters EffectiveFilters
+	Filters EffectiveDeleteFilters
 	Items   []LocalWorklog
 	Deleted []DeleteMapping
 	DryRun  bool
@@ -614,16 +625,17 @@ func (s *Service) Delete(ctx context.Context, id string, expectedRevision int64)
 	}, nil
 }
 
-func (s *Service) DeleteBatch(ctx context.Context, cfg config.EffectiveConfig, filters ListFilters, dryRun bool) (DeleteBatchResult, error) {
-	effective, err := normalizeListFiltersAt(cfg, filters, false, s.now)
+func (s *Service) DeleteBatch(ctx context.Context, cfg config.EffectiveConfig, filters DeleteFilters, dryRun bool) (DeleteBatchResult, error) {
+	operationNow := s.now().UTC().Truncate(time.Second)
+	effective, err := normalizeDeleteFiltersAt(cfg, filters, func() time.Time { return operationNow })
 	if err != nil {
 		return DeleteBatchResult{}, err
 	}
-	if effective.IssueKey == nil && effective.From == nil && effective.To == nil {
+	if !hasEffectiveDeleteSelector(effective) {
 		return DeleteBatchResult{}, ValidationError{Issues: []ValidationIssue{{Field: "delete", Message: "batch delete requires at least one selector"}}}
 	}
 
-	items, err := s.listActive(ctx, effective)
+	items, err := s.listActiveForDeleteWithQueryer(ctx, effective, s.store.DB())
 	if err != nil {
 		return DeleteBatchResult{}, err
 	}
@@ -642,7 +654,7 @@ func (s *Service) DeleteBatch(ctx context.Context, cfg config.EffectiveConfig, f
 		return DeleteBatchResult{}, err
 	}
 
-	result.Deleted, err = archiveAndDeleteWorklogsTx(ctx, tx, items, s.now().UTC())
+	result.Deleted, err = archiveAndDeleteWorklogsTx(ctx, tx, items, operationNow)
 	if err != nil {
 		_ = tx.Rollback()
 		return DeleteBatchResult{}, err
@@ -699,7 +711,37 @@ func (s *Service) DeleteBatchExpected(ctx context.Context, cfg config.EffectiveC
 	if err := tx.Commit(); err != nil {
 		return DeleteBatchResult{}, err
 	}
-	return DeleteBatchResult{Filters: effective, Items: items, Deleted: deleted}, nil
+	return DeleteBatchResult{Filters: EffectiveDeleteFilters{EffectiveFilters: effective}, Items: items, Deleted: deleted}, nil
+}
+
+func normalizeDeleteFiltersAt(cfg config.EffectiveConfig, filters DeleteFilters, now func() time.Time) (EffectiveDeleteFilters, error) {
+	capturedNow := now().UTC().Truncate(time.Second)
+	effective, err := normalizeListFiltersAt(cfg, filters.ListFilters, false, func() time.Time { return capturedNow })
+	if err != nil {
+		return EffectiveDeleteFilters{}, err
+	}
+	result := EffectiveDeleteFilters{EffectiveFilters: effective}
+	if filters.CreatedWithin == "" {
+		return result, nil
+	}
+	duration, err := time.ParseDuration(filters.CreatedWithin)
+	if err != nil {
+		return EffectiveDeleteFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "created_within", Message: "must be a valid Go duration"}}}
+	}
+	if duration <= 0 {
+		return EffectiveDeleteFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "created_within", Message: "must be positive"}}}
+	}
+	if duration%time.Second != 0 {
+		return EffectiveDeleteFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "created_within", Message: "must normalize to whole seconds"}}}
+	}
+	createdFrom := capturedNow.Add(-duration)
+	result.CreatedFrom = &createdFrom
+	result.CreatedTo = &capturedNow
+	return result, nil
+}
+
+func hasEffectiveDeleteSelector(filters EffectiveDeleteFilters) bool {
+	return filters.IssueKey != nil || filters.IssuePrefix != nil || filters.From != nil || filters.To != nil || filters.CreatedFrom != nil
 }
 
 func matchesDeleteExpectations(items []LocalWorklog, expectedByID map[string]int64) bool {
@@ -1004,6 +1046,45 @@ func (s *Service) listActiveWithQueryer(ctx context.Context, filters EffectiveFi
 		items = append(items, item)
 	}
 
+	return items, rows.Err()
+}
+
+func (s *Service) listActiveForDeleteWithQueryer(ctx context.Context, filters EffectiveDeleteFilters, queryer sqlQueryer) ([]LocalWorklog, error) {
+	query := `SELECT id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision FROM worklogs`
+	args := make([]any, 0)
+	where := buildWhereClause(filters.EffectiveFilters, false, &args)
+	conditions := make([]string, 0, 2)
+	if filters.CreatedFrom != nil {
+		conditions = append(conditions, "created_at >= ?")
+		args = append(args, sqlitestore.RFC3339UTC(filters.CreatedFrom.UTC()))
+	}
+	if filters.CreatedTo != nil {
+		conditions = append(conditions, "created_at <= ?")
+		args = append(args, sqlitestore.RFC3339UTC(filters.CreatedTo.UTC()))
+	}
+	if len(conditions) > 0 {
+		if where == "" {
+			where = " WHERE " + strings.Join(conditions, " AND ")
+		} else {
+			where += " AND " + strings.Join(conditions, " AND ")
+		}
+	}
+	query += where + ` ORDER BY started_at_utc ASC, id ASC`
+
+	rows, err := queryer.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]LocalWorklog, 0)
+	for rows.Next() {
+		item, err := scanWorklog(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
 	return items, rows.Err()
 }
 

@@ -54,6 +54,7 @@ Placement rule:
 - [ ] NFR-030a: Date-window totals, context, automatic-placement, and candidate-based add, update, apply, or restore conflict reads shall query only worklogs whose intervals can overlap the requested or candidate window rather than loading the full active ledger.
 - [ ] NFR-030b: Bounded saved-plan listing shall select the requested plan page before aggregating its items and delivery-attempt history.
 - [ ] NFR-030c: Multi-row local persistence shall reuse prepared statements; set-based metadata and trash-restore lookups shall use bounded parameter batches; and batch trash restoration shall not issue one occupied-ID query per row.
+- [ ] NFR-030d: SQLite shall define an index on `worklogs(created_at)` for creation-time batch deletion.
 - [ ] NFR-031: Scope payload rows and inspection summaries shall be stored on `saved_plan_items`.
 - [ ] NFR-032: Scope payload rows and inspection summaries shall not be split into extra child tables in the first implementation.
 - [ ] NFR-033: Mutable adapter instance records shall not be persisted in SQLite.
@@ -263,6 +264,7 @@ Placement rule:
 
 ## Delete Semantics
 - [ ] NFR-208: Default local delete shall archive the complete active row and source metadata with reason `local_user_deleted` before removing it from the active `worklogs` set in the same transaction.
+- [ ] NFR-208a: `worklogs delete --created-within` shall require a positive Go duration that normalizes to whole seconds and shall capture the upper creation-time bound exactly once per invocation.
 - [ ] NFR-209: Local trash shall provide conflict-checked restoration; successful restoration shall consume its archive row.
 - [ ] NFR-210: `worklogs update <id> --issue <new-key>` shall not persist delete intent for the previous issue allocation.
 - [ ] NFR-211: A later pull may re-import a remotely existing row that was previously deleted locally.
@@ -324,6 +326,8 @@ Placement rule:
 - [ ] NFR-270: Single-delete JSON output shall use `id`, `trash_id`, `issue_key`, and `deleted_at`.
 - [ ] NFR-271: Filtered batch delete dry-run JSON output shall use `filters`, `dry_run`, `matched`, and `items`.
 - [ ] NFR-272: Executed filtered batch delete JSON output shall use `filters`, `dry_run`, `deleted_count`, and ordered `{id, trash_id}` `items`.
+- [ ] NFR-272aa: Creation-filtered batch-delete JSON shall expose raw `created_within`, effective UTC `created_from` and `created_to`, and UTC `created_at` on every preview item.
+- [ ] NFR-272ab: Creation-filtered batch-delete table previews shall include a `CREATED` column in UTC.
 - [ ] NFR-272a: Single trash restore JSON output shall use `trash_id` and `record`.
 - [ ] NFR-272b: Filtered trash restore JSON output shall use `filters`, `dry_run`, `matched_count`, `restored_count`, and ordered `{trash_id, record}` items.
 - [ ] NFR-275: `workledger status --output json` shall use `{"items":[...]}`.

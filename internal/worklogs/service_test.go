@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -175,6 +176,124 @@ func TestDeleteBatchExpectedRejectsStaleRevisionWithoutPartialDelete(t *testing.
 	remaining, _, err := service.List(ctx, cfg, filters)
 	if err != nil || len(remaining) != 2 {
 		t.Fatalf("revision conflict partially deleted rows: count=%d err=%v", len(remaining), err)
+	}
+}
+
+func TestDeleteBatchCreatedWithinUsesInclusiveCapturedWindow(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	ctx := context.Background()
+	capturedNow := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		createdAt time.Time
+		startedAt string
+		want      bool
+	}{
+		{createdAt: capturedNow.Add(-15 * time.Minute), startedAt: "2026-05-21T06:00:00Z", want: true},
+		{createdAt: capturedNow.Add(-10 * time.Minute), startedAt: "2026-05-21T07:00:00Z", want: true},
+		{createdAt: capturedNow, startedAt: "2026-05-21T08:00:00Z", want: true},
+		{createdAt: capturedNow.Add(-15*time.Minute - time.Second), startedAt: "2026-05-21T09:00:00Z"},
+		{createdAt: capturedNow.Add(time.Second), startedAt: "2026-05-21T10:00:00Z"},
+	}
+	for index, test := range tests {
+		createdAt := test.createdAt
+		service.now = func() time.Time { return createdAt }
+		mustAddWorklog(t, service, cfg, AddInput{
+			IssueKey: "APP-" + strconv.Itoa(index+1), StartedUTC: test.startedAt, Duration: "15m", Description: "seed",
+		})
+	}
+
+	nowCalls := 0
+	service.now = func() time.Time {
+		nowCalls++
+		return capturedNow
+	}
+	result, err := service.DeleteBatch(ctx, cfg, DeleteFilters{CreatedWithin: "15m"}, true)
+	if err != nil {
+		t.Fatalf("DeleteBatch failed: %v", err)
+	}
+	if nowCalls != 1 {
+		t.Fatalf("now called %d times, want exactly once", nowCalls)
+	}
+	if len(result.Items) != 3 {
+		t.Fatalf("matched %d items, want 3", len(result.Items))
+	}
+	if result.Filters.CreatedFrom == nil || !result.Filters.CreatedFrom.Equal(capturedNow.Add(-15*time.Minute)) || result.Filters.CreatedTo == nil || !result.Filters.CreatedTo.Equal(capturedNow) {
+		t.Fatalf("unexpected effective creation window: %#v", result.Filters)
+	}
+}
+
+func TestDeleteBatchCreatedWithinCombinesWithExistingSelectors(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	cfg := config.EffectiveConfig{Location: time.UTC}
+	ctx := context.Background()
+	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now.Add(-5 * time.Minute) }
+	mustAddWorklog(t, service, cfg, AddInput{IssueKey: "APP-1", StartedUTC: "2026-05-21T09:00:00Z", Duration: "15m", Description: "match"})
+	mustAddWorklog(t, service, cfg, AddInput{IssueKey: "APP-2", StartedUTC: "2026-05-21T10:00:00Z", Duration: "15m", Description: "wrong issue"})
+	mustAddWorklog(t, service, cfg, AddInput{IssueKey: "APP-1", StartedUTC: "2026-05-22T09:00:00Z", Duration: "15m", Description: "wrong date"})
+	service.now = func() time.Time { return now }
+
+	result, err := service.DeleteBatch(ctx, cfg, DeleteFilters{
+		ListFilters:   ListFilters{Issue: "APP-1", From: "2026-05-21", To: "2026-05-21"},
+		CreatedWithin: "15m",
+	}, true)
+	if err != nil {
+		t.Fatalf("DeleteBatch failed: %v", err)
+	}
+	if len(result.Items) != 1 || result.Items[0].IssueKey != "APP-1" || result.Items[0].Description != "match" {
+		t.Fatalf("unexpected combined-filter result: %#v", result.Items)
+	}
+}
+
+func TestDeleteBatchCreatedWithinDeletesRecentlyPulledStyleRow(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+	createdAt := sqlitestore.RFC3339UTC(now.Add(-time.Minute))
+	if _, err := store.DB().Exec(`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		"pulled-row", "APP-1", "2026-04-01T09:00:00Z", 900, "recently pulled", createdAt, createdAt, 1); err != nil {
+		t.Fatalf("seed pulled-style row: %v", err)
+	}
+	service.now = func() time.Time { return now }
+
+	result, err := service.DeleteBatch(context.Background(), config.EffectiveConfig{Location: time.UTC}, DeleteFilters{CreatedWithin: "15m"}, false)
+	if err != nil {
+		t.Fatalf("DeleteBatch failed: %v", err)
+	}
+	if len(result.Deleted) != 1 || result.Deleted[0].ID != "pulled-row" {
+		t.Fatalf("unexpected deletion result: %#v", result.Deleted)
+	}
+	var activeCount, trashCount int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM worklogs WHERE id = 'pulled-row'`).Scan(&activeCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM trashed_worklogs WHERE source_worklog_id = 'pulled-row' AND source_created_at = ?`, createdAt).Scan(&trashCount); err != nil {
+		t.Fatal(err)
+	}
+	if activeCount != 0 || trashCount != 1 {
+		t.Fatalf("pulled row active=%d trash=%d", activeCount, trashCount)
+	}
+}
+
+func TestDeleteBatchCreatedWithinValidation(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	cfg := config.EffectiveConfig{Location: time.UTC}
+
+	for _, value := range []string{"invalid", "0s", "-1s", "1500ms"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := service.DeleteBatch(context.Background(), cfg, DeleteFilters{CreatedWithin: value}, true)
+			if !errors.Is(err, ErrValidation) {
+				t.Fatalf("DeleteBatch(%q) error = %v, want validation error", value, err)
+			}
+		})
+	}
+	if _, err := service.DeleteBatch(context.Background(), cfg, DeleteFilters{}, true); !errors.Is(err, ErrValidation) {
+		t.Fatalf("selectorless DeleteBatch error = %v, want validation error", err)
 	}
 }
 

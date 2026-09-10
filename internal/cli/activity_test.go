@@ -68,6 +68,36 @@ func TestCLIActivityRecordsValidationFailureAndListExcludesItself(t *testing.T) 
 	}
 }
 
+func TestCLIActivityRecordsCreatedWithinSelector(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init: %+v", result)
+	}
+	deleted := runCLI(t, "worklogs", "delete", "--created-within", "15m", "--dry", "--output", "json")
+	if deleted.code != 0 {
+		t.Fatalf("delete preview: %+v", deleted)
+	}
+	listed := runCLI(t, "activity", "list", "--source", "cli", "--output", "json")
+	if listed.code != 0 {
+		t.Fatalf("activity list: %+v", listed)
+	}
+	var payload struct {
+		Items []struct {
+			Operation  string            `json:"operation"`
+			Attributes map[string]string `json:"attributes"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(listed.stdout), &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range payload.Items {
+		if item.Operation == "worklogs.delete" && item.Attributes["created-within"] == "15m" && item.Attributes["dry"] == "true" {
+			return
+		}
+	}
+	t.Fatalf("created-within activity missing: %+v", payload.Items)
+}
+
 func TestCLIActivityUnavailableStoreDoesNotChangeVersionOutput(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	result := runCLI(t, "version", "--output", "json")

@@ -552,6 +552,7 @@ func TestBootstrapCreatesAndUsesQueryPerformanceIndexes(t *testing.T) {
 		args  []any
 	}{
 		{name: "interval end", index: "idx_worklogs_interval_end", query: `SELECT id FROM worklogs WHERE unixepoch(started_at_utc) + duration_seconds > unixepoch(?)`, args: []any{"2026-05-01T00:00:00Z"}},
+		{name: "worklog creation window", index: "idx_worklogs_created_at", query: `SELECT id FROM worklogs WHERE created_at >= ? AND created_at <= ?`, args: []any{"2026-05-01T00:00:00Z", "2026-05-01T00:15:00Z"}},
 		{name: "worklog completion order", index: "idx_worklogs_updated_id", query: `SELECT id FROM worklogs ORDER BY updated_at DESC, id LIMIT ?`, args: []any{100}},
 		{name: "issue recency", index: "idx_worklogs_issue_updated_duration", query: `SELECT issue_key, MAX(updated_at) FROM worklogs WHERE issue_key >= ? AND issue_key < ? GROUP BY issue_key`, args: []any{"APP", "APP\U0010FFFF"}},
 		{name: "issue duration total", index: "idx_worklogs_issue_updated_duration", query: `SELECT COALESCE(SUM(duration_seconds), 0) FROM worklogs WHERE issue_key = ?`, args: []any{"APP-1"}},
@@ -588,6 +589,34 @@ func TestBootstrapCreatesAndUsesQueryPerformanceIndexes(t *testing.T) {
 				t.Fatalf("query plan did not use %s: %v", test.index, details)
 			}
 		})
+	}
+}
+
+func TestBootstrapAddsWorklogCreatedAtIndexToExistingStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+	store, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatalf("initial bootstrap: %v", err)
+	}
+	if _, err := store.DB().Exec(`DROP INDEX idx_worklogs_created_at`); err != nil {
+		_ = store.Close()
+		t.Fatalf("remove creation index: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close initial store: %v", err)
+	}
+
+	reopened, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatalf("reopen bootstrap: %v", err)
+	}
+	defer reopened.Close()
+	var count int
+	if err := reopened.DB().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_worklogs_created_at'`).Scan(&count); err != nil {
+		t.Fatalf("inspect creation index: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("creation index count = %d, want 1", count)
 	}
 }
 

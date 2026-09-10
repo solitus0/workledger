@@ -152,7 +152,7 @@ func activityOperation(root *cobra.Command, args []string) (string, bool) {
 }
 
 var safeValueActivityFlags = map[string]struct{}{
-	"adapter": {}, "duration": {}, "field": {}, "from": {}, "instance": {}, "issue": {}, "issue-prefix": {}, "limit": {}, "only": {}, "route-profile": {}, "scope": {}, "source": {}, "state": {}, "to": {}, "week-offset": {},
+	"adapter": {}, "created-within": {}, "duration": {}, "field": {}, "from": {}, "instance": {}, "issue": {}, "issue-prefix": {}, "limit": {}, "only": {}, "route-profile": {}, "scope": {}, "source": {}, "state": {}, "to": {}, "week-offset": {},
 }
 
 var safeBoolActivityFlags = map[string]struct{}{

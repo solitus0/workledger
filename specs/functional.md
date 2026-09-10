@@ -262,6 +262,11 @@ Placement rule:
 - [ ] FUNC-187: Filtered batch delete shall support `--dry` to preview matched active worklogs without deleting them.
 - [ ] FUNC-188: Batch-delete dry-run shall return the full matched active records together with the matched count.
 - [ ] FUNC-189: Executed filtered batch delete shall return ordered `{id, trash_id}` mappings and deleted count rather than full deleted records.
+- [ ] FUNC-189a: CLI filtered batch delete shall accept `--created-within <GoDuration>` as a delete-specific selector over local-ledger `created_at`.
+- [ ] FUNC-189b: `--created-within` shall select active worklogs created during the inclusive interval from captured command time minus the duration through captured command time.
+- [ ] FUNC-189c: `--created-within` shall be sufficient by itself for batch-delete mode and shall combine with issue and work-start selectors using AND semantics.
+- [ ] FUNC-189d: `--created-within` shall remain CLI-only and shall not add a TUI creation-time delete control.
+- [ ] FUNC-189e: Worklogs inserted by an applied reconciliation pull shall be eligible according to the time they entered the local ledger.
 
 ## Worklog Context
 - [ ] FUNC-204: `workledger worklogs context` shall return read-only planning snapshots over canonical local worklogs.

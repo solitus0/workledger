@@ -144,6 +144,15 @@ Inspect the current local day:
 workledger worklogs context --today
 ```
 
+Preview and delete worklogs that entered the local ledger recently:
+
+```sh
+workledger worklogs delete --created-within 15m --dry
+workledger worklogs delete --created-within 15m --yes
+```
+
+`--created-within` uses positive whole-second Go durations such as `15m`, `2h`, or `90s`. It filters the local `created_at` timestamp rather than the worklog start time. Worklogs inserted by a reconciliation pull receive a new local creation timestamp, so a recent pull can also match this selector. Batch deletion remains recoverable through local trash; use the dry-run before execution to review each matched row and its creation time.
+
 Compare local time with a configured adapter:
 
 ```sh
