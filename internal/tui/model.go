@@ -1165,9 +1165,6 @@ func (m model) submitFormCmd() tea.Cmd {
 		if !form.editing {
 			refresh := refreshScope(0)
 			if form.sourcePresetID != "" {
-				if err := ws.presets.CheckRevision(ctx, form.sourcePresetID, form.sourcePresetRevision); err != nil {
-					return mutationResultMsg{kind: "preset-source", err: err}
-				}
 				refresh = refreshPresets
 			}
 			input := worklogs.AddInput{}
@@ -1180,9 +1177,15 @@ func (m model) submitFormCmd() tea.Cmd {
 				input = automaticAddInput(m.selectedDate, form.placement, form.overtime, form.noLunch, issue, duration, description)
 				input.ExpectedPlacement = placementExpectations(form.previewRecords)
 			}
-			result, err := ws.mutations.Add(ctx, ws.cfg, input)
-			if err == nil && form.sourcePresetID != "" {
-				_ = ws.presets.MarkUsed(ctx, form.sourcePresetID)
+			var result worklogs.AddResult
+			var err error
+			if form.sourcePresetID != "" {
+				result, err = ws.presets.ApplyDraft(ctx, ws.cfg, form.sourcePresetID, form.sourcePresetRevision, input)
+				if errors.Is(err, presets.ErrConflict) {
+					return mutationResultMsg{kind: "preset-source", err: err}
+				}
+			} else {
+				result, err = ws.mutations.Add(ctx, ws.cfg, input)
 			}
 			return mutationResultMsg{kind: "add", records: result.Records, refresh: refresh, err: err}
 		}

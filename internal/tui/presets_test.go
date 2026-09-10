@@ -50,6 +50,13 @@ func TestPresetTabAndPickerPopulateEditableManualAdd(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("preset-backed form did not schedule suggestions and preview")
 	}
+	result := m.submitFormCmd()().(mutationResultMsg)
+	if result.err != nil || len(presetService.appliedDrafts) != 1 {
+		t.Fatalf("preset-backed submit result=%#v drafts=%#v", result, presetService.appliedDrafts)
+	}
+	if mutations := ws.mutations.(*fakeWorklogMutations).state; len(mutations.addInputs) != 0 {
+		t.Fatalf("preset-backed submit bypassed atomic preset service: %#v", mutations.addInputs)
+	}
 }
 
 func TestPresetPickerShowsShortcutsOnlyInActionBar(t *testing.T) {

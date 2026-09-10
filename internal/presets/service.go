@@ -145,7 +145,22 @@ func (s *Service) Show(ctx context.Context, name string) (Preset, error) {
 }
 
 func (s *Service) show(ctx context.Context, name string) (Preset, error) {
-	row := s.store.DB().QueryRowContext(ctx, `SELECT id, name, issue_key, start_time, duration_seconds, description, created_at, updated_at, last_used_at, revision FROM worklog_presets WHERE name = ?`, name)
+	return showPresetByName(ctx, s.store.DB(), name)
+}
+
+type presetQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func showPresetByName(ctx context.Context, queryer presetQueryer, name string) (Preset, error) {
+	return scanExistingPreset(queryer.QueryRowContext(ctx, `SELECT id, name, issue_key, start_time, duration_seconds, description, created_at, updated_at, last_used_at, revision FROM worklog_presets WHERE name = ?`, name))
+}
+
+func showPresetByID(ctx context.Context, queryer presetQueryer, id string) (Preset, error) {
+	return scanExistingPreset(queryer.QueryRowContext(ctx, `SELECT id, name, issue_key, start_time, duration_seconds, description, created_at, updated_at, last_used_at, revision FROM worklog_presets WHERE id = ?`, id))
+}
+
+func scanExistingPreset(row *sql.Row) (Preset, error) {
 	item, err := scanPreset(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Preset{}, ErrNotFound
@@ -227,13 +242,54 @@ func (s *Service) Delete(ctx context.Context, name string, expectedRevision int6
 }
 
 func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, name string, input ApplyInput) (worklogs.AddResult, error) {
-	preset, err := s.show(ctx, strings.TrimSpace(name))
-	if err != nil {
-		return worklogs.AddResult{}, err
+	name = strings.TrimSpace(name)
+	if input.DryRun {
+		preset, err := s.show(ctx, name)
+		if err != nil {
+			return worklogs.AddResult{}, err
+		}
+		add, err := s.presetAddInput(cfg, preset, input)
+		if err != nil {
+			return worklogs.AddResult{}, err
+		}
+		return s.worklogs.PreviewAdd(ctx, cfg, add)
 	}
+
+	return s.applyImmediate(ctx, func(conn *sql.Conn) (worklogs.AddResult, error) {
+		preset, err := showPresetByName(ctx, conn, name)
+		if err != nil {
+			return worklogs.AddResult{}, err
+		}
+		add, err := s.presetAddInput(cfg, preset, input)
+		if err != nil {
+			return worklogs.AddResult{}, err
+		}
+		return s.applyWorklogTx(ctx, cfg, conn, preset, add)
+	})
+}
+
+// ApplyDraft atomically creates a worklog from a TUI preset draft and records
+// preset recency only when the selected preset revision is still current.
+func (s *Service) ApplyDraft(ctx context.Context, cfg config.EffectiveConfig, presetID string, expectedRevision int64, add worklogs.AddInput) (worklogs.AddResult, error) {
+	if presetID == "" || expectedRevision <= 0 {
+		return worklogs.AddResult{}, ErrConflict
+	}
+	return s.applyImmediate(ctx, func(conn *sql.Conn) (worklogs.AddResult, error) {
+		preset, err := showPresetByID(ctx, conn, presetID)
+		if errors.Is(err, ErrNotFound) || (err == nil && preset.Revision != expectedRevision) {
+			return worklogs.AddResult{}, ErrConflict
+		}
+		if err != nil {
+			return worklogs.AddResult{}, err
+		}
+		return s.applyWorklogTx(ctx, cfg, conn, preset, add)
+	})
+}
+
+func (s *Service) presetAddInput(cfg config.EffectiveConfig, preset Preset, input ApplyInput) (worklogs.AddInput, error) {
 	date, err := worklogs.ResolveLocalDateAt(cfg, strings.TrimSpace(input.Date), s.now)
 	if err != nil {
-		return worklogs.AddResult{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: err.Error()}}}
+		return worklogs.AddInput{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: err.Error()}}}
 	}
 	issue, start, duration, description := preset.IssueKey, preset.StartTime, fmt.Sprintf("%ds", preset.DurationSeconds), preset.Description
 	if input.IssueKey != nil {
@@ -249,34 +305,54 @@ func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, name st
 		description = *input.Description
 	}
 	if !clockPattern.MatchString(start) {
-		return worklogs.AddResult{}, ValidationError{Issues: []ValidationIssue{{Field: "start", Message: "start must use HH:MM, e.g. 09:00"}}}
+		return worklogs.AddInput{}, ValidationError{Issues: []ValidationIssue{{Field: "start", Message: "start must use HH:MM, e.g. 09:00"}}}
 	}
-	add := worklogs.AddInput{IssueKey: issue, Started: date.Format("2006-01-02") + "T" + start, Duration: duration, Description: description, Force: input.Force}
-	if input.DryRun {
-		return s.worklogs.PreviewAdd(ctx, cfg, add)
-	}
-	result, err := s.worklogs.Add(ctx, cfg, add)
+	return worklogs.AddInput{IssueKey: issue, Started: date.Format("2006-01-02") + "T" + start, Duration: duration, Description: description, Force: input.Force}, nil
+}
+
+func (s *Service) applyImmediate(ctx context.Context, apply func(*sql.Conn) (worklogs.AddResult, error)) (worklogs.AddResult, error) {
+	conn, err := s.store.DB().Conn(ctx)
 	if err != nil {
 		return worklogs.AddResult{}, err
 	}
-	_, _ = s.store.DB().ExecContext(ctx, `UPDATE worklog_presets SET last_used_at = ? WHERE id = ?`, sqlitestore.RFC3339UTC(s.now().UTC()), preset.ID)
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return worklogs.AddResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
+		}
+	}()
+	result, err := apply(conn)
+	if err != nil {
+		return worklogs.AddResult{}, err
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return worklogs.AddResult{}, err
+	}
+	committed = true
 	return result, nil
 }
 
-func (s *Service) MarkUsed(ctx context.Context, id string) error {
-	_, err := s.store.DB().ExecContext(ctx, `UPDATE worklog_presets SET last_used_at = ? WHERE id = ?`, sqlitestore.RFC3339UTC(s.now().UTC()), id)
-	return err
-}
-
-func (s *Service) CheckRevision(ctx context.Context, id string, revision int64) error {
-	var count int
-	if err := s.store.DB().QueryRowContext(ctx, `SELECT COUNT(1) FROM worklog_presets WHERE id = ? AND revision = ?`, id, revision).Scan(&count); err != nil {
-		return err
+func (s *Service) applyWorklogTx(ctx context.Context, cfg config.EffectiveConfig, conn *sql.Conn, preset Preset, add worklogs.AddInput) (worklogs.AddResult, error) {
+	result, err := s.worklogs.AddInImmediateTransaction(ctx, cfg, add, conn)
+	if err != nil {
+		return worklogs.AddResult{}, err
 	}
-	if count == 0 {
-		return ErrConflict
+	updated, err := conn.ExecContext(ctx, `UPDATE worklog_presets SET last_used_at = ? WHERE id = ? AND revision = ?`, sqlitestore.RFC3339UTC(s.now().UTC()), preset.ID, preset.Revision)
+	if err != nil {
+		return worklogs.AddResult{}, err
 	}
-	return nil
+	affected, err := updated.RowsAffected()
+	if err != nil {
+		return worklogs.AddResult{}, err
+	}
+	if affected != 1 {
+		return worklogs.AddResult{}, ErrConflict
+	}
+	return result, nil
 }
 
 func (s *Service) normalize(cfg config.EffectiveConfig, name, issue, start, duration, description string) (string, string, string, int, string, error) {

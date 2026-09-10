@@ -50,8 +50,7 @@ type presetService interface {
 	Create(context.Context, config.EffectiveConfig, presets.CreateInput) (presets.Preset, error)
 	Update(context.Context, config.EffectiveConfig, string, presets.PatchInput) (presets.Preset, error)
 	Delete(context.Context, string, int64) (presets.DeleteResult, error)
-	MarkUsed(context.Context, string) error
-	CheckRevision(context.Context, string, int64) error
+	ApplyDraft(context.Context, config.EffectiveConfig, string, int64, worklogs.AddInput) (worklogs.AddResult, error)
 }
 
 type activityService interface {

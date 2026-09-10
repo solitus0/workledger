@@ -141,4 +141,55 @@ func TestPresetApplyRejectsInvalidDateAndDSTTimes(t *testing.T) {
 	}
 }
 
+func TestPresetApplyRollsBackWorklogWhenRecencyUpdateFails(t *testing.T) {
+	store, service, cfg := newTestService(t)
+	defer store.Close()
+	ctx := context.Background()
+	if _, err := service.Create(ctx, cfg, validInput("daily-standup")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DB().Exec(`CREATE TRIGGER reject_preset_recency BEFORE UPDATE OF last_used_at ON worklog_presets BEGIN SELECT RAISE(ABORT, 'recency rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.Apply(ctx, cfg, "daily-standup", ApplyInput{Date: "2026-09-07"}); err == nil {
+		t.Fatal("expected recency update failure")
+	}
+	var worklogCount int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM worklogs`).Scan(&worklogCount); err != nil {
+		t.Fatal(err)
+	}
+	if worklogCount != 0 {
+		t.Fatalf("worklog committed without preset recency: count=%d", worklogCount)
+	}
+}
+
+func TestPresetApplyDraftRejectsStaleRevisionBeforeCreatingWorklog(t *testing.T) {
+	store, service, cfg := newTestService(t)
+	defer store.Close()
+	ctx := context.Background()
+	preset, err := service.Create(ctx, cfg, validInput("daily-standup"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	description := "Changed"
+	if _, err := service.Update(ctx, cfg, preset.Name, PatchInput{Description: &description, ExpectedRevision: preset.Revision}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.ApplyDraft(ctx, cfg, preset.ID, preset.Revision, worklogs.AddInput{
+		IssueKey: "APP-1", Started: "2026-09-07T09:00", Duration: "15m", Description: "Daily standup",
+	})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale draft error = %v", err)
+	}
+	var worklogCount int
+	if err := store.DB().QueryRow(`SELECT COUNT(*) FROM worklogs`).Scan(&worklogCount); err != nil {
+		t.Fatal(err)
+	}
+	if worklogCount != 0 {
+		t.Fatalf("stale preset created worklogs: count=%d", worklogCount)
+	}
+}
+
 func ptr(value string) *string { return &value }

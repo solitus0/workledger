@@ -212,7 +212,7 @@ Placement rule:
 - [ ] FUNC-151e: Preset application shall accept one-off `--issue`, `--start`, `--duration`, and `--description` overrides without mutating the preset.
 - [ ] FUNC-151f: Preset application shall support `--dry` and `--force` with the same preview, duplicate, and overlap semantics as single-record `worklogs add`.
 - [ ] FUNC-151g: Preset `--date` shall accept `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun`, and signed day offsets in `+Nd` or `-Nd` form.
-- [ ] FUNC-151h: Successful non-dry preset application shall update preset recency without changing its content revision; dry application shall remain read-only.
+- [ ] FUNC-151h: Non-dry preset application shall atomically create the worklog and update preset recency without changing the preset content revision; a stale selected preset shall create neither change, and dry application shall remain read-only.
 - [ ] FUNC-151i: Renaming or deleting a preset shall not mutate worklogs previously created from it.
 - [ ] FUNC-151j: Shell completion shall suggest bounded, recency-ordered local preset slugs for preset show, update, delete, and apply commands.
 

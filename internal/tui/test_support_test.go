@@ -98,12 +98,12 @@ func (f *fakeActivities) List(context.Context, activity.ListFilters) ([]activity
 }
 
 type fakePresets struct {
-	items      []presets.Preset
-	created    []presets.CreateInput
-	updated    []presets.PatchInput
-	deleted    []string
-	markedUsed []string
-	err        error
+	items         []presets.Preset
+	created       []presets.CreateInput
+	updated       []presets.PatchInput
+	deleted       []string
+	appliedDrafts []worklogs.AddInput
+	err           error
 }
 
 func (f *fakePresets) List(context.Context, string, int) ([]presets.Preset, error) {
@@ -121,11 +121,10 @@ func (f *fakePresets) Delete(_ context.Context, name string, _ int64) (presets.D
 	f.deleted = append(f.deleted, name)
 	return presets.DeleteResult{Name: name}, f.err
 }
-func (f *fakePresets) MarkUsed(_ context.Context, id string) error {
-	f.markedUsed = append(f.markedUsed, id)
-	return f.err
+func (f *fakePresets) ApplyDraft(_ context.Context, _ config.EffectiveConfig, _ string, _ int64, input worklogs.AddInput) (worklogs.AddResult, error) {
+	f.appliedDrafts = append(f.appliedDrafts, input)
+	return worklogs.AddResult{Records: []worklogs.LocalWorklog{{ID: "from-preset"}}}, f.err
 }
-func (f *fakePresets) CheckRevision(context.Context, string, int64) error { return f.err }
 
 func (f *fakeTracker) Poll(context.Context) (bool, error) {
 	changed := f.changed

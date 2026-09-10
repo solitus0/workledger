@@ -326,6 +326,20 @@ func (s *Service) Add(ctx context.Context, cfg config.EffectiveConfig, input Add
 		}
 	}()
 
+	result, err := s.AddInImmediateTransaction(ctx, cfg, input, conn)
+	if err != nil {
+		return AddResult{}, err
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return AddResult{}, err
+	}
+	committed = true
+	return result, nil
+}
+
+// AddInImmediateTransaction validates and inserts worklogs on a connection
+// whose caller owns an active SQLite immediate transaction.
+func (s *Service) AddInImmediateTransaction(ctx context.Context, cfg config.EffectiveConfig, input AddInput, conn *sql.Conn) (AddResult, error) {
 	result, err := s.prepareAddWithQueryer(ctx, cfg, input, conn)
 	if err != nil {
 		return AddResult{}, err
@@ -353,7 +367,7 @@ func (s *Service) Add(ctx context.Context, cfg config.EffectiveConfig, input Add
 			Revision:        1,
 		}
 
-		_, err = statement.ExecContext(ctx,
+		if _, err := statement.ExecContext(ctx,
 			worklog.ID,
 			worklog.IssueKey,
 			sqlitestore.RFC3339UTC(worklog.StartedAtUTC),
@@ -361,18 +375,12 @@ func (s *Service) Add(ctx context.Context, cfg config.EffectiveConfig, input Add
 			worklog.Description,
 			sqlitestore.RFC3339UTC(now),
 			sqlitestore.RFC3339UTC(now),
-		)
-		if err != nil {
+		); err != nil {
 			return AddResult{}, err
 		}
 		created = append(created, worklog)
 	}
-	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
-		return AddResult{}, err
-	}
-	committed = true
 	result.Records = created
-
 	return result, nil
 }
 
