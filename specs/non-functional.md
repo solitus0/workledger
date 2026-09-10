@@ -48,6 +48,7 @@ Placement rule:
 - [ ] NFR-026: Additive storage shall define an index on `saved_plan_items(target_adapter_family, target_adapter_instance, target_issue)`.
 - [ ] NFR-027: Additive storage shall define an index on `saved_plan_items(delivery_key)`.
 - [ ] NFR-028: Additive storage shall define an index on `delivery_attempts(plan_item_id, created_at)`.
+- [ ] NFR-028a: SQLite domain-change tracking shall advance when saved plans, saved plan items, or delivery attempts change so an open TUI can refresh plan state created or executed by another process.
 - [ ] NFR-029: Additive storage shall define an index on `delivery_attempts(attempt_state, created_at)`.
 - [ ] NFR-030: SQLite shall define query-shape indexes for worklog interval ends, issue recency, issue-scoped description recency, preset recency, ordered saved-plan items and findings, and delivery attempts by plan.
 - [ ] NFR-030a: Date-window totals, context, automatic-placement, and candidate-based add, update, apply, or restore conflict reads shall query only worklogs whose intervals can overlap the requested or candidate window rather than loading the full active ledger.
@@ -454,7 +455,30 @@ Placement rule:
 - [ ] NFR-376: `internal/adapter/jira_data_center` shall own Jira Data Center integration.
 - [ ] NFR-377: `internal/adapter/clockify` shall own Clockify integration.
 - [ ] NFR-378: `internal/store/sqlite` shall own SQLite stores, migrations, and transactions.
-- [ ] NFR-379: `internal/tui` shall be reserved for a future Bubble Tea and Lip Gloss frontend.
+- [ ] NFR-379: `internal/tui` shall own the Bubble Tea, Bubbles, and Lip Gloss frontend while business rules remain in reusable services.
+- [ ] NFR-379a: The TUI shall use consumer-owned narrow interfaces and shall not call commands, parse rendered command output, or query SQLite directly.
+- [ ] NFR-379b: TUI service and database work shall execute through Bubble Tea commands with context cancellation and request-generation checks.
+- [ ] NFR-379c: The TUI shall use a fixed 30-column, full-workspace-height summary rail and a list-over-detail workspace at terminal sizes of at least 100 by 28.
+- [ ] NFR-379d: TUI styling shall use one configurable theme whose light and dark palettes define every applied semantic color for focus, information, progress, warning, success, destructive actions, proposed changes, secondary and muted text, borders, and input placeholders. The default theme shall use contrast-qualified Catppuccin-derived Latte colors on light terminal backgrounds and Catppuccin Mocha colors with the Mauve accent on dark terminal backgrounds; normal text roles shall meet at least 4.5:1 contrast and meaningful component boundaries at least 3:1 against the corresponding Catppuccin base. Styling shall distinguish the active destination from the pane that owns keyboard focus, user-editable and interactive labels from calculated and read-only labels, footer key chords from their action descriptions, and confirmation severity across titles, borders, and confirm/cancel keys; it shall preserve semantic state between list and detail views, lay out and truncate styled content by visible width, and emit no color styling when `NO_COLOR` is set.
+- [ ] NFR-379da: Confirmations shall present their keyboard shortcuts only in the action bar, not repeat them inside the modal.
+- [ ] NFR-379db: The action bar shall be the rendered source of key-to-action shortcut definitions, with the sole exception of the five numbered destination labels repeated in the rail; workspace content, detail panes, forms, progress views, help, and resize guidance shall describe state and concepts without mapping keys to actions.
+- [ ] NFR-379e: TUI worklog mutations shall rerun the store-owned writability probe immediately before mutation.
+- [ ] NFR-379f: TUI startup and refresh shall never create or repair configuration or SQLite storage.
+- [ ] NFR-379g: The TUI shall use the store-owned `ChangeTracker` instead of filesystem watching and shall consume its baseline after TUI-owned commits.
+- [ ] NFR-379h: Worklog read, context, preview, validation-query, and mutation paths used by long-running frontends shall accept and propagate `context.Context` through SQL operations.
+- [ ] NFR-379i: Automatic worklog placement and insertion shall execute under one SQLite immediate write transaction, and a frontend-supplied expected placement shall fail with a typed conflict when current availability produces different time windows.
+- [ ] NFR-379j: TUI automatic-placement previews shall be asynchronous, debounced, generation-protected, and invalidated by relevant draft or external-storage changes.
+- [ ] NFR-379ja: TUI issue and description completion queries shall be bounded, asynchronous, context-aware, generation-protected, local-only, and refreshed after relevant external-storage changes.
+- [ ] NFR-379jb: Preset CLI and TUI completion shall be bounded to 100 local, read-only, case-insensitive prefix candidates ordered by non-null `last_used_at` descending and then preset name, with never-used presets last in name order.
+- [ ] NFR-379jc: Preset content revisions shall start at `1` and increment on create-field updates or rename, while `last_used_at` updates shall not increment the revision.
+- [ ] NFR-379jd: Worklogs created through presets shall not persist preset identity or lineage.
+- [ ] NFR-379jb: TUI manual-placement previews shall reuse worklog-domain parsing and conflict validation, remain asynchronous, debounced, generation-protected, and refresh after relevant draft or external-storage changes without weakening authoritative save-time validation.
+- [ ] NFR-379k: TUI day-context and placement visuals shall retain explicit text labels, distinct symbols for persisted, proposed, and overtime intervals, non-color top and bottom focus rails for selection, one blank row after the Day/Week selector, and one blank row between the timeline and its legend; selection shall not change the timeline scale or displayed interval widths, fit the 100-by-28 minimum viewport, and remain understandable when `NO_COLOR` disables semantic colors.
+- [ ] NFR-379ka: TUI Worklogs Week mode shall reuse one selected-week context result for its weekly overview and selected-day detail, preserve readable selection and warning states without color, and fit the 100-by-28 minimum viewport alongside the three-card rail.
+- [ ] NFR-379kb: TUI selected-day deletion shall use one transaction to compare the current filtered ID-and-revision set with the confirmed snapshot before deleting that exact set, and any mismatch shall fail without partial deletion.
+- [ ] NFR-379kc: TUI selected-day trash restoration shall compare the current filtered local trash-ID set with the confirmed snapshot and reject changed membership without partial restoration.
+- [ ] NFR-379kd: TUI selected-issue totals shall use an asynchronous service-owned aggregate query, shall not contact remote adapters or query SQLite from the TUI package, shall ignore obsolete results after selection changes, and shall remain a non-fatal unavailable metric when loading fails.
+- [ ] NFR-379ke: The TUI Config subview shall render only validated summary fields or validation issues from the generation-protected Status result; it shall not render raw YAML, resolved secret values, or mutate configuration.
 - [ ] NFR-380: `internal/cli` shall not own worklog, planning, or adapter business rules.
 - [ ] NFR-381: Frontend command and view logic shall depend on services rather than query raw SQLite stores; process composition may open stores to construct those services.
 - [ ] NFR-382: Frontends shall not call other commands.
@@ -683,3 +707,6 @@ Placement rule:
 - [ ] NFR-567: Activity persistence shall be owned by an `internal/activity` service with consumer-facing operations that accept `context.Context`.
 - [ ] NFR-568: Activity logging failures shall never replace or modify the result of the operation being observed.
 - [ ] NFR-569: Activity error persistence shall use fixed sanitized codes and messages rather than arbitrary raw errors.
+- [ ] NFR-570: TUI domain change detection shall advance only for worklog, trash, preset, and issue-metadata commits; activity-only commits shall refresh activity without marking drafts stale or recalculating availability.
+- [ ] NFR-571: The TUI shall show an optimistic running activity immediately and correlate asynchronous completion with the same activity ID.
+- [ ] NFR-572: Activity rendering shall fit the existing 100-by-28 minimum viewport, remain usable without color, and shall not add a numbered TUI destination.

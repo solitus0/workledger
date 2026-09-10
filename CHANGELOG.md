@@ -8,8 +8,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
-- Reusable local worklog presets with full CLI management, selected-day application, editable overrides, dry-run and conflict handling, and local preset-name completion.
-- Conflict-checked local trash restoration through `workledger trash restore`.
+- Reusable local worklog presets with full CLI and TUI management, selected-day application, editable overrides, dry-run and conflict handling, and local preset-name completion.
+- Conflict-checked local trash restoration through `workledger trash restore` and a new TUI Trash tab with Day/Week and All/Local/Remote views.
 - `--scope local|remote` filtering for trash list and search commands.
 - Bash, Zsh, and Fish completion script generation with local, read-only suggestions for command values, configured targets, issue keys, worklog IDs, and saved plan IDs.
 - `--tomorrow` as a shared date-window selector for CLI workflows, resolving to the next day in the configured local timezone.
@@ -18,6 +18,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Changed
 - Saved-plan item execution now uses delivery attempts as its only persisted source of truth; `workledger init` migrates legacy terminal results and removes the duplicate item lifecycle columns in a clean schema cutover.
+- The TUI Activity drawer now shows only meaningful worklog, trash, preset, and plan actions, while activity outcomes no longer appear in the action bar.
+- TUI Worklogs now opens a blank worklog directly with `a` and reserves uppercase `A` for adding from a preset.
+- TUI rail clicks and numbered tab shortcuts now focus the activated workspace immediately, while the action bar is the sole source of key-to-action guidance across workspaces, confirmations, help, and the unnumbered destination rail.
 - Local worklog deletion now atomically archives restorable source identity and revision metadata instead of permanently discarding the row.
 - Automatic `worklogs add --fit` and `--fill` placement now skips slots starting at or after `day_end` unless `--overtime` is supplied, while still allowing an eligible worklog that starts earlier to extend past `day_end`.
 
@@ -56,6 +59,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Ordinary commands no longer create or repair SQLite schema implicitly; schema bootstrap and repair stay scoped to `workledger init`.
 
 ### Fixed
+- Worklogs Day and Week views now use consistent one-row spacing after the view selector, while selected worklogs use compact purple focus rails separated from the legend by one blank row without changing the timeline scale or repeating table details.
 - Missing or mismatched SQLite stores now fail with clear `sqlite_store_not_ready` or `sqlite_store_schema_mismatch` errors before feature SQL runs.
 
 ## [0.1.6] - 2026-06-02

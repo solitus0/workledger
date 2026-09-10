@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	clockifyadapter "github.com/solitus0/workledger/internal/adapter/clockify"
 	"github.com/solitus0/workledger/internal/config"
 	"github.com/solitus0/workledger/internal/progress"
+	workledgertui "github.com/solitus0/workledger/internal/tui"
 	"github.com/solitus0/workledger/internal/worklogs"
 	_ "modernc.org/sqlite"
 )
@@ -268,6 +270,62 @@ func TestStatusCancellationReturnsExit130(t *testing.T) {
 
 	if code != 130 {
 		t.Fatalf("expected cancellation exit 130, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestTUICommandHelpAndValidation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	help := runCLI(t, "tui", "--help")
+	if help.code != 0 || !strings.Contains(help.stdout, "interactive status and worklog workspace") {
+		t.Fatalf("unexpected tui help code=%d stdout=%s stderr=%s", help.code, help.stdout, help.stderr)
+	}
+
+	for _, args := range [][]string{{"tui"}, {"tui", "extra"}, {"tui", "--output", "json"}, {"tui", "--output", "table"}} {
+		result := runCLI(t, args...)
+		if result.code != 2 {
+			t.Fatalf("%v: expected exit 2, got %d stdout=%s stderr=%s", args, result.code, result.stdout, result.stderr)
+		}
+	}
+}
+
+func TestTUICommandMapsUnexpectedFailureToExit1(t *testing.T) {
+	originalReader := isTTYReader
+	originalWriter := isTTYWriter
+	originalRun := runTUI
+	isTTYReader = func(io.Reader) bool { return true }
+	isTTYWriter = func(io.Writer) bool { return true }
+	runTUI = func(context.Context, io.Reader, io.Writer, workledgertui.Theme) error {
+		return errors.New("render failed")
+	}
+	t.Cleanup(func() {
+		isTTYReader = originalReader
+		isTTYWriter = originalWriter
+		runTUI = originalRun
+	})
+
+	result := runCLI(t, "tui")
+	if result.code != 1 || !strings.Contains(result.stdout, "render failed") {
+		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
+	}
+}
+
+func TestTUICommandMapsCancellationToExit130(t *testing.T) {
+	originalReader := isTTYReader
+	originalWriter := isTTYWriter
+	originalRun := runTUI
+	isTTYReader = func(io.Reader) bool { return true }
+	isTTYWriter = func(io.Writer) bool { return true }
+	runTUI = func(context.Context, io.Reader, io.Writer, workledgertui.Theme) error { return context.Canceled }
+	t.Cleanup(func() {
+		isTTYReader = originalReader
+		isTTYWriter = originalWriter
+		runTUI = originalRun
+	})
+
+	result := runCLI(t, "tui")
+	if result.code != 130 {
+		t.Fatalf("expected exit 130, got %d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
 }
 

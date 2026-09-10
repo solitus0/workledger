@@ -65,6 +65,7 @@ type Store struct {
 
 type ChangeTracker struct {
 	conn    *sql.Conn
+	query   string
 	version int64
 	closed  bool
 }
@@ -195,6 +196,11 @@ var schemaStatements = []string{
 		error_code TEXT NOT NULL DEFAULT '',
 		error_message TEXT NOT NULL DEFAULT ''
 	)`,
+	`CREATE TABLE IF NOT EXISTS domain_change_state (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		revision INTEGER NOT NULL
+	)`,
+	`INSERT OR IGNORE INTO domain_change_state(id, revision) VALUES(1, 0)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_worklogs_id ON worklogs(id)`,
 	`CREATE INDEX IF NOT EXISTS idx_worklogs_issue_started ON worklogs(issue_key, started_at_utc)`,
 	`CREATE INDEX IF NOT EXISTS idx_worklogs_started ON worklogs(started_at_utc)`,
@@ -224,6 +230,27 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_delivery_attempts_state_created ON delivery_attempts(attempt_state, created_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_activity_started_id ON activity_entries(started_at DESC, id DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_activity_source_state_started ON activity_entries(source, state, started_at DESC)`,
+	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_insert AFTER INSERT ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_update AFTER UPDATE ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_delete AFTER DELETE ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_trash_activity_insert AFTER INSERT ON trashed_worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_trash_activity_update AFTER UPDATE ON trashed_worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_trash_activity_delete AFTER DELETE ON trashed_worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_metadata_activity_insert AFTER INSERT ON issue_metadata BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_metadata_activity_update AFTER UPDATE ON issue_metadata BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_metadata_activity_delete AFTER DELETE ON issue_metadata BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_presets_activity_insert AFTER INSERT ON worklog_presets BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_presets_activity_update AFTER UPDATE ON worklog_presets BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_presets_activity_delete AFTER DELETE ON worklog_presets BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_saved_plans_activity_insert AFTER INSERT ON saved_plans BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_saved_plans_activity_update AFTER UPDATE ON saved_plans BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_saved_plans_activity_delete AFTER DELETE ON saved_plans BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_saved_plan_items_activity_insert AFTER INSERT ON saved_plan_items BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_saved_plan_items_activity_update AFTER UPDATE ON saved_plan_items BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_saved_plan_items_activity_delete AFTER DELETE ON saved_plan_items BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_delivery_attempts_activity_insert AFTER INSERT ON delivery_attempts BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_delivery_attempts_activity_update AFTER UPDATE ON delivery_attempts BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_delivery_attempts_activity_delete AFTER DELETE ON delivery_attempts BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 }
 
 func Bootstrap(path string) (*Store, BootstrapStatus, error) {
@@ -652,12 +679,22 @@ func sqliteDSN(path string, readOnly bool) string {
 }
 
 func (s *Store) NewChangeTracker(ctx context.Context) (*ChangeTracker, error) {
+	return s.newChangeTracker(ctx, `SELECT revision FROM domain_change_state WHERE id = 1`)
+}
+
+// NewActivityChangeTracker detects commits from other SQLite connections,
+// including activity-only writes, without classifying them as domain changes.
+func (s *Store) NewActivityChangeTracker(ctx context.Context) (*ChangeTracker, error) {
+	return s.newChangeTracker(ctx, `PRAGMA data_version`)
+}
+
+func (s *Store) newChangeTracker(ctx context.Context, query string) (*ChangeTracker, error) {
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	tracker := &ChangeTracker{conn: conn}
-	if err := conn.QueryRowContext(ctx, `PRAGMA data_version`).Scan(&tracker.version); err != nil {
+	tracker := &ChangeTracker{conn: conn, query: query}
+	if err := conn.QueryRowContext(ctx, query).Scan(&tracker.version); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
@@ -669,7 +706,7 @@ func (t *ChangeTracker) Poll(ctx context.Context) (bool, error) {
 		return false, errors.New("change tracker is closed")
 	}
 	var version int64
-	if err := t.conn.QueryRowContext(ctx, `PRAGMA data_version`).Scan(&version); err != nil {
+	if err := t.conn.QueryRowContext(ctx, t.query).Scan(&version); err != nil {
 		return false, err
 	}
 	changed := version != t.version
@@ -1069,6 +1106,13 @@ var requiredSchema = []tableRequirement{
 			{column: "exit_code", typ: "INTEGER", notNull: false},
 			{column: "error_code", typ: "TEXT", notNull: true},
 			{column: "error_message", typ: "TEXT", notNull: true},
+		},
+	},
+	{
+		table: "domain_change_state",
+		columns: []columnRequirement{
+			{column: "id", typ: "INTEGER", notNull: false},
+			{column: "revision", typ: "INTEGER", notNull: true},
 		},
 	},
 }

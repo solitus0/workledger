@@ -234,6 +234,77 @@ func TestChangeTrackerDetectsAnotherStoreCommit(t *testing.T) {
 	}
 }
 
+func TestChangeTrackerDetectsSavedPlanCommit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+	store, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	other, err := OpenExisting(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	ctx := context.Background()
+	tracker, err := store.NewChangeTracker(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tracker.Close()
+
+	if _, err := other.DB().Exec(`INSERT INTO saved_plans(id, plan_direction, adapter_family, config_fingerprint, window_from_utc, window_to_utc, created_at, aggregate_status) VALUES('external-plan', 'push', 'clockify', 'fingerprint', '2026-05-01T00:00:00Z', '2026-05-01T23:59:59Z', '2026-05-02T00:00:00Z', 'ready')`); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := tracker.Poll(ctx)
+	if err != nil || !changed {
+		t.Fatalf("saved plan changed=%t err=%v", changed, err)
+	}
+}
+
+func TestChangeTrackersSeparateDomainAndActivityCommits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+	store, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	other, err := OpenExisting(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	ctx := context.Background()
+	domain, err := store.NewChangeTracker(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer domain.Close()
+	activity, err := store.NewActivityChangeTracker(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer activity.Close()
+	if _, err := other.DB().Exec(`INSERT INTO activity_entries(id, source, operation, summary, attributes_json, state, started_at) VALUES('activity', 'cli', 'status', '', '{}', 'running', '2026-09-06T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	domainChanged, err := domain.Poll(ctx)
+	if err != nil || domainChanged {
+		t.Fatalf("activity changed domain tracker=%t err=%v", domainChanged, err)
+	}
+	activityChanged, err := activity.Poll(ctx)
+	if err != nil || !activityChanged {
+		t.Fatalf("activity tracker changed=%t err=%v", activityChanged, err)
+	}
+	if _, err := other.DB().Exec(`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES('domain', 'APP-1', '2026-09-06T10:00:00Z', 900, 'test', '2026-09-06T10:00:00Z', '2026-09-06T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	domainChanged, err = domain.Poll(ctx)
+	if err != nil || !domainChanged {
+		t.Fatalf("domain tracker changed=%t err=%v", domainChanged, err)
+	}
+}
+
 func TestWALAllowsReaderWhileAnotherStoreHasUncommittedWrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "worklogs.db")
 	writer, _, err := Bootstrap(path)

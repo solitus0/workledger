@@ -82,6 +82,7 @@ func (e exitError) Error() string {
 }
 
 type app struct {
+	stdin                io.Reader
 	stdout               io.Writer
 	stderr               io.Writer
 	activeActivityID     string
@@ -241,7 +242,7 @@ func trimmedUsages(flags *pflag.FlagSet) string {
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	a := &app{stdout: stdout, stderr: stderr}
+	a := &app{stdin: os.Stdin, stdout: stdout, stderr: stderr}
 	cmd := a.newRootCommand()
 	cmd.SetArgs(args)
 	cmd.SetOut(stdout)
@@ -305,6 +306,7 @@ func (a *app) newRootCommand() *cobra.Command {
 	root.AddCommand(a.newPlanCommand())
 	root.AddCommand(a.newCompletionCommand())
 	root.AddCommand(a.newActivityCommand())
+	root.AddCommand(a.newTUICommand())
 	a.configureCompletions(root)
 
 	return root
@@ -3991,7 +3993,7 @@ type fdWriter interface {
 	Fd() uintptr
 }
 
-func isTTYWriter(w io.Writer) bool {
+var isTTYWriter = func(w io.Writer) bool {
 	fd, ok := w.(fdWriter)
 	if !ok {
 		return false

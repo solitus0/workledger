@@ -77,7 +77,7 @@ workledger status
 
 ## Activity history
 
-Workledger keeps the newest 500 CLI commands as diagnostic activity in the local SQLite store. It records safe command identifiers and selectors, outcomes, and timing without storing raw command lines, descriptions, payloads, credentials, or other free-text inputs. Logging is silent and best-effort, so it never changes command output or exit status and is unavailable until configuration and SQLite storage are valid.
+Workledger keeps the newest 500 CLI commands and foreground TUI operations as diagnostic activity in the local SQLite store. It records safe command identifiers and selectors, outcomes, and timing without storing raw command lines, descriptions, payloads, credentials, or other free-text inputs. Logging is silent and best-effort, so it never changes command output or exit status and is unavailable until configuration and SQLite storage are valid.
 
 Inspect recent activity from the CLI:
 
@@ -87,7 +87,9 @@ workledger activity list --source cli --state failed --limit 20
 workledger activity list --output json
 ```
 
-Activity history is intended for diagnosis and is not an immutable audit log.
+In the TUI, press `g` to open the global Activity drawer. It shows meaningful worklog, trash, preset, and plan actions from the CLI and TUI while omitting reads, refreshes, setup and maintenance commands, and the TUI launcher. Use `j`/`k` or the arrow keys to select entries, Page Up/Page Down to page, Home/End to jump, and `g` to close it. The complete persisted history remains available through `workledger activity list`; activity history is intended for diagnosis and is not an immutable audit log.
+
+The `3 Plans` tab defaults to the 100 newest plans created during the selected local Monday-through-Sunday week. Press `d` or `w` to switch between the selected day and week, use `h`/`l` to move by one day or week, and press `t` to return to today. Its rail summarizes visible unapplied, failed, and uncertain scopes, while the list keeps immutable planning status separate from derived execution state and shows open and succeeded scope counts. Press `n` to inspect remote worklogs for the selected day, week, or a custom inclusive date range and save a plan; target and Jira route-profile selection are available in the form. Press `Enter` to review a saved plan, then use the displayed `A`, `f`, or `u` actions when unapplied, failed, or uncertain scopes are available. Planning never applies changes, every apply or retry requires explicit confirmation, and a plan becomes `succeeded` only after every actionable scope succeeds.
 
 ## Daily workflow
 
@@ -119,7 +121,7 @@ workledger presets apply daily-standup --date tomorrow
 workledger presets apply daily-standup --date mon --start 10:00 --dry
 ```
 
-Use `workledger presets list`, `show`, `update`, and `delete` to manage presets. Applying a preset creates one ordinary local worklog; one-off overrides do not change the saved preset. Shell completion suggests locally stored preset names.
+Use `workledger presets list`, `show`, `update`, and `delete` to manage presets. Applying a preset creates one ordinary local worklog; one-off overrides do not change the saved preset. Shell completion suggests locally stored preset names. In the TUI, press `a` for a blank worklog or uppercase `A` for the searchable preset picker; the `4 Presets` tab provides full preset management.
 
 Automatic placement starts each worklog before the configured workday end by default, although a worklog that starts before the boundary may finish afterward. Use `--overtime` with `--fit` or `--fill` to allow placement to start at or after the workday end:
 
