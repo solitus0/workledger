@@ -110,6 +110,22 @@ workledger route explain PROJ-123
 
 The result should identify the Jira family and instance configured with `--issue-prefix PROJ`. If it is unmatched, add the missing project prefix to the correct instance. If it is ambiguous, remove the duplicate ownership rather than guessing which instance should receive worklogs.
 
+## Initial remote pull
+
+After `workledger status` succeeds, make the first reconciliation action a pull covering every intended remote source and the complete window of the first push:
+
+```text
+workledger plan reconcile --pull --from <earliest-date-to-preserve> --to <end-of-first-push-window>
+workledger plan show <plan-id>
+workledger plan apply <plan-id>
+```
+
+Omit `--adapter` and `--instance` to select every configured reconcile-capable target. If the user intentionally wants only some sources, repeat the bootstrap pull for every source that a later push will target.
+
+The reconcile command only creates a saved plan. Review and apply that pull plan so existing remote worklogs become canonical local rows before any push. Treat a no-plan result as complete only when no intended target was skipped or failed. If a saved plan contains `check_failed` scopes, or output reports skipped targets, resolve those sources and repeat the pull before pushing.
+
+The pull window must contain the whole intended push window. Otherwise, push reconciliation can classify remote-only worklogs as cleanup and delete them. Pull and apply any newly introduced date window before a later push expands beyond the initial import range.
+
 ## Troubleshooting map
 
 | Symptom | Layer | First command |
@@ -123,4 +139,4 @@ The result should identify the Jira family and instance configured with `--issue
 
 ## Boundary
 
-After onboarding succeeds, hand off to the worklog workflow for entries, totals, metadata, reconcile plans, or sync.
+After onboarding succeeds and the initial pull has been applied for the intended first-push window, hand off to the worklog workflow for entries, totals, metadata, reconcile plans, or sync.

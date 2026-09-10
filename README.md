@@ -10,6 +10,7 @@ It is built for operators and coding agents that need one inspectable source of 
 - SQLite stores canonical local worklogs at `~/.local/share/workledger/worklogs.db` by default.
 - Remote adapters such as Jira and Clockify provide evidence, comparison data, and sync targets; they are not the source of truth.
 - Reconciliation is plan-based: inspect, save, review, then apply.
+- Before the first push for a date window, pull and apply that complete window from every intended remote source so existing remote-only worklogs are preserved locally.
 - Human output defaults to `table`; automation should use `--output json`.
 - Adapter secrets are referenced by environment variable names. Inline secrets are invalid.
 
@@ -74,6 +75,8 @@ workledger status
 ```
 
 `init` creates the config file when needed and provisions local SQLite storage. `status` runs setup diagnostics and shows authenticated identity details for successful remote checks.
+
+After configuring remote adapters, make the first reconciliation action a pull. The initial pull workflow is documented under [Configuration](#configuration); complete it before creating any push plan.
 
 ## Activity history
 
@@ -147,10 +150,10 @@ Compare local time with a configured adapter:
 workledger totals --instance clockify --today
 ```
 
-Create and execute a remote sync plan:
+After completing the initial pull described under [Configuration](#configuration), create and execute a push plan:
 
 ```sh
-workledger plan reconcile --today
+workledger plan reconcile --push --today
 workledger plan show <plan-id>
 workledger plan apply <plan-id>
 ```
@@ -228,6 +231,18 @@ Each setup command can prompt interactively or accept flags. Use command help fo
 ```sh
 workledger setup jira-cloud --help
 ```
+
+### Initial remote pull
+
+After `workledger status` succeeds, the first reconciliation action must pull existing worklogs from every configured remote source into the local ledger. Choose a window that covers the complete date range of the first push; use the earliest remote worklog date when importing all history.
+
+```sh
+workledger plan reconcile --pull --from <earliest-date-to-preserve> --to <end-of-first-push-window>
+workledger plan show <plan-id>
+workledger plan apply <plan-id>
+```
+
+Omitting `--adapter` and `--instance` selects all configured reconcile-capable targets. Review the pull plan before applying it. Do not create or apply a push plan if any intended source was skipped or failed; resolve the source and repeat the pull first. A push may otherwise classify remote-only worklogs in its date window as cleanup and delete them. If a later push uses a date outside the imported range, pull and apply that complete window before pushing it.
 
 ## Output and failure model
 

@@ -298,6 +298,7 @@ Placement rule:
 - [ ] FUNC-229: `workledger plan reconcile` shall create remote-sync plans.
 - [ ] FUNC-230: `workledger plan reconcile` shall default to push when neither `--pull` nor `--push` is supplied.
 - [ ] FUNC-230a: `workledger plan reconcile` shall fail validation when both `--pull` and `--push` are supplied.
+- [ ] FUNC-230b: Onboarding documentation and skills shall instruct operators to create, review, and apply a pull plan from every intended remote source for the complete first-push date window before creating a push plan, because push reconciliation may delete remote-only rows in that window.
 - [ ] FUNC-231: `workledger plan reconcile` without `--adapter` or `--instance` shall target all configured reconcile-capable targets.
 - [ ] FUNC-232: `workledger plan reconcile` shall require an explicit selected date window supplied by `--from` plus `--to` or by exactly one date-window shortcut selector.
 - [ ] FUNC-233: `workledger plan reconcile` shall persist exactly one saved plan after command-level validation succeeds unless a reporting reconcile resolves only non-actionable scopes.
