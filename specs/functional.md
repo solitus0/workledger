@@ -432,6 +432,12 @@ Placement rule:
 - [ ] FUNC-318i: Filtered `trash restore` shall reuse trash issue and original-start date selectors, require exactly one of `--dry` or `--yes`, restore only local rows, and reject ID mode combined with batch flags.
 - [ ] FUNC-318j: Trash restoration shall have no force or partial mode; any active-ID, duplicate, overlap, internal-batch, or confirmed-membership conflict shall reject the complete operation without consuming trash.
 - [ ] FUNC-318k: Remote trash and local trash without `source_worklog_id` shall remain audit-only and non-restorable.
+- [ ] FUNC-318l: `workledger trash delete <id>` shall permanently remove one local or remote trash record after exactly one of `--dry` or `--yes` is supplied.
+- [ ] FUNC-318m: Filtered `trash delete` shall reuse issue, issue-prefix, original-start date, and scope selectors and shall accept `--trashed-within <GoDuration>` over `trashed_at`.
+- [ ] FUNC-318n: Filtered `trash delete` shall require at least one selector, treat `--scope` as sufficient, combine selectors with AND semantics, and require exactly one of `--dry` or `--yes`.
+- [ ] FUNC-318o: `workledger trash clear` shall target all local and remote trash records, accept no selectors, and require exactly one of `--dry` or `--yes`.
+- [ ] FUNC-318p: Permanent trash deletion shall remove only local SQLite trash records and shall not mutate active worklogs, saved plans, or remote services.
+- [ ] FUNC-318q: Permanent trash deletion and clear shall remain CLI-only.
 
 ## Activity History
 - [ ] FUNC-319: Workledger shall persist diagnostic CLI and TUI activity in the configured local SQLite store with source, canonical operation, safe summary and attributes, lifecycle state, UTC timestamps, duration, optional exit code, and sanitized failure details.

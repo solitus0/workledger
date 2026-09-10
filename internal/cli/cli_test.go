@@ -5647,6 +5647,109 @@ func TestTrashListSearchAndShowJSON(t *testing.T) {
 	}
 }
 
+func TestTrashPermanentDeleteAndClearCLI(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	writeConfigWithUTC(t)
+	if init := runCLI(t, "init", "--output", "json"); init.code != 0 {
+		t.Fatalf("init failed: %+v", init)
+	}
+	keeper := runCLI(t, "worklogs", "add", "--issue", "ABC-100", "--started-utc", "2026-05-03T05:00:00Z", "--duration", "15m", "--description", "Keep active", "--output", "json")
+	doomed := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started-utc", "2026-05-03T06:00:00Z", "--duration", "15m", "--description", "Move to trash", "--output", "json")
+	if keeper.code != 0 || doomed.code != 0 {
+		t.Fatalf("seed active rows: keeper=%+v doomed=%+v", keeper, doomed)
+	}
+	doomedID := decodeJSONMap(t, []byte(doomed.stdout))["id"].(string)
+	archived := runCLI(t, "worklogs", "delete", doomedID, "--output", "json")
+	if archived.code != 0 {
+		t.Fatalf("archive worklog: %+v", archived)
+	}
+	localTrashID := decodeJSONMap(t, []byte(archived.stdout))["trash_id"].(string)
+	seedTrashRecord(t, trashSeed{
+		id: "remote-recent", storageScope: "remote", issueKey: "ABC-123",
+		startedAtUTC: "2026-05-03T07:00:00Z", durationSeconds: 900, description: "Remote audit",
+		trashedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339), reasonCode: "remote_deleted", planDirection: "push",
+	})
+
+	missingMode := runCLI(t, "trash", "delete", localTrashID, "--output", "json")
+	if missingMode.code != 2 {
+		t.Fatalf("missing delete mode: %+v", missingMode)
+	}
+	bothModes := runCLI(t, "trash", "delete", localTrashID, "--dry", "--yes", "--output", "json")
+	if bothModes.code != 2 {
+		t.Fatalf("conflicting delete modes: %+v", bothModes)
+	}
+	conflict := runCLI(t, "trash", "delete", localTrashID, "--scope", "local", "--dry", "--output", "json")
+	if conflict.code != 2 {
+		t.Fatalf("single/filter conflict: %+v", conflict)
+	}
+
+	singleDry := runCLI(t, "trash", "delete", localTrashID, "--dry", "--output", "json")
+	if singleDry.code != 0 {
+		t.Fatalf("single dry delete: %+v", singleDry)
+	}
+	singlePayload := decodeJSONMap(t, []byte(singleDry.stdout))
+	if singlePayload["matched_count"].(float64) != 1 || singlePayload["deleted_count"].(float64) != 0 || singlePayload["items"].([]any)[0].(map[string]any)["id"] != localTrashID {
+		t.Fatalf("unexpected single preview: %s", singleDry.stdout)
+	}
+	table := runCLI(t, "trash", "delete", localTrashID, "--dry")
+	if table.code != 0 || !strings.Contains(table.stdout, "TRASHED") || !strings.Contains(table.stdout, localTrashID) || !strings.Contains(table.stdout, "Matched: 1 trash records") {
+		t.Fatalf("unexpected single table preview: %+v", table)
+	}
+	singleExec := runCLI(t, "trash", "delete", localTrashID, "--yes", "--output", "json")
+	if singleExec.code != 0 || decodeJSONMap(t, []byte(singleExec.stdout))["deleted_count"].(float64) != 1 {
+		t.Fatalf("single permanent delete: %+v", singleExec)
+	}
+	notFound := runCLI(t, "trash", "delete", localTrashID, "--yes", "--output", "json")
+	if notFound.code != 3 {
+		t.Fatalf("second permanent delete: %+v", notFound)
+	}
+
+	filtered := runCLI(t, "trash", "delete", "--scope", "remote", "--trashed-within", "15m", "--dry", "--output", "json")
+	if filtered.code != 0 {
+		t.Fatalf("filtered preview: %+v", filtered)
+	}
+	filteredPayload := decodeJSONMap(t, []byte(filtered.stdout))
+	filters := filteredPayload["filters"].(map[string]any)
+	if filteredPayload["matched_count"].(float64) != 1 || filters["raw"].(map[string]any)["trashed_within"] != "15m" || filters["effective"].(map[string]any)["trashed_from"] == nil || filters["effective"].(map[string]any)["trashed_to"] == nil {
+		t.Fatalf("unexpected filtered preview: %s", filtered.stdout)
+	}
+	for _, value := range []string{"invalid", "0s", "-1s", "1500ms"} {
+		invalid := runCLI(t, "trash", "delete", "--trashed-within="+value, "--dry", "--output", "json")
+		if invalid.code != 2 {
+			t.Fatalf("trashed-within %q: %+v", value, invalid)
+		}
+	}
+
+	clearMissingMode := runCLI(t, "trash", "clear", "--output", "json")
+	if clearMissingMode.code != 2 {
+		t.Fatalf("clear missing mode: %+v", clearMissingMode)
+	}
+	clearBothModes := runCLI(t, "trash", "clear", "--dry", "--yes", "--output", "json")
+	if clearBothModes.code != 2 {
+		t.Fatalf("clear conflicting modes: %+v", clearBothModes)
+	}
+	clearDry := runCLI(t, "trash", "clear", "--dry", "--output", "json")
+	if clearDry.code != 0 {
+		t.Fatalf("clear preview: %+v", clearDry)
+	}
+	clearDryPayload := decodeJSONMap(t, []byte(clearDry.stdout))
+	if clearDryPayload["matched_count"].(float64) != 1 || clearDryPayload["scope_counts"].(map[string]any)["remote"].(float64) != 1 {
+		t.Fatalf("unexpected clear preview: %s", clearDry.stdout)
+	}
+	clearExec := runCLI(t, "trash", "clear", "--yes", "--output", "json")
+	if clearExec.code != 0 || decodeJSONMap(t, []byte(clearExec.stdout))["deleted_count"].(float64) != 1 {
+		t.Fatalf("clear execute: %+v", clearExec)
+	}
+	clearZero := runCLI(t, "trash", "clear", "--yes", "--output", "json")
+	if clearZero.code != 0 || decodeJSONMap(t, []byte(clearZero.stdout))["deleted_count"].(float64) != 0 {
+		t.Fatalf("zero clear: %+v", clearZero)
+	}
+	active := runCLI(t, "worklogs", "show", decodeJSONMap(t, []byte(keeper.stdout))["id"].(string), "--output", "json")
+	if active.code != 0 {
+		t.Fatalf("clear changed active worklog: %+v", active)
+	}
+}
+
 func TestPlanApplyJSONIncludesTrashSummary(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTCAndClockify(t)

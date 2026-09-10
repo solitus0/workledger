@@ -62,6 +62,27 @@ func (s *Service) ListRestorableTrashByIDPrefix(prefix string, limit int) ([]Tra
 	return items, rows.Err()
 }
 
+func (s *Service) ListTrashByIDPrefix(prefix string, limit int) ([]TrashRecord, error) {
+	if limit <= 0 {
+		return []TrashRecord{}, nil
+	}
+	lower, upper := sqlitestore.PrefixRange(strings.ToLower(strings.TrimSpace(prefix)))
+	rows, err := s.store.DB().Query(`SELECT `+trashSelectColumns+` FROM trashed_worklogs WHERE id >= ? AND id < ? ORDER BY trashed_at DESC, id LIMIT ?`, lower, upper, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]TrashRecord, 0)
+	for rows.Next() {
+		item, err := scanTrashRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 // ListKnownIssueKeys returns locally known issue keys from active worklogs and
 // cached issue metadata. Results are case-insensitively prefix-filtered and
 // ordered by recent local activity, with metadata-only issues last.

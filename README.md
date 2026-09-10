@@ -153,6 +153,18 @@ workledger worklogs delete --created-within 15m --yes
 
 `--created-within` uses positive whole-second Go durations such as `15m`, `2h`, or `90s`. It filters the local `created_at` timestamp rather than the worklog start time. Worklogs inserted by a reconciliation pull receive a new local creation timestamp, so a recent pull can also match this selector. Batch deletion remains recoverable through local trash; use the dry-run before execution to review each matched row and its creation time.
 
+Permanently remove selected trash records or empty all trash:
+
+```sh
+workledger trash delete <trash-id> --dry
+workledger trash delete <trash-id> --yes
+workledger trash delete --scope local --trashed-within 15m --dry
+workledger trash clear --dry
+workledger trash clear --yes
+```
+
+Trash date selectors continue to filter the original worklog start time; `--trashed-within` instead filters when the archive row entered trash. Filtered deletion can target local or remote trash with `--scope`. `trash clear` always removes both recoverable local trash and remote audit evidence. These operations are irreversible within Workledger and do not change active worklogs, saved plans, or remote services. SQLite deletion is not forensic erasure: data may remain in WAL files, filesystem snapshots, or backups.
+
 Compare local time with a configured adapter:
 
 ```sh

@@ -98,6 +98,46 @@ func TestCLIActivityRecordsCreatedWithinSelector(t *testing.T) {
 	t.Fatalf("created-within activity missing: %+v", payload.Items)
 }
 
+func TestCLIActivityRecordsPermanentTrashOperations(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
+		t.Fatalf("init: %+v", result)
+	}
+	deleted := runCLI(t, "trash", "delete", "--scope", "local", "--trashed-within", "15m", "--dry", "--output", "json")
+	if deleted.code != 0 {
+		t.Fatalf("delete preview: %+v", deleted)
+	}
+	cleared := runCLI(t, "trash", "clear", "--dry", "--output", "json")
+	if cleared.code != 0 {
+		t.Fatalf("clear preview: %+v", cleared)
+	}
+	listed := runCLI(t, "activity", "list", "--source", "cli", "--output", "json")
+	if listed.code != 0 {
+		t.Fatalf("activity list: %+v", listed)
+	}
+	var payload struct {
+		Items []struct {
+			Operation  string            `json:"operation"`
+			Attributes map[string]string `json:"attributes"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(listed.stdout), &payload); err != nil {
+		t.Fatal(err)
+	}
+	foundDelete, foundClear := false, false
+	for _, item := range payload.Items {
+		switch item.Operation {
+		case "trash.delete":
+			foundDelete = item.Attributes["scope"] == "local" && item.Attributes["trashed-within"] == "15m" && item.Attributes["dry"] == "true"
+		case "trash.clear":
+			foundClear = item.Attributes["dry"] == "true"
+		}
+	}
+	if !foundDelete || !foundClear {
+		t.Fatalf("missing permanent trash activity: %+v", payload.Items)
+	}
+}
+
 func TestCLIActivityUnavailableStoreDoesNotChangeVersionOutput(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	result := runCLI(t, "version", "--output", "json")

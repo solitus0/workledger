@@ -108,6 +108,8 @@ func (a *app) configureCompletions(root *cobra.Command) {
 			cmd.ValidArgsFunction = a.completeWorklogIDs
 		case "workledger trash restore":
 			cmd.ValidArgsFunction = a.completeTrashIDs
+		case "workledger trash delete":
+			cmd.ValidArgsFunction = a.completeAllTrashIDs
 		case "workledger plan show", "workledger plan apply", "workledger plan retry":
 			cmd.ValidArgsFunction = a.completePlanIDs
 		case "workledger presets show", "workledger presets update", "workledger presets delete", "workledger presets apply":
@@ -165,6 +167,26 @@ func (a *app) completeTrashIDs(_ *cobra.Command, args []string, toComplete strin
 	}
 	defer cleanup()
 	items, err := service.ListRestorableTrashByIDPrefix(toComplete, completionCandidateLimit)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	candidates := make([]completionCandidate, 0, len(items))
+	for _, item := range items {
+		candidates = append(candidates, completionCandidate{value: item.ID, description: fmt.Sprintf("%s · %s · %s", item.IssueKey, item.StartedAtUTC.In(effective.Location).Format("2006-01-02 15:04"), item.Description)})
+	}
+	return renderCompletionCandidates(candidates, toComplete, nil), cobra.ShellCompDirectiveNoFileComp
+}
+
+func (a *app) completeAllTrashIDs(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	effective, service, cleanup, ok := completionWorklogService()
+	if !ok {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	defer cleanup()
+	items, err := service.ListTrashByIDPrefix(toComplete, completionCandidateLimit)
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}

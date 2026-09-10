@@ -154,6 +154,9 @@ func TestDynamicCompletionUsesOnlyLocalActiveData(t *testing.T) {
 	if containsString(completionValues(trashResult.stdout), "trashed-remote") {
 		t.Fatalf("restore completion included remote trash: %s", trashResult.stdout)
 	}
+	trashDeleteResult := runCompletion(t, "trash", "delete", "trashed-")
+	assertCompletionContains(t, trashDeleteResult, "trashed-only")
+	assertCompletionContains(t, trashDeleteResult, "trashed-remote")
 
 	for _, args := range [][]string{
 		{"worklogs", "add", "--issue", "APP"},

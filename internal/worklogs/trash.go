@@ -90,6 +90,26 @@ type TrashRestoreResult struct {
 	Items   []TrashRestoreItem
 }
 
+type TrashDeleteFilters struct {
+	ListFilters
+	StorageScope  string
+	TrashedWithin string
+}
+
+type EffectiveTrashDeleteFilters struct {
+	EffectiveFilters
+	StorageScope string
+	TrashedFrom  *time.Time
+	TrashedTo    *time.Time
+}
+
+type TrashDeleteResult struct {
+	Filters    EffectiveTrashDeleteFilters
+	DryRun     bool
+	Items      []TrashRecord
+	DeletedIDs []string
+}
+
 type trashWriteQueryer interface {
 	sqlQueryer
 	QueryRowContext(context.Context, string, ...any) *sql.Row
@@ -149,6 +169,141 @@ func (s *Service) ShowTrash(id string) (TrashRecord, error) {
 		return TrashRecord{}, ErrTrashNotFound
 	}
 	return TrashRecord{}, err
+}
+
+func (s *Service) DeleteTrash(ctx context.Context, id string, dryRun bool) (TrashDeleteResult, error) {
+	if id == "" {
+		return TrashDeleteResult{}, ValidationError{Issues: []ValidationIssue{{Field: "id", Message: "trash id is required"}}}
+	}
+	if dryRun {
+		record, err := showTrashWithQueryer(ctx, s.store.DB(), id)
+		if err != nil {
+			return TrashDeleteResult{}, err
+		}
+		return TrashDeleteResult{DryRun: true, Items: []TrashRecord{record}}, nil
+	}
+
+	conn, err := s.store.DB().Conn(ctx)
+	if err != nil {
+		return TrashDeleteResult{}, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return TrashDeleteResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
+		}
+	}()
+	record, err := showTrashWithQueryer(ctx, conn, id)
+	if err != nil {
+		return TrashDeleteResult{}, err
+	}
+	deletedIDs, err := deleteTrashRecordsTx(ctx, conn, []TrashRecord{record})
+	if err != nil {
+		return TrashDeleteResult{}, err
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return TrashDeleteResult{}, err
+	}
+	committed = true
+	return TrashDeleteResult{Items: []TrashRecord{record}, DeletedIDs: deletedIDs}, nil
+}
+
+func (s *Service) DeleteTrashBatch(ctx context.Context, cfg config.EffectiveConfig, filters TrashDeleteFilters, dryRun bool) (TrashDeleteResult, error) {
+	operationNow := s.now().UTC().Truncate(time.Second)
+	effective, err := normalizeTrashDeleteFiltersAt(cfg, filters, func() time.Time { return operationNow })
+	if err != nil {
+		return TrashDeleteResult{}, err
+	}
+	if !hasEffectiveTrashDeleteSelector(effective) {
+		return TrashDeleteResult{}, ValidationError{Issues: []ValidationIssue{{Field: "delete", Message: "filtered trash delete requires at least one selector"}}}
+	}
+	if dryRun {
+		items, err := listTrashForDeleteWithQueryer(ctx, s.store.DB(), effective)
+		if err != nil {
+			return TrashDeleteResult{}, err
+		}
+		return TrashDeleteResult{Filters: effective, DryRun: true, Items: items}, nil
+	}
+	return s.deleteTrashSelection(ctx, effective)
+}
+
+func (s *Service) ClearTrash(ctx context.Context, dryRun bool) (TrashDeleteResult, error) {
+	effective := EffectiveTrashDeleteFilters{}
+	if dryRun {
+		items, err := listTrashForDeleteWithQueryer(ctx, s.store.DB(), effective)
+		if err != nil {
+			return TrashDeleteResult{}, err
+		}
+		return TrashDeleteResult{DryRun: true, Items: items}, nil
+	}
+	return s.deleteTrashSelection(ctx, effective)
+}
+
+func (s *Service) deleteTrashSelection(ctx context.Context, filters EffectiveTrashDeleteFilters) (TrashDeleteResult, error) {
+	conn, err := s.store.DB().Conn(ctx)
+	if err != nil {
+		return TrashDeleteResult{}, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return TrashDeleteResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
+		}
+	}()
+	items, err := listTrashForDeleteWithQueryer(ctx, conn, filters)
+	if err != nil {
+		return TrashDeleteResult{}, err
+	}
+	deletedIDs, err := deleteTrashRecordsTx(ctx, conn, items)
+	if err != nil {
+		return TrashDeleteResult{}, err
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return TrashDeleteResult{}, err
+	}
+	committed = true
+	return TrashDeleteResult{Filters: filters, Items: items, DeletedIDs: deletedIDs}, nil
+}
+
+func normalizeTrashDeleteFiltersAt(cfg config.EffectiveConfig, filters TrashDeleteFilters, now func() time.Time) (EffectiveTrashDeleteFilters, error) {
+	capturedNow := now().UTC().Truncate(time.Second)
+	if err := validateTrashScope(filters.StorageScope); err != nil {
+		return EffectiveTrashDeleteFilters{}, err
+	}
+	effective, err := normalizeListFiltersAt(cfg, filters.ListFilters, false, func() time.Time { return capturedNow })
+	if err != nil {
+		return EffectiveTrashDeleteFilters{}, err
+	}
+	result := EffectiveTrashDeleteFilters{EffectiveFilters: effective, StorageScope: filters.StorageScope}
+	if filters.TrashedWithin == "" {
+		return result, nil
+	}
+	duration, err := time.ParseDuration(filters.TrashedWithin)
+	if err != nil {
+		return EffectiveTrashDeleteFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "trashed_within", Message: "must be a valid Go duration"}}}
+	}
+	if duration <= 0 {
+		return EffectiveTrashDeleteFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "trashed_within", Message: "must be positive"}}}
+	}
+	if duration%time.Second != 0 {
+		return EffectiveTrashDeleteFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "trashed_within", Message: "must normalize to whole seconds"}}}
+	}
+	trashedFrom := capturedNow.Add(-duration)
+	result.TrashedFrom = &trashedFrom
+	result.TrashedTo = &capturedNow
+	return result, nil
+}
+
+func hasEffectiveTrashDeleteSelector(filters EffectiveTrashDeleteFilters) bool {
+	return filters.IssueKey != nil || filters.IssuePrefix != nil || filters.From != nil || filters.To != nil || filters.StorageScope != "" || filters.TrashedFrom != nil
 }
 
 func (s *Service) RestoreTrash(ctx context.Context, cfg config.EffectiveConfig, id string) (TrashRestoreItem, error) {
@@ -504,6 +659,69 @@ func listTrashWithQueryer(ctx context.Context, queryer sqlQueryer, filters Effec
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func listTrashForDeleteWithQueryer(ctx context.Context, queryer sqlQueryer, filters EffectiveTrashDeleteFilters) ([]TrashRecord, error) {
+	query := `SELECT ` + trashSelectColumns + ` FROM trashed_worklogs`
+	args := make([]any, 0)
+	where := buildWhereClause(filters.EffectiveFilters, false, &args)
+	where = appendTrashScope(where, filters.StorageScope, &args)
+	conditions := make([]string, 0, 2)
+	if filters.TrashedFrom != nil {
+		conditions = append(conditions, "trashed_at >= ?")
+		args = append(args, sqlitestore.RFC3339UTC(filters.TrashedFrom.UTC()))
+	}
+	if filters.TrashedTo != nil {
+		conditions = append(conditions, "trashed_at <= ?")
+		args = append(args, sqlitestore.RFC3339UTC(filters.TrashedTo.UTC()))
+	}
+	if len(conditions) > 0 {
+		if where == "" {
+			where = " WHERE " + strings.Join(conditions, " AND ")
+		} else {
+			where += " AND " + strings.Join(conditions, " AND ")
+		}
+	}
+	query += where + ` ORDER BY started_at_utc ASC, id ASC`
+
+	rows, err := queryer.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]TrashRecord, 0)
+	for rows.Next() {
+		item, err := scanTrashRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func deleteTrashRecordsTx(ctx context.Context, queryer trashWriteQueryer, items []TrashRecord) ([]string, error) {
+	statement, err := queryer.PrepareContext(ctx, `DELETE FROM trashed_worklogs WHERE id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	defer statement.Close()
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		result, err := statement.ExecContext(ctx, item.ID)
+		if err != nil {
+			return nil, err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if affected != 1 {
+			return nil, fmt.Errorf("%w: trash record %s changed during permanent deletion", ErrConflict, item.ID)
+		}
+		ids = append(ids, item.ID)
+	}
+	return ids, nil
 }
 
 func (s *Service) searchTrash(filters EffectiveFilters, scope, query string) ([]TrashRecord, error) {

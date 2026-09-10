@@ -23,7 +23,104 @@ func (a *app) newTrashCommand() *cobra.Command {
 	cmd.AddCommand(a.newTrashSearchCommand())
 	cmd.AddCommand(a.newTrashShowCommand())
 	cmd.AddCommand(a.newTrashRestoreCommand())
+	cmd.AddCommand(a.newTrashDeleteCommand())
+	cmd.AddCommand(a.newTrashClearCommand())
 	return cmd
+}
+
+func (a *app) newTrashDeleteCommand() *cobra.Command {
+	var issue, issuePrefix, from, to, scope, trashedWithin string
+	var today, yesterday, tomorrow, monday, tuesday, wednesday, thursday, friday, saturday, sunday bool
+	var currentWeek, lastWeek, currentMonth, lastMonth bool
+	var weekOffset int
+	var dry, yes bool
+	cmd := &cobra.Command{
+		Use: "delete [id]", Short: "Permanently delete trashed worklogs", Args: cobra.MaximumNArgs(1),
+		Example: "  workledger trash delete <id> --dry\n  workledger trash delete <id> --yes\n  workledger trash delete --issue PROJ-123 --today --dry\n  workledger trash delete --scope local --trashed-within 15m --yes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			mode := outputMode(cmd)
+			if dry == yes {
+				return a.fail(mode, 2, "validation_error", "permanent trash deletion requires exactly one of --dry or --yes", nil)
+			}
+			weekOffsetSet := cmd.Flags().Changed("week-offset")
+			raw := worklogs.TrashDeleteFilters{
+				ListFilters: worklogs.ListFilters{
+					Issue: issue, IssuePrefix: issuePrefix, Today: today, Yesterday: yesterday, Tomorrow: tomorrow,
+					Monday: monday, Tuesday: tuesday, Wednesday: wednesday, Thursday: thursday, Friday: friday,
+					Saturday: saturday, Sunday: sunday, CurrentWeek: currentWeek, LastWeek: lastWeek,
+					CurrentMonth: currentMonth, LastMonth: lastMonth, From: from, To: to,
+					WeekOffset: weekOffset, WeekOffsetSet: weekOffsetSet,
+				},
+				StorageScope: scope, TrashedWithin: trashedWithin,
+			}
+			if len(args) == 1 && hasAnyTrashDeleteSelector(raw) {
+				return a.fail(mode, 2, "validation_error", "single trash delete cannot be combined with filtered delete selectors", nil)
+			}
+			cfg, service, cleanup, err := a.loadService(mode, yes, "trash delete")
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			var result worklogs.TrashDeleteResult
+			var outputFilters *worklogs.TrashDeleteFilters
+			if len(args) == 1 {
+				result, err = service.DeleteTrash(cmd.Context(), args[0], dry)
+			} else {
+				result, err = service.DeleteTrashBatch(cmd.Context(), cfg, raw, dry)
+				outputFilters = &raw
+			}
+			if err != nil {
+				return a.handleTrashError(mode, cfg, err)
+			}
+			if mode == "json" {
+				return a.renderTrashDeleteJSON(outputFilters, result, cfg.Location)
+			}
+			return a.renderTrashDeleteTable(result, cfg.Location)
+		},
+	}
+	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
+	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
+	cmd.Flags().StringVar(&scope, "scope", "", "Filter by storage scope (local or remote)")
+	cmd.Flags().StringVar(&trashedWithin, "trashed-within", "", "Filter by trash age (Go duration)")
+	addDateWindowFlags(cmd, dateWindowFlagValues{Today: &today, Yesterday: &yesterday, Tomorrow: &tomorrow, Monday: &monday, Tuesday: &tuesday, Wednesday: &wednesday, Thursday: &thursday, Friday: &friday, Saturday: &saturday, Sunday: &sunday, CurrentWeek: &currentWeek, LastWeek: &lastWeek, CurrentMonth: &currentMonth, LastMonth: &lastMonth, From: &from, To: &to, WeekOffset: &weekOffset}, filterDateWindowHelp)
+	cmd.Flags().BoolVar(&dry, "dry", false, "Preview permanent deletion")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Permanently delete the matching trash")
+	return cmd
+}
+
+func (a *app) newTrashClearCommand() *cobra.Command {
+	var dry, yes bool
+	cmd := &cobra.Command{
+		Use: "clear", Short: "Permanently delete all trash", Args: cobra.NoArgs,
+		Example: "  workledger trash clear --dry\n  workledger trash clear --yes",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mode := outputMode(cmd)
+			if dry == yes {
+				return a.fail(mode, 2, "validation_error", "trash clear requires exactly one of --dry or --yes", nil)
+			}
+			cfg, service, cleanup, err := a.loadService(mode, yes, "trash clear")
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			result, err := service.ClearTrash(cmd.Context(), dry)
+			if err != nil {
+				return a.handleTrashError(mode, cfg, err)
+			}
+			if mode == "json" {
+				return a.renderTrashDeleteJSON(nil, result, cfg.Location)
+			}
+			return a.renderTrashDeleteTable(result, cfg.Location)
+		},
+	}
+	cmd.Flags().BoolVar(&dry, "dry", false, "Preview clearing all trash")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Permanently delete all trash")
+	return cmd
+}
+
+func hasAnyTrashDeleteSelector(filters worklogs.TrashDeleteFilters) bool {
+	return hasAnyTrashRestoreSelector(filters.ListFilters) || filters.StorageScope != "" || filters.TrashedWithin != ""
 }
 
 func (a *app) newTrashRestoreCommand() *cobra.Command {
@@ -102,6 +199,68 @@ func trashRestoreRows(items []worklogs.TrashRestoreItem, location *time.Location
 		rows = append(rows, []string{item.TrashID, item.Record.ID, item.Record.IssueKey, localizedWorklogWindow(item.Record.StartedAtUTC, item.Record.DurationSeconds, location)})
 	}
 	return rows
+}
+
+func (a *app) renderTrashDeleteJSON(raw *worklogs.TrashDeleteFilters, result worklogs.TrashDeleteResult, location *time.Location) error {
+	items := make([]map[string]any, 0, len(result.Items))
+	if result.DryRun {
+		for _, item := range result.Items {
+			items = append(items, trashRecordJSON(item, location))
+		}
+	} else {
+		for _, id := range result.DeletedIDs {
+			items = append(items, map[string]any{"id": id})
+		}
+	}
+	payload := map[string]any{
+		"dry_run":       result.DryRun,
+		"matched_count": len(result.Items),
+		"deleted_count": len(result.DeletedIDs),
+		"scope_counts":  trashScopeCounts(result.Items),
+		"items":         items,
+	}
+	if raw != nil {
+		filters := selectorFiltersJSON(raw.ListFilters, result.Filters.EffectiveFilters, location)
+		addTrashScopeJSON(filters, raw.StorageScope)
+		filters["raw"].(map[string]any)["trashed_within"] = emptyToNil(raw.TrashedWithin)
+		if result.Filters.TrashedFrom != nil {
+			filters["effective"].(map[string]any)["trashed_from"] = result.Filters.TrashedFrom.UTC().Format(time.RFC3339)
+		}
+		if result.Filters.TrashedTo != nil {
+			filters["effective"].(map[string]any)["trashed_to"] = result.Filters.TrashedTo.UTC().Format(time.RFC3339)
+		}
+		payload["filters"] = filters
+	}
+	return a.writeJSON(payload)
+}
+
+func (a *app) renderTrashDeleteTable(result worklogs.TrashDeleteResult, location *time.Location) error {
+	if result.DryRun {
+		if err := renderTable(a.stdout, []string{"ID", "SCOPE", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION", "REASON", "TRASHED"}, trashRows(result.Items, location)); err != nil {
+			return err
+		}
+		counts := trashScopeCounts(result.Items)
+		_, err := fmt.Fprintf(a.stdout, "\nMatched: %d trash records (%d local, %d remote)\n", len(result.Items), counts[worklogs.TrashScopeLocal], counts[worklogs.TrashScopeRemote])
+		return err
+	}
+	rows := make([][]string, 0, len(result.DeletedIDs))
+	for _, id := range result.DeletedIDs {
+		rows = append(rows, []string{id})
+	}
+	if err := renderTable(a.stdout, []string{"ID"}, rows); err != nil {
+		return err
+	}
+	counts := trashScopeCounts(result.Items)
+	_, err := fmt.Fprintf(a.stdout, "\nDeleted: %d trash records (%d local, %d remote)\n", len(result.DeletedIDs), counts[worklogs.TrashScopeLocal], counts[worklogs.TrashScopeRemote])
+	return err
+}
+
+func trashScopeCounts(items []worklogs.TrashRecord) map[string]int {
+	counts := map[string]int{worklogs.TrashScopeLocal: 0, worklogs.TrashScopeRemote: 0}
+	for _, item := range items {
+		counts[item.StorageScope]++
+	}
+	return counts
 }
 
 func (a *app) newTrashListCommand() *cobra.Command {

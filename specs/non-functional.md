@@ -330,6 +330,9 @@ Placement rule:
 - [ ] NFR-272ab: Creation-filtered batch-delete table previews shall include a `CREATED` column in UTC.
 - [ ] NFR-272a: Single trash restore JSON output shall use `trash_id` and `record`.
 - [ ] NFR-272b: Filtered trash restore JSON output shall use `filters`, `dry_run`, `matched_count`, `restored_count`, and ordered `{trash_id, record}` items.
+- [ ] NFR-272c: Permanent trash deletion JSON shall use `dry_run`, `matched_count`, `deleted_count`, `scope_counts`, and ordered `items`, with filters included only for filtered delete mode.
+- [ ] NFR-272d: Permanent trash deletion dry-run items shall be complete trash records; executed items shall contain deterministic trash IDs only.
+- [ ] NFR-272e: Permanent trash deletion table dry-runs shall reuse complete trash columns, while executed tables shall list deleted trash IDs and both modes shall summarize local and remote counts.
 - [ ] NFR-275: `workledger status --output json` shall use `{"items":[...]}`.
 - [ ] NFR-276: Each status `items[]` entry shall include `category`, `target`, `status`, and `message`.
 - [ ] NFR-276a: Successful status connectivity items shall clearly identify the checked target and authenticated principal.
@@ -383,6 +386,8 @@ Placement rule:
 - [ ] NFR-318: Direct local delete paths shall archive and remove active rows atomically; archival or revision failure shall roll back the complete operation.
 - [ ] NFR-318a: Local trash restoration shall validate its complete candidate set, insert active rows, and consume archive rows in one transaction; a dry-run shall perform no writes.
 - [ ] NFR-318b: Restoration shall preserve archived creation time, set updated time to restoration time, and set revision to archived revision plus one; legacy rows missing archived metadata shall use restoration time for both timestamps and revision `1`.
+- [ ] NFR-318c: Executed permanent trash deletion shall select and delete its exact ordered membership inside one immediate SQLite write transaction and shall roll back the complete operation on cancellation, conflict, or deletion failure.
+- [ ] NFR-318d: Trash records inserted after a permanent-deletion transaction begins shall not join that transaction's selected membership.
 - [ ] NFR-319: Validation failures shall not produce partial writes.
 - [ ] NFR-320: Per-item plan apply or retry execution shall use explicit transaction boundaries for SQLite writes.
 - [ ] NFR-320a: Pull-apply trash inserts, removed active-row deletes, and new active-row inserts shall commit in one SQLite transaction per saved pull scope.
@@ -391,6 +396,7 @@ Placement rule:
 - [ ] NFR-321b: `worklogs apply --dry` shall remain read-only and shall not require local storage writability.
 - [ ] NFR-321c: `worklogs add --dry` shall remain read-only and shall not require local storage writability.
 - [ ] NFR-321d: `presets apply --dry` shall remain read-only, shall not update `last_used_at`, and shall not require local storage writability.
+- [ ] NFR-321e: Permanent trash deletion and clear dry-runs shall remain read-only and shall not require local storage writability.
 
 ## Determinism
 - [ ] NFR-322: `worklogs list` sorting shall be fixed by `started_at asc`, then stable local `id`.
