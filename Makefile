@@ -14,3 +14,6 @@ db:
 
 ruler:
 	ruler apply --agents codex,claude,copilot
+
+tui:
+	go run ./cmd/workledger tui

@@ -16,7 +16,7 @@ import (
 var footerKeyTokens = map[string]struct{}{
 	"1": {}, "2": {}, "3": {}, "4": {}, "5": {}, "?": {}, "D": {}, "R": {}, "Tab": {}, "Enter": {}, "Esc": {},
 	"A": {}, "a": {}, "c": {}, "d": {}, "d/w": {}, "e": {}, "f": {}, "g": {}, "h/l": {}, "j/k": {}, "n": {}, "p": {}, "q": {}, "r": {}, "s": {}, "s/c": {}, "t": {}, "u": {}, "v": {}, "w": {}, "x": {}, "y": {},
-	"Ctrl+C": {}, "Ctrl+F": {}, "Ctrl+L": {}, "Ctrl+O": {}, "Ctrl+P": {}, "Ctrl+S": {}, "End": {}, "Home/End": {}, "PgUp/PgDn": {}, "Shift+Tab": {}, "←/→": {}, "↑/↓": {},
+	"Ctrl+C": {}, "Ctrl+F": {}, "Ctrl+K": {}, "Ctrl+L": {}, "Ctrl+O": {}, "Ctrl+P": {}, "Ctrl+S": {}, "End": {}, "Home/End": {}, "PgUp/PgDn": {}, "Shift+Tab": {}, "←/→": {}, "↑/↓": {},
 }
 
 func (m model) View() tea.View {
@@ -265,6 +265,9 @@ func (m model) planRailCounts() (unapplied, failed, uncertain int) {
 }
 
 func (m model) renderWorkspace(width, height int) string {
+	if m.issuePicker != nil {
+		return m.renderIssuePicker(width, height)
+	}
 	if m.presetPicker != nil {
 		return m.renderPresetPicker(width, height)
 	}
@@ -428,6 +431,12 @@ func (m model) renderFooter(width int) string {
 		text = "y / Enter Apply plan   n / Esc Cancel"
 	} else if m.overlay == retryFailedPlanOverlay || m.overlay == retryUncertainPlanOverlay {
 		text = "y / Enter Retry plan scopes   n / Esc Cancel"
+	} else if m.issuePicker != nil {
+		if m.issuePicker.searching {
+			text = "Ctrl+F Mode   Tab Pane   ↑/↓ Move   PgUp/PgDn Page   Enter Choose   Esc Close find"
+		} else {
+			text = "Ctrl+F Find   Tab Pane   ↑/↓ Move   PgUp/PgDn Page   Enter Choose   Esc Cancel"
+		}
 	} else if m.presetPicker != nil {
 		if m.presetPicker.searching {
 			text = "Type Filter   Tab Complete   ↑/↓ Select   Enter Choose   Esc Close find"
@@ -479,7 +488,7 @@ func (m model) renderFooter(width int) string {
 	} else {
 		text = "d Day  w Week  D Delete  a Add  A Preset  e Edit  h/l Date  t Today  r Refresh  ? Help  q Quit"
 	}
-	if m.overlay == noOverlay && m.form == nil && m.presetForm == nil && m.presetPicker == nil && m.focus != focusActivity {
+	if m.overlay == noOverlay && m.form == nil && m.presetForm == nil && m.presetPicker == nil && m.issuePicker == nil && m.focus != focusActivity {
 		activityAction := "g Activity"
 		if m.activityOpen {
 			activityAction = "g Close activity"
@@ -524,6 +533,11 @@ func (m model) renderFooter(width int) string {
 
 func (m model) renderAddFormFooter(width int) string {
 	navigation := m.renderFormNavigationHint()
+	pickerAction := ""
+	if m.form.focus == issueField {
+		pickerAction = "Ctrl+K Issues   "
+		navigation = m.formCompletionHint()
+	}
 	nextPlacement := "Manual"
 	switch m.form.placement {
 	case manualPlacement:
@@ -532,7 +546,11 @@ func (m model) renderAddFormFooter(width int) string {
 		nextPlacement = "Fill"
 	}
 	if m.form.placement == manualPlacement {
-		return fmt.Sprintf("%s   Ctrl+P %s   Ctrl+S Save   Esc Cancel", navigation, nextPlacement)
+		footer := fmt.Sprintf("%s%s   Ctrl+P %s   Ctrl+S Save   Esc Cancel", pickerAction, navigation, nextPlacement)
+		if lipgloss.Width(footer) > width-4 && pickerAction != "" {
+			return pickerAction + m.formCompletionHint() + "   Ctrl+S Save   Esc Cancel"
+		}
+		return footer
 	}
 	overtimeAction := "Allow overtime"
 	compactOvertimeAction := "OT on"
@@ -548,7 +566,7 @@ func (m model) renderAddFormFooter(width int) string {
 	if len(m.form.previewRecords) > 0 {
 		saveAction = "create " + pluralizeWorklogs(len(m.form.previewRecords))
 	}
-	footer := fmt.Sprintf("%s   Ctrl+P %s   Ctrl+O %s   Ctrl+L %s   Ctrl+S %s   Esc Cancel", navigation, nextPlacement, overtimeAction, lunchAction, saveAction)
+	footer := fmt.Sprintf("%s%s   Ctrl+P %s   Ctrl+O %s   Ctrl+L %s   Ctrl+S %s   Esc Cancel", pickerAction, navigation, nextPlacement, overtimeAction, lunchAction, saveAction)
 	if lipgloss.Width(footer) <= width-4 {
 		return footer
 	}
@@ -559,7 +577,11 @@ func (m model) renderAddFormFooter(width int) string {
 	if m.form.focus == descriptionField {
 		completion += "Enter Save  "
 	}
-	return fmt.Sprintf("%sCtrl+P %s  Ctrl+O %s  Ctrl+L %s  Ctrl+S %s  Esc", completion, nextPlacement, compactOvertimeAction, lunchAction, saveAction)
+	compact := fmt.Sprintf("%s%sCtrl+P %s  Ctrl+O %s  Ctrl+L %s  Ctrl+S %s  Esc", pickerAction, completion, nextPlacement, compactOvertimeAction, lunchAction, saveAction)
+	if lipgloss.Width(compact) > width-4 && pickerAction != "" {
+		return pickerAction + m.formCompletionHint() + "   Ctrl+S Save   Esc Cancel"
+	}
+	return compact
 }
 
 func (m model) renderFormNavigationHint() string {

@@ -129,8 +129,9 @@ type worklogsScreen struct {
 	issueTotalErr            string
 	issueTotalGen            int
 	issueSuggestionGen       int
+	issuePickerGen           int
+	issueDetailGen           int
 	descriptionSuggestionGen int
-	lastAddedIssue           string
 	weekSummary              worklogs.ContextSummary
 	formError                string
 	conflict                 *worklogs.ConflictDetail
@@ -172,6 +173,7 @@ type interactionState struct {
 	planOperation *planOperationState
 	presetForm    *presetFormState
 	presetPicker  *presetPickerState
+	issuePicker   *issuePickerState
 }
 
 type interactionKind int
@@ -183,6 +185,7 @@ const (
 	interactionWorklogForm
 	interactionPresetForm
 	interactionPresetPicker
+	interactionIssuePicker
 	interactionPlanForm
 	interactionPlanOperation
 )
@@ -199,6 +202,9 @@ func (state interactionState) kind() interactionKind {
 	}
 	if state.presetPicker != nil {
 		return interactionPresetPicker
+	}
+	if state.issuePicker != nil {
+		return interactionIssuePicker
 	}
 	if state.presetForm != nil {
 		return interactionPresetForm
@@ -289,7 +295,31 @@ type issueTotalResultMsg struct {
 
 type issueSuggestionsResultMsg struct {
 	generation int
+	prefix     string
 	items      []string
+	err        error
+}
+
+type issueSuggestionsReadyMsg struct{ generation int }
+
+type issuePickerReadyMsg struct{ generation int }
+
+type issuePickerResultMsg struct {
+	generation int
+	mode       worklogs.IssueFindMode
+	query      string
+	page       int
+	items      []worklogs.UsedIssue
+	hasMore    bool
+	err        error
+}
+
+type issueDescriptionsResultMsg struct {
+	generation int
+	issueKey   string
+	offset     int
+	items      []worklogs.IssueWorklogDescription
+	hasMore    bool
 	err        error
 }
 
@@ -440,11 +470,13 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.colorReady = true
 		m.restyleFormInputs()
 		m.restylePresetInputs()
+		m.restyleIssuePickerInput()
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resizeForm()
 		m.resizePresetInputs()
+		m.resizeIssuePickerInput()
 		return m, nil
 	case statusResultMsg:
 		if msg.generation != m.statusGen {
@@ -506,16 +538,32 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.issueTotalErr = ""
 		return m, nil
 	case issueSuggestionsResultMsg:
-		if m.form == nil || m.form.editing || msg.generation != m.issueSuggestionGen {
+		if m.form == nil || m.form.editing || msg.generation != m.issueSuggestionGen ||
+			msg.prefix != strings.ToUpper(strings.TrimSpace(m.form.inputs[issueInput].Value())) {
 			return m, nil
 		}
 		if msg.err == nil {
 			m.form.inputs[issueInput].SetSuggestions(msg.items)
-			if m.form.suggestedIssue == "" && len(msg.items) > 0 {
+			m.form.suggestedIssue = ""
+			if len(msg.items) > 0 {
 				m.form.suggestedIssue = msg.items[0]
 			}
 		}
 		return m, nil
+	case issueSuggestionsReadyMsg:
+		if m.form == nil || m.form.editing || msg.generation != m.issueSuggestionGen {
+			return m, nil
+		}
+		return m, m.issueSuggestionsCmd(msg.generation)
+	case issuePickerReadyMsg:
+		if m.issuePicker == nil || msg.generation != m.issuePicker.generation {
+			return m, nil
+		}
+		return m, m.issuePickerCmd()
+	case issuePickerResultMsg:
+		return m.applyIssuePickerResult(msg)
+	case issueDescriptionsResultMsg:
+		return m.applyIssueDescriptionsResult(msg)
 	case descriptionSuggestionsResultMsg:
 		if m.form == nil || msg.generation != m.descriptionSuggestionGen ||
 			!strings.EqualFold(strings.TrimSpace(m.form.inputs[issueInput].Value()), msg.issueKey) {
@@ -672,8 +720,10 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 				m.reloadAfterForm = true
 				cmds = append(cmds, m.descriptionSuggestionsCmd())
 				if !m.form.editing {
-					m.issueSuggestionGen++
-					cmds = append(cmds, m.issueSuggestionsCmd(m.issueSuggestionGen))
+					cmds = append(cmds, m.scheduleIssueSuggestions(false))
+					if m.issuePicker != nil {
+						cmds = append(cmds, m.loadIssuePickerPage(m.issuePicker.page, false))
+					}
 				}
 				if m.form.editing {
 					m.form.stale = true
@@ -800,6 +850,8 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.updateOverlay(keyName)
 	case interactionPresetPicker:
 		return m.updatePresetPicker(msg)
+	case interactionIssuePicker:
+		return m.updateIssuePicker(msg)
 	case interactionPresetForm:
 		return m.updatePresetForm(msg)
 	case interactionPlanForm:
@@ -1258,18 +1310,12 @@ func (m model) restoreTrashDayCmd(date time.Time, items []worklogs.TrashRecord) 
 
 func (m *model) openAddForm() tea.Cmd {
 	form := m.newForm(false, "", 0, "", "", "", "")
-	if selected := m.selectedWorklog(); selected != nil {
-		form.suggestedIssue = selected.IssueKey
-	} else {
-		form.suggestedIssue = m.lastAddedIssue
-	}
 	form.suggestedStart = suggestedManualStart(m.worklogs, m.selectedDate, m.workspace.cfg.Location)
 	m.form = &form
 	m.formError = ""
 	m.resizeForm()
-	m.issueSuggestionGen++
 	m.descriptionSuggestionGen++
-	return m.issueSuggestionsCmd(m.issueSuggestionGen)
+	return m.scheduleIssueSuggestions(false)
 }
 
 func (m *model) openEditForm(item worklogs.LocalWorklog) {
@@ -1334,10 +1380,31 @@ func (m *model) restyleFormInputs() {
 func (m model) issueSuggestionsCmd(generation int) tea.Cmd {
 	ws := m.workspace
 	ctx := m.ctx
+	prefix := strings.ToUpper(strings.TrimSpace(m.form.inputs[issueInput].Value()))
 	return func() tea.Msg {
-		items, err := ws.worklogs.ListKnownIssueKeys(ctx, "", issueSuggestionLimit)
-		return issueSuggestionsResultMsg{generation: generation, items: items, err: err}
+		used, _, err := ws.worklogs.ListUsedIssues(ctx, worklogs.IssueFindByPrefix, prefix, issueSuggestionLimit, 0)
+		items := make([]string, 0, len(used))
+		for _, item := range used {
+			items = append(items, item.IssueKey)
+		}
+		return issueSuggestionsResultMsg{generation: generation, prefix: prefix, items: items, err: err}
 	}
+}
+
+func (m *model) scheduleIssueSuggestions(debounce bool) tea.Cmd {
+	if m.form == nil || m.form.editing {
+		return nil
+	}
+	m.issueSuggestionGen++
+	m.form.inputs[issueInput].SetSuggestions(nil)
+	m.form.suggestedIssue = ""
+	generation := m.issueSuggestionGen
+	if debounce {
+		return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
+			return issueSuggestionsReadyMsg{generation: generation}
+		})
+	}
+	return m.issueSuggestionsCmd(generation)
 }
 
 func (m *model) descriptionSuggestionsCmd() tea.Cmd {

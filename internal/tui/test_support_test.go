@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,6 +152,11 @@ type fakeWorklogState struct {
 	knownIssueKeys  []string
 	knownIssueErr   error
 	knownIssueCalls int
+	usedIssues      []worklogs.UsedIssue
+	usedIssueErr    error
+	usedIssueCalls  []usedIssueCall
+	issueDetails    map[string][]worklogs.IssueWorklogDescription
+	issueDetailErr  error
 	descriptions    map[string][]string
 	descriptionErr  error
 	descriptionKeys []string
@@ -163,6 +169,13 @@ type fakeWorklogState struct {
 	restoreErr      error
 }
 
+type usedIssueCall struct {
+	mode   worklogs.IssueFindMode
+	query  string
+	limit  int
+	offset int
+}
+
 type fakeWorklogQueries struct{ state *fakeWorklogState }
 
 func (f *fakeWorklogQueries) ActiveIssueTotalSeconds(_ context.Context, issueKey string) (int, error) {
@@ -173,6 +186,56 @@ func (f *fakeWorklogQueries) ActiveIssueTotalSeconds(_ context.Context, issueKey
 func (f *fakeWorklogQueries) ListKnownIssueKeys(_ context.Context, _ string, _ int) ([]string, error) {
 	f.state.knownIssueCalls++
 	return append([]string(nil), f.state.knownIssueKeys...), f.state.knownIssueErr
+}
+
+func (f *fakeWorklogQueries) ListUsedIssues(_ context.Context, mode worklogs.IssueFindMode, query string, limit, offset int) ([]worklogs.UsedIssue, bool, error) {
+	f.state.usedIssueCalls = append(f.state.usedIssueCalls, usedIssueCall{mode: mode, query: query, limit: limit, offset: offset})
+	if f.state.usedIssueErr != nil {
+		return nil, false, f.state.usedIssueErr
+	}
+	items := make([]worklogs.UsedIssue, 0)
+	for _, item := range f.state.usedIssues {
+		matches := mode == worklogs.IssueFindByPrefix && strings.HasPrefix(item.IssueKey, strings.ToUpper(query))
+		if mode == worklogs.IssueFindByDescription {
+			for _, detail := range f.state.issueDetails[item.IssueKey] {
+				if strings.Contains(strings.ToLower(detail.Description), strings.ToLower(query)) {
+					matches = true
+					break
+				}
+			}
+			if query == "" {
+				matches = true
+			}
+		}
+		if matches {
+			items = append(items, item)
+		}
+	}
+	if offset >= len(items) {
+		return []worklogs.UsedIssue{}, false, nil
+	}
+	items = items[offset:]
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	return append([]worklogs.UsedIssue(nil), items...), hasMore, nil
+}
+
+func (f *fakeWorklogQueries) ListIssueWorklogDescriptions(_ context.Context, issueKey string, limit, offset int) ([]worklogs.IssueWorklogDescription, bool, error) {
+	if f.state.issueDetailErr != nil {
+		return nil, false, f.state.issueDetailErr
+	}
+	items := f.state.issueDetails[issueKey]
+	if offset >= len(items) {
+		return []worklogs.IssueWorklogDescription{}, false, nil
+	}
+	items = items[offset:]
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	return append([]worklogs.IssueWorklogDescription(nil), items...), hasMore, nil
 }
 
 func (f *fakeWorklogQueries) ListRecentDescriptions(_ context.Context, issueKey string, _ int) ([]string, error) {

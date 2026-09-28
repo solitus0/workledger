@@ -2,10 +2,125 @@ package worklogs
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	sqlitestore "github.com/solitus0/workledger/internal/store/sqlite"
 )
+
+type IssueFindMode string
+
+const (
+	IssueFindByPrefix      IssueFindMode = "prefix"
+	IssueFindByDescription IssueFindMode = "description"
+)
+
+// UsedIssue is one issue key evidenced by an active local worklog.
+type UsedIssue struct {
+	IssueKey      string
+	LastEnteredAt time.Time
+}
+
+// ListUsedIssues returns active local issue keys in latest-entry order. When
+// finding by description, a matching worklog admits its issue, but all active
+// worklogs for that issue determine its latest-entry rank.
+func (s *Service) ListUsedIssues(ctx context.Context, mode IssueFindMode, query string, limit, offset int) ([]UsedIssue, bool, error) {
+	if limit <= 0 || offset < 0 {
+		return []UsedIssue{}, false, nil
+	}
+	var where string
+	var args []any
+	switch mode {
+	case IssueFindByPrefix:
+		lower, upper := sqlitestore.PrefixRange(strings.ToUpper(strings.TrimSpace(query)))
+		where, args = `issue_key >= ? AND issue_key < ?`, []any{lower, upper}
+	case IssueFindByDescription:
+		trimmed := strings.TrimSpace(query)
+		if trimmed == "" {
+			where = `1 = 1`
+		} else {
+			where, args = `issue_key IN (SELECT issue_key FROM worklogs WHERE description LIKE ? ESCAPE '\' COLLATE NOCASE)`, []any{literalSubstringPattern(trimmed)}
+		}
+	default:
+		return nil, false, fmt.Errorf("unsupported issue find mode %q", mode)
+	}
+	args = append(args, limit+1, offset)
+	rows, err := s.store.DB().QueryContext(ctx, `
+		SELECT issue_key, MAX(created_at) AS last_entered_at
+		FROM worklogs WHERE `+where+`
+		GROUP BY issue_key
+		ORDER BY last_entered_at DESC, issue_key
+		LIMIT ? OFFSET ?`, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	items := make([]UsedIssue, 0, limit)
+	for rows.Next() {
+		var item UsedIssue
+		var enteredAt string
+		if err := rows.Scan(&item.IssueKey, &enteredAt); err != nil {
+			return nil, false, err
+		}
+		item.LastEnteredAt, err = time.Parse(time.RFC3339, enteredAt)
+		if err != nil {
+			return nil, false, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	return items, hasMore, nil
+}
+
+type IssueWorklogDescription struct {
+	StartedAtUTC time.Time
+	Description  string
+}
+
+// ListIssueWorklogDescriptions returns every active worklog description for an
+// exact issue key, preserving repeated descriptions in latest-entry order.
+func (s *Service) ListIssueWorklogDescriptions(ctx context.Context, issueKey string, limit, offset int) ([]IssueWorklogDescription, bool, error) {
+	if limit <= 0 || offset < 0 || strings.TrimSpace(issueKey) == "" {
+		return []IssueWorklogDescription{}, false, nil
+	}
+	rows, err := s.store.DB().QueryContext(ctx, `
+		SELECT started_at_utc, description
+		FROM worklogs WHERE issue_key = ?
+		ORDER BY created_at DESC, id
+		LIMIT ? OFFSET ?`, strings.ToUpper(strings.TrimSpace(issueKey)), limit+1, offset)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	items := make([]IssueWorklogDescription, 0, limit)
+	for rows.Next() {
+		var item IssueWorklogDescription
+		var startedAt string
+		if err := rows.Scan(&startedAt, &item.Description); err != nil {
+			return nil, false, err
+		}
+		item.StartedAtUTC, err = time.Parse(time.RFC3339, startedAt)
+		if err != nil {
+			return nil, false, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+	return items, hasMore, nil
+}
 
 // ListActiveByIDPrefix returns recent active worklogs whose IDs start with the
 // supplied prefix. The result is bounded for latency-sensitive advisory uses.

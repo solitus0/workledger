@@ -478,7 +478,7 @@ Placement rule:
 - [ ] NFR-379h: Worklog read, context, preview, validation-query, and mutation paths used by long-running frontends shall accept and propagate `context.Context` through SQL operations.
 - [ ] NFR-379i: Automatic worklog placement and insertion shall execute under one SQLite immediate write transaction, and a frontend-supplied expected placement shall fail with a typed conflict when current availability produces different time windows.
 - [ ] NFR-379j: TUI automatic-placement previews shall be asynchronous, debounced, generation-protected, and invalidated by relevant draft or external-storage changes.
-- [ ] NFR-379ja: TUI issue and description completion queries shall be bounded, asynchronous, context-aware, generation-protected, local-only, and refreshed after relevant external-storage changes.
+- [ ] NFR-379ja: TUI issue completion, issue picker search and detail queries, and description completion queries shall be bounded, asynchronous, context-aware, generation-protected, local-only, and refreshed after relevant external-storage changes; issue and detail results shall be paged without a fixed total-history cutoff.
 - [ ] NFR-379jb: Preset CLI and TUI completion shall be bounded to 100 local, read-only, case-insensitive prefix candidates ordered by non-null `last_used_at` descending and then preset name, with never-used presets last in name order.
 - [ ] NFR-379jc: Preset content revisions shall start at `1` and increment on create-field updates or rename, while `last_used_at` updates shall not increment the revision.
 - [ ] NFR-379jd: Worklogs created through presets shall not persist preset identity or lineage.

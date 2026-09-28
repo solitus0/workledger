@@ -193,10 +193,10 @@ func TestAddFormSupportsUpAndDownFieldNavigation(t *testing.T) {
 	}
 }
 
-func TestAddFormCompletesKnownIssuesInServiceOrder(t *testing.T) {
+func TestAddFormCompletesUsedIssuesInEntryOrder(t *testing.T) {
 	ws, deps := testWorkspace(t)
 	service := worklogState(ws)
-	service.knownIssueKeys = []string{"APP-104", "APP-42", "META-1"}
+	service.usedIssues = []worklogs.UsedIssue{{IssueKey: "APP-104"}, {IssueKey: "APP-42"}}
 	m := newModel(context.Background(), deps, ws, nil)
 	m.width, m.height = 120, 32
 	cmd := m.openAddForm()
@@ -210,10 +210,10 @@ func TestAddFormCompletesKnownIssuesInServiceOrder(t *testing.T) {
 	m = next.(model)
 	next, _ = m.Update(textKey("P"))
 	m = next.(model)
-	next, _ = m.Update(cmd())
+	next, _ = m.Update(m.issueSuggestionsCmd(m.issueSuggestionGen)())
 	m = next.(model)
-	if service.knownIssueCalls != 1 {
-		t.Fatalf("known-issue calls = %d, want 1", service.knownIssueCalls)
+	if len(service.usedIssueCalls) != 1 || service.usedIssueCalls[0].query != "APP" {
+		t.Fatalf("used-issue calls = %#v, want one prefix query", service.usedIssueCalls)
 	}
 	if got := m.form.inputs[issueInput].CurrentSuggestion(); got != "APP-104" {
 		t.Fatalf("current suggestion = %q, want most recent APP-104", got)
@@ -238,29 +238,49 @@ func TestAddFormCompletesKnownIssuesInServiceOrder(t *testing.T) {
 	}
 }
 
-func TestAddFormOffersSelectedThenSessionIssueWithoutPrefilling(t *testing.T) {
+func TestAddIssueCompletionQueriesPrefixBeyondRecentHundred(t *testing.T) {
 	ws, deps := testWorkspace(t)
+	service := worklogState(ws)
+	for i := 124; i >= 0; i-- {
+		service.usedIssues = append(service.usedIssues, worklogs.UsedIssue{IssueKey: fmt.Sprintf("APP-%03d", i)})
+	}
 	m := newModel(context.Background(), deps, ws, nil)
 	m.width, m.height = 120, 32
-	m.lastAddedIssue = "LAST-2"
-	m.worklogs = []worklogs.LocalWorklog{{ID: "selected", IssueKey: "SELECTED-1"}}
 	m.openAddForm()
+	for _, letter := range "APP-000" {
+		next, _ := m.Update(textKey(string(letter)))
+		m = next.(model)
+	}
+	next, _ := m.Update(m.issueSuggestionsCmd(m.issueSuggestionGen)())
+	m = next.(model)
+	if got := m.form.inputs[issueInput].CurrentSuggestion(); got != "APP-000" {
+		t.Fatalf("older prefix completion = %q", got)
+	}
+	if last := service.usedIssueCalls[len(service.usedIssueCalls)-1]; last.query != "APP-000" {
+		t.Fatalf("completion query prefix = %q", last.query)
+	}
+}
+
+func TestAddFormOffersMostRecentUsedIssueWithoutPrefilling(t *testing.T) {
+	ws, deps := testWorkspace(t)
+	service := worklogState(ws)
+	service.usedIssues = []worklogs.UsedIssue{{IssueKey: "RECENT-3"}, {IssueKey: "SELECTED-1"}}
+	m := newModel(context.Background(), deps, ws, nil)
+	m.width, m.height = 120, 32
+	m.worklogs = []worklogs.LocalWorklog{{ID: "selected", IssueKey: "SELECTED-1"}}
+	cmd := m.openAddForm()
+	next, _ := m.Update(cmd())
+	m = next.(model)
 	if got := m.form.inputs[issueInput].Value(); got != "" {
 		t.Fatalf("issue was silently prefilled with %q", got)
 	}
-	if footer := m.renderFooter(m.width); !strings.Contains(footer, "Tab Use SELECTED-1") {
-		t.Fatalf("selected issue suggestion missing: %q", footer)
+	if footer := m.renderFooter(m.width); !strings.Contains(footer, "Tab Use RECENT-3") {
+		t.Fatalf("recent issue suggestion missing: %q", footer)
 	}
-	next, _ := m.Update(specialKey(tea.KeyTab))
+	next, _ = m.Update(specialKey(tea.KeyTab))
 	m = next.(model)
-	if got := m.form.inputs[issueInput].Value(); got != "SELECTED-1" || m.form.focus != issueField {
-		t.Fatalf("selected issue was not explicitly accepted: value=%q focus=%v", got, m.form.focus)
-	}
-
-	m.worklogs = nil
-	m.openAddForm()
-	if footer := m.renderFooter(m.width); !strings.Contains(footer, "Tab Use LAST-2") {
-		t.Fatalf("session issue suggestion missing: %q", footer)
+	if got := m.form.inputs[issueInput].Value(); got != "RECENT-3" || m.form.focus != issueField {
+		t.Fatalf("recent issue was not explicitly accepted: value=%q focus=%v", got, m.form.focus)
 	}
 }
 

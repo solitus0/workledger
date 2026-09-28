@@ -398,9 +398,8 @@ func (m *model) openAddFromPreset(item presets.Preset) tea.Cmd {
 	m.form = &form
 	m.formError = ""
 	m.resizeForm()
-	m.issueSuggestionGen++
 	m.descriptionSuggestionGen++
-	return tea.Batch(m.issueSuggestionsCmd(m.issueSuggestionGen), m.descriptionSuggestionsCmd(), m.schedulePreview())
+	return tea.Batch(m.scheduleIssueSuggestions(false), m.descriptionSuggestionsCmd(), m.schedulePreview())
 }
 
 func presetSummary(item presets.Preset) string {

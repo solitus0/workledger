@@ -24,6 +24,10 @@ func (m model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+s":
 			return m.beginFormSubmit()
+		case "ctrl+k":
+			if !m.form.editing && m.form.focus == issueField {
+				return m, m.openIssuePicker()
+			}
 		case "tab":
 			if inputCmd, accepted := m.acceptFormSuggestion(msg); accepted {
 				return m, inputCmd
@@ -79,6 +83,7 @@ func (m model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.formError = ""
 		if m.form.focus == issueField {
 			m.invalidateDescriptionSuggestions()
+			cmds = append(cmds, m.scheduleIssueSuggestions(true))
 		}
 		if !m.form.editing && m.previewInputField(m.form.focus) {
 			cmds = append(cmds, m.schedulePreview())
@@ -140,7 +145,7 @@ func (m *model) acceptFormSuggestion(msg tea.Msg) (tea.Cmd, bool) {
 		m.form.inputs[index] = input
 		if m.form.focus == issueField {
 			m.invalidateDescriptionSuggestions()
-			return tea.Batch(inputCmd, m.schedulePreview()), true
+			return tea.Batch(inputCmd, m.scheduleIssueSuggestions(false), m.schedulePreview()), true
 		}
 		return inputCmd, true
 	} else {
@@ -151,7 +156,7 @@ func (m *model) acceptFormSuggestion(msg tea.Msg) (tea.Cmd, bool) {
 	m.formError = ""
 	if m.form.focus == issueField {
 		m.invalidateDescriptionSuggestions()
-		return m.schedulePreview(), true
+		return tea.Batch(m.scheduleIssueSuggestions(false), m.schedulePreview()), true
 	}
 	if m.form.focus == startField {
 		return m.schedulePreview(), true
@@ -220,7 +225,6 @@ func (m model) handleMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd) 
 		m.setNotice(noticeSuccess, fmt.Sprintf("restored %s on %s", pluralizeWorklogs(msg.deleted), m.selectedDate.Format("2006-01-02")))
 	}
 	if msg.kind == "add" && len(msg.records) > 0 {
-		m.lastAddedIssue = msg.records[0].IssueKey
 		m.selectAfterID = msg.records[0].ID
 		if len(msg.records) == 1 {
 			local := msg.records[0].StartedAtUTC.In(m.workspace.cfg.Location)
