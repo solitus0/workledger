@@ -9,6 +9,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 - Interactive `workledger tui` workflows for status, worklogs, plans, presets, and trash.
+- TUI Worklogs Month view with a Monday-first calendar, local booked totals, past-weekday quota gaps, overlap warnings, keyboard and mouse date selection, and selected-day previews and worklog creation.
+- Local issue-history picker in TUI Add through `Ctrl+K`, with paged issue-key prefix and worklog-description search and a scrollable description-history pane.
 - Bounded diagnostic history through `workledger activity list` and the global TUI Activity drawer.
 - Recent local-ledger cleanup through `workledger worklogs delete --created-within <duration>`, with auditable dry-run output and recoverable trash archival.
 - Permanent filtered trash deletion and full-trash clearing through `workledger trash delete` and `workledger trash clear`, with mandatory preview or explicit confirmation.
@@ -17,6 +19,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - `--scope local|remote` filtering for trash list and search commands.
 
 ### Changed
+- TUI Add issue completion now ranks active local issue keys by their latest entry time and offers the most recently entered issue when the field is empty.
 - Saved-plan item execution now uses delivery attempts as its only persisted source of truth; `workledger init` migrates legacy terminal results and removes the duplicate item lifecycle columns in a clean schema cutover.
 - The TUI Activity drawer now shows only meaningful worklog, trash, preset, and plan actions, while activity outcomes no longer appear in the action bar.
 - TUI Worklogs now opens a blank worklog directly with `a` and reserves uppercase `A` for adding from a preset.
@@ -24,6 +27,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Local worklog deletion now atomically archives restorable source identity and revision metadata instead of permanently discarding the row.
 
 ### Fixed
+- Worklog context now slices occupancy at local calendar midnights across 23-hour and 25-hour daylight-saving dates, preventing omitted or double-counted time in daily and monthly totals.
 - Preset application now commits worklog creation and recency updates atomically and rejects stale TUI preset drafts without creating a worklog.
 - Applied pull plans created by older binaries no longer reappear as unapplied after migration because their terminal item results are preserved as delivery attempts.
 - `workledger init` now rebuilds explicit indexes when a single truncated final SQLite page affects indexes only, preserving table rows and verifying full database integrity; writability checks no longer open the database outside SQLite and risk releasing active POSIX locks.
