@@ -885,13 +885,13 @@ func TestWeekViewRendersOverviewAndSelectedDayAtMinimumViewport(t *testing.T) {
 	m := newModel(context.Background(), deps, ws, nil)
 	m.width, m.height = minimumWidth, minimumHeight
 	m.worklogView = weekWorklogView
-	m.weekDays = testWeekDays()
-	m.weekSummary = worklogs.ContextSummary{BookedSeconds: 32*3600 + 30*60, WorklogCount: 5, CollisionCount: 1}
+	m.contextDays = testWeekDays()
+	m.contextSummary = worklogs.ContextSummary{BookedSeconds: 32*3600 + 30*60, WorklogCount: 5, CollisionCount: 1}
 	m.contextSettings = worklogs.ContextSettings{
 		DayStart: "08:00", DayEnd: "17:00", DailyMinimumQuotaSeconds: 28800,
 		Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
 	}
-	m.selectWeekDate(m.selectedDate)
+	m.selectContextDate(m.selectedDate)
 	m.worklogs = []worklogs.LocalWorklog{{
 		ID: "early", IssueKey: "WL-1234", StartedAtUTC: time.Date(2026, 5, 21, 7, 0, 0, 0, time.UTC), DurationSeconds: 2 * 3600,
 	}}

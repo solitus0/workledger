@@ -324,7 +324,7 @@ func (s *Service) Context(ctx context.Context, cfg config.EffectiveConfig, input
 	days := make([]ContextDay, 0, len(selectedDates))
 	for _, selectedDate := range selectedDates {
 		dayStart := time.Date(selectedDate.Year(), selectedDate.Month(), selectedDate.Day(), 0, 0, 0, 0, cfg.Location)
-		dayEnd := dayStart.Add(24 * time.Hour)
+		dayEnd := dayStart.AddDate(0, 0, 1)
 		worklogsForDay := make([]LocalWorklog, 0)
 		slicesForDay := make([]localInterval, 0)
 		bookedSeconds := 0

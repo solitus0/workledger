@@ -21,6 +21,9 @@ func (m model) renderWorklogWorkspace(width, height int) string {
 	if m.worklogView == weekWorklogView {
 		return m.renderWeekWorkspace(width, height)
 	}
+	if m.worklogView == monthWorklogView {
+		return m.renderMonthWorkspace(width, height)
+	}
 	topHeight := max(10, height/2)
 	detailHeight := height - topHeight
 	header := fmt.Sprintf("  %-7s %-10s %-14s %s", "TIME", "DURATION", "ISSUE", "DESCRIPTION")
@@ -70,13 +73,13 @@ func (m model) renderWeekWorkspace(width, height int) string {
 	weekStart, weekEnd := weekBounds(m.selectedDate)
 	title := fmt.Sprintf("Week · %s–%s", weekStart.Format("2006-01-02"), weekEnd.Format("2006-01-02"))
 	lines := []string{
-		m.renderLoggedHeading(title, m.weekSummary.BookedSeconds, width-4),
+		m.renderLoggedHeading(title, m.contextSummary.BookedSeconds, width-4),
 		m.renderWorklogViewSelector(),
 		"",
 		m.muted(fmt.Sprintf("  %-5s %-11s %-10s %-9s %-10s %s", "DAY", "DATE", "BOOKED", "WORKLOGS", "DELTA", "COLLISIONS")),
 	}
 	lines = append(lines, m.weekRows()...)
-	if len(m.weekDays) == 0 {
+	if len(m.contextDays) == 0 {
 		if m.worklogLoading {
 			lines = append(lines, "  "+m.paint("Loading…", m.colors.Progress))
 		} else {
@@ -99,15 +102,20 @@ func (m model) renderWeekWorkspace(width, height int) string {
 }
 
 func (m model) renderWorklogViewSelector() string {
-	if m.worklogView == weekWorklogView {
-		return m.secondary("Day") + "  " + m.paint("[Week]", m.colors.Focus)
+	labels := []string{"Day", "Week", "Month"}
+	for index, label := range labels {
+		if worklogView(index) == m.worklogView {
+			labels[index] = m.paint("["+label+"]", m.colors.Focus)
+		} else {
+			labels[index] = m.secondary(label)
+		}
 	}
-	return m.paint("[Day]", m.colors.Focus) + "  " + m.secondary("Week")
+	return strings.Join(labels, "  ")
 }
 
 func (m model) weekRows() []string {
-	rows := make([]string, 0, len(m.weekDays))
-	for _, day := range m.weekDays {
+	rows := make([]string, 0, len(m.contextDays))
+	for _, day := range m.contextDays {
 		date, err := time.ParseInLocation("2006-01-02", day.Date, m.workspace.cfg.Location)
 		if err != nil {
 			continue
@@ -496,6 +504,9 @@ func (m model) formContentWidth() int {
 
 func (m model) formLineBudget() int {
 	bodyHeight := m.height - 3
+	if m.worklogView == monthWorklogView {
+		return max(1, bodyHeight-7)
+	}
 	topHeight := max(10, bodyHeight/2)
 	return max(1, bodyHeight-topHeight-2)
 }

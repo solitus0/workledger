@@ -54,8 +54,8 @@ func TestWeekModeNavigatesDaysAndWeeksAndOpensSelectedDay(t *testing.T) {
 	ws, deps := testWorkspace(t)
 	m := newModel(context.Background(), deps, ws, nil)
 	m.width, m.height = 120, 32
-	m.weekDays = testWeekDays()
-	m.selectWeekDate(m.selectedDate)
+	m.contextDays = testWeekDays()
+	m.selectContextDate(m.selectedDate)
 
 	next, _ := m.Update(textKey("w"))
 	m = next.(model)
@@ -70,7 +70,7 @@ func TestWeekModeNavigatesDaysAndWeeksAndOpensSelectedDay(t *testing.T) {
 	if len(m.worklogs) != 1 || m.worklogs[0].ID != "fri" {
 		t.Fatalf("selected day worklogs = %#v", m.worklogs)
 	}
-	m.selectWeekDate(time.Date(2026, 5, 24, 0, 0, 0, 0, time.UTC))
+	m.selectContextDate(time.Date(2026, 5, 24, 0, 0, 0, 0, time.UTC))
 	next, _ = m.Update(textKey("j"))
 	m = next.(model)
 	if got := m.selectedDate.Format("2006-01-02"); got != "2026-05-24" {
@@ -82,7 +82,7 @@ func TestWeekModeNavigatesDaysAndWeeksAndOpensSelectedDay(t *testing.T) {
 	if got := m.selectedDate.Format("2006-01-02"); got != "2026-05-17" || cmd == nil {
 		t.Fatalf("previous week selected date=%s cmd=%v", got, cmd)
 	}
-	if len(m.weekDays) != 0 || len(m.worklogs) != 0 {
+	if len(m.contextDays) != 0 || len(m.worklogs) != 0 {
 		t.Fatalf("previous week retained stale rows")
 	}
 
@@ -119,7 +119,7 @@ func TestWorklogLoadFetchesSelectedMondayThroughSundayOnce(t *testing.T) {
 	if input.From != "2026-05-18" || input.To != "2026-05-24" {
 		t.Fatalf("context window = %s..%s", input.From, input.To)
 	}
-	if len(result.items) != 1 || result.items[0].ID != "thu" || len(result.weekDays) != 7 {
+	if len(result.items) != 1 || result.items[0].ID != "thu" || len(result.contextDays) != 7 {
 		t.Fatalf("selected week result = %#v", result)
 	}
 }

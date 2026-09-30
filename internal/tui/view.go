@@ -15,8 +15,8 @@ import (
 
 var footerKeyTokens = map[string]struct{}{
 	"1": {}, "2": {}, "3": {}, "4": {}, "5": {}, "?": {}, "D": {}, "R": {}, "Tab": {}, "Enter": {}, "Esc": {},
-	"A": {}, "a": {}, "c": {}, "d": {}, "d/w": {}, "e": {}, "f": {}, "g": {}, "h/l": {}, "j/k": {}, "n": {}, "p": {}, "q": {}, "r": {}, "s": {}, "s/c": {}, "t": {}, "u": {}, "v": {}, "w": {}, "x": {}, "y": {},
-	"Ctrl+C": {}, "Ctrl+F": {}, "Ctrl+K": {}, "Ctrl+L": {}, "Ctrl+O": {}, "Ctrl+P": {}, "Ctrl+S": {}, "End": {}, "Home/End": {}, "PgUp/PgDn": {}, "Shift+Tab": {}, "←/→": {}, "↑/↓": {},
+	"A": {}, "a": {}, "a/A": {}, "c": {}, "d": {}, "d/w": {}, "d/w/m": {}, "e": {}, "f": {}, "g": {}, "h/l": {}, "hjkl": {}, "j/k": {}, "m": {}, "n": {}, "p": {}, "q": {}, "r": {}, "s": {}, "s/c": {}, "t": {}, "u": {}, "v": {}, "w": {}, "x": {}, "y": {},
+	"Ctrl+C": {}, "Ctrl+F": {}, "Ctrl+K": {}, "Ctrl+L": {}, "Ctrl+O": {}, "Ctrl+P": {}, "Ctrl+S": {}, "End": {}, "Home/End": {}, "PgUp/PgDn": {}, "PgUp/Dn": {}, "Shift+Tab": {}, "←/→": {}, "↑/↓": {},
 }
 
 func (m model) View() tea.View {
@@ -147,12 +147,12 @@ func (m model) renderRailLayout(height int) (string, [5]rectangle) {
 	worklogsTitle := m.railTitle("2 Worklogs", worklogsActive)
 	worklogsState := "Unavailable"
 	if m.workspace != nil {
-		daySeconds := 0
-		for _, item := range m.worklogs {
-			daySeconds += item.DurationSeconds
+		period := "This week"
+		if m.worklogView == monthWorklogView {
+			period = "This month"
 		}
-		worklogsState = fmt.Sprintf("%-10s%s\n%-10s%s", "Selected", m.paint(fmt.Sprintf("%s  (%d)", formatDuration(daySeconds), len(m.worklogs)), m.colors.Information),
-			"This week", m.paint(fmt.Sprintf("%s  (%d)", formatDuration(m.weekSummary.BookedSeconds), m.weekSummary.WorklogCount), m.colors.Information))
+		worklogsState = fmt.Sprintf("%-10s %s\n%-10s %s", "Selected", m.paint(fmt.Sprintf("%s  (%d)", formatDuration(m.dayBookedSeconds()), len(m.worklogs)), m.colors.Information),
+			period, m.paint(fmt.Sprintf("%s  (%d)", formatDuration(m.contextSummary.BookedSeconds), m.contextSummary.WorklogCount), m.colors.Information))
 		if m.worklogLoading {
 			worklogsState += "\n" + m.paint("Refreshing…", m.colors.Progress)
 		}
@@ -311,7 +311,7 @@ func (m model) overlayContent() (overlayCopy, string) {
 	switch m.overlay {
 	case helpOverlay:
 		title = "Help"
-		body = "The action bar is the authoritative shortcut reference and adapts to the current view and selection.\n\nThe left rail switches workspaces. Worklogs and Trash offer Day and Week views. Plans move from saved plans to scope review. Remote trash is audit-only."
+		body = "The action bar is the authoritative shortcut reference and adapts to the current view and selection.\n\nThe left rail switches workspaces. Worklogs offer Day, Week, and Month views. Month shows a calendar of local booked time and gaps on past weekdays; today is in progress and future dates are pending. Weekday quota assumes Monday through Friday without holiday or leave adjustments. Trash offers Day and Week views. Plans move from saved plans to scope review. Remote trash is audit-only."
 	case deleteOverlay:
 		title, color = "Move selected worklog to trash?", m.colors.Destructive
 		if len(m.deleteSelection) == 1 {
@@ -483,10 +483,15 @@ func (m model) renderFooter(width int) string {
 		if !m.form.editing {
 			text = m.renderAddFormFooter(width)
 		}
+	} else if m.worklogView == monthWorklogView {
+		text = "d/w/m View  hjkl Day  PgUp/Dn Month  Enter Open  a/A Add/preset  t Today  r Refresh  ? Help  q Quit"
+		if width < 120 {
+			text = "d/w/m View hjkl Day PgUp/Dn Month Enter Day a/A Add/preset t Now ? Help q Quit"
+		}
 	} else if m.worklogView == weekWorklogView {
-		text = "d/w View  D Delete day  h/l Week  j/k Day  Enter Open  a Add  A Preset  t Today  ? Help  q Quit"
+		text = "d/w/m View  D Delete day  h/l Week  j/k Day  Enter Open  a Add  A Preset  t Today  ? Help  q Quit"
 	} else {
-		text = "d Day  w Week  D Delete  a Add  A Preset  e Edit  h/l Date  t Today  r Refresh  ? Help  q Quit"
+		text = "d/w/m View  D Delete  a Add  A Preset  e Edit  h/l Date  t Today  r Refresh  ? Help  q Quit"
 	}
 	if m.overlay == noOverlay && m.form == nil && m.presetForm == nil && m.presetPicker == nil && m.issuePicker == nil && m.focus != focusActivity {
 		activityAction := "g Activity"

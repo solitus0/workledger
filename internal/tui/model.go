@@ -41,6 +41,7 @@ type worklogView int
 const (
 	dayWorklogView worklogView = iota
 	weekWorklogView
+	monthWorklogView
 )
 
 type statusView int
@@ -116,7 +117,7 @@ type shellState struct {
 type worklogsScreen struct {
 	worklogView              worklogView
 	worklogs                 []worklogs.LocalWorklog
-	weekDays                 []worklogs.ContextDay
+	contextDays              []worklogs.ContextDay
 	dayContext               worklogs.ContextDay
 	contextSettings          worklogs.ContextSettings
 	issueMetadata            map[string]worklogs.IssueMetadata
@@ -132,7 +133,7 @@ type worklogsScreen struct {
 	issuePickerGen           int
 	issueDetailGen           int
 	descriptionSuggestionGen int
-	weekSummary              worklogs.ContextSummary
+	contextSummary           worklogs.ContextSummary
 	formError                string
 	conflict                 *worklogs.ConflictDetail
 	selectAfterID            string
@@ -275,15 +276,15 @@ type statusResultMsg struct {
 }
 
 type worklogResultMsg struct {
-	generation int
-	date       time.Time
-	items      []worklogs.LocalWorklog
-	day        worklogs.ContextDay
-	settings   worklogs.ContextSettings
-	metadata   map[string]worklogs.IssueMetadata
-	week       worklogs.ContextSummary
-	weekDays   []worklogs.ContextDay
-	err        error
+	generation  int
+	date        time.Time
+	items       []worklogs.LocalWorklog
+	day         worklogs.ContextDay
+	settings    worklogs.ContextSettings
+	metadata    map[string]worklogs.IssueMetadata
+	summary     worklogs.ContextSummary
+	contextDays []worklogs.ContextDay
+	err         error
 }
 
 type issueTotalResultMsg struct {
@@ -517,8 +518,8 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.dayContext = msg.day
 		m.contextSettings = msg.settings
 		m.issueMetadata = msg.metadata
-		m.weekSummary = msg.week
-		m.weekDays = msg.weekDays
+		m.contextSummary = msg.summary
+		m.contextDays = msg.contextDays
 		if m.form != nil && !m.form.editing {
 			m.form.suggestedStart = suggestedManualStart(m.worklogs, m.selectedDate, m.workspace.cfg.Location)
 		}
@@ -1003,6 +1004,20 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 	if layout.workspace.contains(msg.X, msg.Y) {
 		m.focus = focusWorkspace
+		if m.activeTab == worklogsTab && m.worklogView == monthWorklogView {
+			compact := monthCalendarCompact(m.selectedDate, layout.workspace.height)
+			rowHeight := 2
+			if compact {
+				rowHeight = 1
+			}
+			x, y := msg.X-layout.workspace.x-2, msg.Y-layout.workspace.y-5
+			cellWidth := min(14, (layout.workspace.width-4)/7)
+			if x >= 0 && x < cellWidth*7 && y >= 0 && y < monthCalendarWeeks(m.selectedDate)*rowHeight {
+				start, _ := monthBounds(m.selectedDate)
+				offset := (int(start.Weekday()) + 6) % 7
+				return m.selectMonthDate(start.AddDate(0, 0, y/rowHeight*7+x/cellWidth-offset))
+			}
+		}
 	}
 	return m, nil
 }
@@ -1031,7 +1046,7 @@ func (m *model) startWorklogLoad() tea.Cmd {
 	if m.workspace == nil {
 		return nil
 	}
-	m.clearWeekOutsideSelection()
+	m.clearContextOutsideSelection()
 	m.worklogGen++
 	m.worklogLoading = true
 	return m.worklogCmd(m.worklogGen, m.selectedDate)
@@ -1101,18 +1116,18 @@ func (m model) trashCmd(generation int, date time.Time) tea.Cmd {
 	}
 }
 
-func (m *model) clearWeekOutsideSelection() {
-	if len(m.weekDays) == 0 {
+func (m *model) clearContextOutsideSelection() {
+	if len(m.contextDays) == 0 {
 		return
 	}
-	weekStart, weekEnd := weekBounds(m.selectedDate)
-	firstDate, firstErr := time.ParseInLocation("2006-01-02", m.weekDays[0].Date, m.workspace.cfg.Location)
-	lastDate, lastErr := time.ParseInLocation("2006-01-02", m.weekDays[len(m.weekDays)-1].Date, m.workspace.cfg.Location)
-	if firstErr == nil && lastErr == nil && sameDay(firstDate, weekStart) && sameDay(lastDate, weekEnd) {
+	rangeStart, rangeEnd := m.worklogBounds(m.selectedDate)
+	firstDate, firstErr := time.ParseInLocation("2006-01-02", m.contextDays[0].Date, m.workspace.cfg.Location)
+	lastDate, lastErr := time.ParseInLocation("2006-01-02", m.contextDays[len(m.contextDays)-1].Date, m.workspace.cfg.Location)
+	if firstErr == nil && lastErr == nil && sameDay(firstDate, rangeStart) && sameDay(lastDate, rangeEnd) {
 		return
 	}
-	m.weekDays = nil
-	m.weekSummary = worklogs.ContextSummary{}
+	m.contextDays = nil
+	m.contextSummary = worklogs.ContextSummary{}
 	m.worklogs = nil
 	m.dayContext = worklogs.ContextDay{Date: m.selectedDate.Format("2006-01-02")}
 	m.worklogSelected = 0
@@ -1122,31 +1137,31 @@ func (m model) worklogCmd(generation int, date time.Time) tea.Cmd {
 	ws := m.workspace
 	ctx := m.ctx
 	dateValue := date.Format("2006-01-02")
-	weekStart, weekEnd := weekBounds(date)
+	rangeStart, rangeEnd := m.worklogBounds(date)
 	return func() tea.Msg {
-		week, err := ws.worklogs.Context(ctx, ws.cfg, worklogs.ContextInput{
-			From: weekStart.Format("2006-01-02"),
-			To:   weekEnd.Format("2006-01-02"),
+		result, err := ws.worklogs.Context(ctx, ws.cfg, worklogs.ContextInput{
+			From: rangeStart.Format("2006-01-02"),
+			To:   rangeEnd.Format("2006-01-02"),
 		})
 		if err != nil {
 			return worklogResultMsg{generation: generation, date: date, err: err}
 		}
 		selectedDay := worklogs.ContextDay{Date: dateValue}
-		for _, day := range week.Days {
+		for _, day := range result.Days {
 			if day.Date == dateValue {
 				selectedDay = day
 				break
 			}
 		}
 		return worklogResultMsg{
-			generation: generation,
-			date:       date,
-			items:      selectedDay.Worklogs,
-			day:        selectedDay,
-			settings:   week.Settings,
-			metadata:   week.Metadata,
-			week:       week.Summary,
-			weekDays:   week.Days,
+			generation:  generation,
+			date:        date,
+			items:       selectedDay.Worklogs,
+			day:         selectedDay,
+			settings:    result.Settings,
+			metadata:    result.Metadata,
+			summary:     result.Summary,
+			contextDays: result.Days,
 		}
 	}
 }

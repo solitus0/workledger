@@ -58,9 +58,9 @@ func (m model) updateTrash(key string) (tea.Model, tea.Cmd) {
 	if m.trashView == weekWorklogView {
 		switch key {
 		case "up", "k":
-			m.selectTrashWeekDate(m.selectedDate.AddDate(0, 0, -1))
+			return m, m.selectTrashWeekDate(m.selectedDate.AddDate(0, 0, -1))
 		case "down", "j":
-			m.selectTrashWeekDate(m.selectedDate.AddDate(0, 0, 1))
+			return m, m.selectTrashWeekDate(m.selectedDate.AddDate(0, 0, 1))
 		case "left", "h":
 			m.selectedDate = m.selectedDate.AddDate(0, 0, -7)
 			return m, m.refreshCmd(refreshDateData)
@@ -97,13 +97,14 @@ func (m model) updateTrash(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) selectTrashWeekDate(date time.Time) {
+func (m *model) selectTrashWeekDate(date time.Time) tea.Cmd {
 	start, end := weekBounds(m.selectedDate)
 	if date.Before(start) || date.After(end) {
-		return
+		return nil
 	}
 	m.selectedDate = date
 	m.trashItems = trashForDate(m.trashWeekItems, date, m.workspace.cfg.Location)
 	m.trashSelected = clampIndex(m.trashSelected, len(m.trashItems))
-	m.selectWeekDate(date)
+	m.selectContextDate(date)
+	return m.refreshCmd(refreshWorklogs | refreshPlans)
 }
