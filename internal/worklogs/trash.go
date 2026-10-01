@@ -512,7 +512,11 @@ func (s *Service) prepareTrashRestoreTx(ctx context.Context, cfg config.Effectiv
 		if record.SourceRevision != nil {
 			revision = *record.SourceRevision + 1
 		}
-		candidate := LocalWorklog{ID: *record.SourceWorklogID, IssueKey: record.IssueKey, StartedAtUTC: record.StartedAtUTC, DurationSeconds: record.DurationSeconds, Description: record.Description, CreatedAt: createdAt, UpdatedAt: restoredAt, Revision: revision}
+		start, seconds, err := NormalizeTiming(record.StartedAtUTC, record.DurationSeconds)
+		if err != nil {
+			return nil, ValidationError{Issues: []ValidationIssue{{Field: "duration", Message: fmt.Sprintf("trash %s: %s", record.ID, err)}}}
+		}
+		candidate := LocalWorklog{ID: *record.SourceWorklogID, IssueKey: record.IssueKey, StartedAtUTC: start, DurationSeconds: seconds, Description: record.Description, CreatedAt: createdAt, UpdatedAt: restoredAt, Revision: revision}
 		candidates = append(candidates, candidate)
 		items = append(items, TrashRestoreItem{TrashID: record.ID, Record: candidate})
 	}

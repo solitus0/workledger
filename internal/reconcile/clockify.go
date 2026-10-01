@@ -15,6 +15,9 @@ func (s *Service) CreateClockifyPullPlan(ctx context.Context, cfg config.Effecti
 	if err != nil {
 		return Plan{}, err
 	}
+	if err := s.normalizePullPlan(ctx, &plan); err != nil {
+		return Plan{}, err
+	}
 	if err := s.insertPlan(ctx, plan); err != nil {
 		return Plan{}, err
 	}

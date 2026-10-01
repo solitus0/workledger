@@ -30,7 +30,7 @@ Create canonical local `workledger` worklogs from evidence visible in the curren
 3. **Defaults are not questions.** Do not ask for started time, date/window, log count, description, summary, or split just because they are absent. Default to one log, `--fill --today`, and no description unless the user provided one or the CLI requires one.
 4. **Optional fields stay optional.** Use user-provided started time, date/window, log count, split, and description when present. Ask only when the user provided an optional field but it conflicts, is malformed, or cannot be applied without changing intent.
 
-Never invent duration, issue keys, or completed work. Normalize explicit duration syntax only when meaning is unchanged, such as `90 minutes` to `1h30m`.
+Never invent duration, issue keys, or completed work. Normalize explicit duration syntax, then round the supplied total to the nearest minute with 30-second ties upward, following the canonical worklog contract. Starts also normalize to minute boundaries. Preserve the normalized total during placement and report changes from the supplied timing.
 
 ## Creation flow
 
@@ -44,9 +44,9 @@ Never invent duration, issue keys, or completed work. Normalize explicit duratio
    - use `--fit` only when the user requests one continuous placement or the session clearly calls for a single earliest free slot
    - use `--started` or `--started-utc` only when the user supplies the exact start
    - include `--description` only when the user supplied one or dry-run proves the CLI requires it
-6. Use `worklogs apply` with one JSON payload when the user supplies multiple issues, per-entry durations, a log count, explicit split instructions, or payload-shaped evidence. If the user gives one total duration with multiple issues or a log count but no split, divide the explicit total evenly and preserve the exact total.
+6. Use `worklogs apply` with one JSON payload when the user supplies multiple issues, per-entry durations, a log count, explicit split instructions, or payload-shaped evidence. For one total with multiple issues or a log count but no split, round the total once, divide its whole minutes evenly, and assign remainder minutes one at a time in input order. Preserve the normalized total; every fragment must satisfy the effective minimum.
 7. Dry-run first with `--output json`; apply immediately only after a clean dry-run.
-8. If dry-run fails, repair only evidence-supported command shape, payload shape, timestamp grammar/exclusivity, slot placement, optional-description handling, or allocation math that preserves the explicit total. When the CLI says placement would require `--overtime`, report that nothing was created and ask permission before retrying with `--overtime`. Otherwise ask only when the smallest safe correction needs a missing duration, a missing issue key, or a change to user-provided intent.
+8. If dry-run fails, repair only evidence-supported command shape, payload shape, timestamp grammar/exclusivity, slot placement, optional-description handling, or allocation math that preserves the normalized total. When the CLI says placement would require `--overtime`, report that nothing was created and ask permission before retrying with `--overtime`. Otherwise ask only when the smallest safe correction needs a missing duration, a missing issue key, or a change to user-provided intent.
 9. If apply fails, do not claim success. Retry once only for a command-shape or transient persistence failure that preserves intent.
 
 ## Description and response style

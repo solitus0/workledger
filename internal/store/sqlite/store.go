@@ -231,6 +231,20 @@ var schemaStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_delivery_attempts_state_created ON delivery_attempts(attempt_state, created_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_activity_started_id ON activity_entries(started_at DESC, id DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_activity_source_state_started ON activity_entries(source, state, started_at DESC)`,
+	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_minutes_insert BEFORE INSERT ON worklogs
+	WHEN typeof(NEW.duration_seconds) != 'integer' OR NEW.duration_seconds <= 0 OR NEW.duration_seconds % 60 != 0
+	  OR NEW.started_at_utc IS NOT strftime('%Y-%m-%dT%H:%M:00Z', NEW.started_at_utc)
+	BEGIN SELECT RAISE(ABORT, 'worklogs require whole-minute UTC starts and positive whole-minute durations'); END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_minutes_update BEFORE UPDATE ON worklogs
+	WHEN typeof(NEW.duration_seconds) != 'integer' OR NEW.duration_seconds <= 0 OR NEW.duration_seconds % 60 != 0
+	  OR NEW.started_at_utc IS NOT strftime('%Y-%m-%dT%H:%M:00Z', NEW.started_at_utc)
+	BEGIN SELECT RAISE(ABORT, 'worklogs require whole-minute UTC starts and positive whole-minute durations'); END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_presets_minutes_insert BEFORE INSERT ON worklog_presets
+	WHEN typeof(NEW.duration_seconds) != 'integer' OR NEW.duration_seconds <= 0 OR NEW.duration_seconds % 60 != 0
+	BEGIN SELECT RAISE(ABORT, 'presets require positive whole-minute durations'); END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_presets_minutes_update BEFORE UPDATE ON worklog_presets
+	WHEN typeof(NEW.duration_seconds) != 'integer' OR NEW.duration_seconds <= 0 OR NEW.duration_seconds % 60 != 0
+	BEGIN SELECT RAISE(ABORT, 'presets require positive whole-minute durations'); END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_insert AFTER INSERT ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_update AFTER UPDATE ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_delete AFTER DELETE ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
@@ -1167,6 +1181,15 @@ func (s *Store) validateSchemaCompatibility() error {
 				Kind: schemaValidationErrorMismatch,
 				Err:  fmt.Errorf("table saved_plan_items contains obsolete column %s", column),
 			}
+		}
+	}
+	for _, name := range []string{"trg_worklogs_minutes_insert", "trg_worklogs_minutes_update", "trg_presets_minutes_insert", "trg_presets_minutes_update"} {
+		var count int
+		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name=?`, name).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			return &schemaValidationError{Kind: schemaValidationErrorMismatch, Err: fmt.Errorf("minute-precision guard %s is missing", name)}
 		}
 	}
 	return nil

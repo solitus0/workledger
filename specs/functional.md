@@ -316,6 +316,7 @@ Placement rule:
 - [ ] FUNC-235c: `workledger plan reconcile --adapter=<family> --instance=<name>` shall fail validation when an instance does not belong to one of the selected adapters.
 - [ ] FUNC-235d: `workledger plan reconcile --instance=<name>` shall fail validation and require explicit `--adapter` when that instance name exists in both configured Jira families.
 - [ ] FUNC-236: `workledger plan reconcile --pull --adapter=<family>` shall normalize remote observations into canonical candidate rows.
+- [ ] FUNC-236a: Pull candidates shall round starts and durations to the nearest minute before saving and comparison; zero-duration results and rounded starts outside the selected window shall become invalid findings, and rounding-induced duplicates or overlaps shall block affected scopes. Remote observations, totals, and remote trash shall retain observed timing.
 - [ ] FUNC-237: `workledger plan reconcile --pull --adapter=<family>` shall compare normalized observations with the current local canonical ledger.
 - [ ] FUNC-238: `workledger plan reconcile --pull --adapter=<family>` shall produce a saved merge plan without mutating local canonical worklogs during reconcile.
 - [ ] FUNC-238a: `workledger plan reconcile --pull` with multiple selected adapters or instances shall persist a saved `check_failed` plan instead of aborting when one selected adapter scope fails with a remote request error after command-level validation.

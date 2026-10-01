@@ -22,6 +22,9 @@ func (s *Service) CreateJiraCloudPullPlan(ctx context.Context, cfg config.Effect
 	if err != nil {
 		return Plan{}, err
 	}
+	if err := s.normalizePullPlan(ctx, &plan); err != nil {
+		return Plan{}, err
+	}
 	if err := s.insertPlan(ctx, plan); err != nil {
 		return Plan{}, err
 	}

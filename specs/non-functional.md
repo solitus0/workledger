@@ -18,6 +18,7 @@ Placement rule:
 - [ ] NFR-005: Saved plans, delivery attempts, and issue metadata shall be stored only in the additive storage model.
 - [ ] NFR-006: Persisted table and column names shall use `snake_case`.
 - [ ] NFR-007: The local `worklogs` table shall include `id`, `issue_key`, `started_at_utc`, `duration_seconds`, `description`, `created_at`, `updated_at`, and `revision`.
+- [ ] NFR-007a: SQLite shall reject active worklog inserts and updates unless `started_at_utc` is a canonical UTC timestamp at a whole-minute boundary and `duration_seconds` is a positive integer multiple of 60; existing records shall not be converted automatically during startup.
 - [ ] NFR-008: Bootstrap or schema repair shall drop any legacy deleted-worklog marker table when it exists.
 - [ ] NFR-009: The SQLite schema shall define a unique index on `worklogs(id)`.
 - [ ] NFR-010: The SQLite schema shall define an index on `worklogs(issue_key, started_at_utc)`.
@@ -40,6 +41,7 @@ Placement rule:
 - [ ] NFR-019: The `delivery_attempts` table shall include `id`, `plan_id`, `plan_item_id`, `attempt_state`, `message`, and `created_at`.
 - [ ] NFR-019a: The `worklog_presets` table shall include `id`, `name`, `issue_key`, `start_time`, `duration_seconds`, `description`, `created_at`, `updated_at`, nullable `last_used_at`, and `revision`.
 - [ ] NFR-019b: SQLite shall define a unique index on `worklog_presets(name)` and an index supporting last-used and name ordering.
+- [ ] NFR-019c: SQLite shall reject preset inserts and updates whose duration is not a positive integer multiple of 60.
 - [ ] NFR-021: Additive storage shall define a unique index on `issue_metadata(issue_key)`.
 - [ ] NFR-022: Additive storage shall define an index on `issue_metadata(refreshed_at)`.
 - [ ] NFR-023: Additive storage shall define an index on `saved_plans(created_at)`.
@@ -200,10 +202,10 @@ Placement rule:
 - [ ] NFR-151: `worklogs search <query>` shall trim outer whitespace from `<query>` before validation.
 - [ ] NFR-152: `worklogs search <query>` shall fail validation when the trimmed query is empty.
 - [ ] NFR-153: `worklogs search <query>` shall preserve remaining internal query text exactly.
-- [ ] NFR-154: `worklogs add` duration shall normalize to strictly positive whole seconds.
+- [ ] NFR-154: Manual add and update, batch add, presets, and CLI and TUI previews shall round duration and UTC start to the nearest minute before minimum-duration, duplicate, and overlap validation; positive 30-second ties shall round upward and a duration rounded to zero shall fail validation.
 - [ ] NFR-155: `worklogs add` duration shall be greater than or equal to the effective configured minimum local worklog duration in seconds.
 - [ ] NFR-156: `worklogs update` shall preserve the same configured minimum duration rule as `worklogs add`.
-- [ ] NFR-157: `worklogs apply` payload `duration_seconds` values shall be whole seconds.
+- [ ] NFR-157: `worklogs apply` payload `duration_seconds` values shall be integers and shall normalize to positive whole-minute durations while retaining the seconds-based JSON field.
 - [ ] NFR-158: `worklogs apply` payload `duration_seconds` values shall satisfy the effective configured minimum local worklog duration.
 - [ ] NFR-159: `worklogs add` description shall trim outer whitespace.
 - [ ] NFR-160: `worklogs add` description shall collapse internal newlines to single spaces.
@@ -213,7 +215,8 @@ Placement rule:
 - [ ] NFR-163a: `worklogs add --dry` shall preserve the same duration, timestamp, and description normalization rules as executed `worklogs add`.
 - [ ] NFR-163b: `worklogs add` shall reject automatic-placement date-window, workday-analysis, and `--overtime` flags unless `--fit` or `--fill` is present.
 - [ ] NFR-163c: `worklogs add --fill` shall ensure every created fragment is greater than or equal to the effective configured minimum local worklog duration in seconds, including by shortening an earlier fragment when needed to make the final fragment valid.
-- [ ] NFR-164: `worklogs shift --by` shall normalize to non-zero whole seconds.
+- [ ] NFR-163d: Automatic placement shall round each free-slot start upward and end downward to minute boundaries, allocate only whole-minute fragments, preserve the requested total after one nearest-minute normalization, and use the smallest whole-minute minimum satisfying the configured duration threshold.
+- [ ] NFR-164: `worklogs shift --by` shall round to whole minutes with 30-second ties away from zero and shall reject a resulting zero delta; complete shifted candidates shall normalize before conflict checks and previews.
 - [ ] NFR-165: `worklogs apply` payload shall be JSON.
 - [ ] NFR-166: `worklogs apply` payload shall be one raw apply payload object.
 - [ ] NFR-167: `worklogs apply` payload shall contain top-level `adds`.
@@ -260,6 +263,7 @@ Placement rule:
 - [ ] NFR-204a: Preset application shall reuse canonical worklog add normalization and conflict enforcement after resolving the preset and all one-off overrides.
 - [ ] NFR-205: Delete paths shall not bypass duplicate or overlap validation because they remove active rows instead of creating them.
 - [ ] NFR-206: Local trash restoration shall reuse active-worklog duplicate and overlap rules and additionally reject occupied original IDs and conflicts among batch candidates.
+- [ ] NFR-206a: Local trash restoration shall normalize candidate starts and durations to minute precision before validating the full batch; original trash timing and audit metadata shall remain unchanged until successful restoration consumes the local trash rows.
 - [ ] NFR-207: Duplicate and overlap enforcement shall not apply to `delete`.
 
 ## Delete Semantics
@@ -315,6 +319,7 @@ Placement rule:
 - [ ] NFR-259: The totals footer shall be unaffected by `--fields`.
 - [ ] NFR-260: `DESCRIPTION` in `worklogs list` shall truncate to 80 characters with `...` when longer.
 - [ ] NFR-261: `worklogs context --output json` shall expose `planning.issue_order`, `planning.issues`, `planning.minimum_duration_seconds`, `planning.payload_contract`, and `planning.slot_order`.
+- [ ] NFR-261a: Context shall expose inward-rounded minute-aligned free slots and a whole-minute `planning.minimum_duration_seconds` satisfying the configured threshold, consistent with automatic placement.
 - [ ] NFR-262: `worklogs context` JSON `summary.booked_seconds` shall aggregate selected days after per-day proration of cross-midnight occupancy.
 - [ ] NFR-262a: Context occupancy shall be clipped at consecutive local-calendar midnight boundaries, including 23-hour and 25-hour daylight-saving dates, so daily slices and calendar-month totals neither omit nor double-count boundary time.
 - [ ] NFR-263: `worklogs context` JSON `summary.until_quota_seconds` shall aggregate selected days after per-day proration of cross-midnight occupancy as the sum of per-day deltas against `worklogs.daily_minimum_quota_seconds`.
@@ -554,7 +559,7 @@ Placement rule:
 - [ ] NFR-433: `planned_action` shall use `merge` or `none` for `plan_direction=pull`.
 - [ ] NFR-434: `planned_action` shall use `create`, `replace`, `delete`, or `none` for `plan_direction=push`.
 - [ ] NFR-435: Scope classifications shall use `ready`, `invalid`, `blocked`, `skipped`, and `check_failed`.
-- [ ] NFR-436: Final reconcile correctness shall be exact local-versus-remote row-set equality within the saved scope.
+- [ ] NFR-436: Final reconcile correctness shall be exact row-set equality within the saved scope: local rows versus minute-normalized pull candidates, and saved push rows versus observed remote rows.
 - [ ] NFR-436a: For push plans, `comparison_status=remote_missing` shall be used when the normalized remote row count for the saved scope is zero, matching displayed `remote_row_count=0`.
 - [ ] NFR-436b: Jira Cloud and Data Center creates shall verify the returned start and duration against the requested row; disagreement shall fail and stop that scope, report the remote ID and requested and actual timing, and shall not trigger automatic mutation replay.
 - [ ] NFR-437: Per-entry remote worklog identity shall not be part of reconcile identity.
@@ -575,6 +580,7 @@ Placement rule:
 - [ ] NFR-448: `plan retry` shall compare the current effective config fingerprint with the saved fingerprint before execution.
 - [ ] NFR-449: A saved plan shall fail clearly before execution when the fingerprint differs.
 - [ ] NFR-450: `plan apply` shall consume the saved scope definition.
+- [ ] NFR-450a: Apply and retry shall reject any execution payload containing a non-minute start or duration before local mutations, remote mutations, or delivery attempts, requiring a new reconcile plan without rewriting historical snapshots.
 - [ ] NFR-451: `plan apply` shall consume the saved plan payload snapshot.
 - [ ] NFR-452: `plan apply` shall consume the saved inspection snapshot.
 - [ ] NFR-452a: Push apply trash archival shall record apply-time remote rows actually deleted during cleanup, not reconcile-time remote snapshots.

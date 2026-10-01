@@ -20,7 +20,7 @@ Required gate order:
 6. **Default count.** If no log count, multiple issues, per-entry durations, split, or payload-shaped evidence is supplied, create one log.
 7. **Default description.** Omit description when the CLI permits it. If dry-run proves the CLI requires a description, use the user-provided description when present; otherwise use `current session work`.
 
-Normalize duration only when meaning is unchanged, such as `90 minutes` to `1h30m` or `5400 seconds` to `1h30m`. Preserve total duration exactly.
+Normalize explicit duration syntax, then round the supplied total once to the nearest minute, with 30-second ties upward. Reject a total that rounds to zero. Preserve this normalized total exactly during allocation. UTC starts also round to minute boundaries; dry-run output must show the resulting timing, and success must report any change from the supplied timing.
 
 ## Allowed commands
 
@@ -75,7 +75,7 @@ Use `worklogs apply` only when the user supplies multiple issues, per-entry dura
 Keep input requirements low:
 
 1. One explicit total duration is enough for the payload total.
-2. If multiple issues or a log count are supplied without per-entry durations, split the explicit total evenly and preserve the exact total; put any indivisible remainder on the final entry.
+2. If multiple issues or a log count are supplied without per-entry durations, round the total once, divide its whole minutes evenly, and assign remainder minutes one at a time in input order. Preserve the normalized total and satisfy the effective fragment minimum.
 3. Do not ask for log count, split, started time, date/window, or descriptions when absent.
 4. Use `worklogs context DATE_WINDOW --output json` only when placement must account for existing slots or a multi-entry payload needs exact starts.
 5. Bundle by issue when issues are supplied; otherwise use one issue derived from current evidence or branch.
@@ -98,7 +98,7 @@ Keep input requirements low:
 }
 ```
 
-Each add requires `issue_key`, positive whole-number `duration_seconds` from explicit user duration, and exactly one timestamp field: `started_at` for local grammar or `started_at_utc` for UTC RFC3339. Include `description` only when supplied by the user or required by CLI validation. Do not include extra fields unless the CLI requires them.
+Each add requires `issue_key`, positive integer `duration_seconds` in multiples of 60 from the normalized explicit duration, and exactly one timestamp field: `started_at` for local grammar or `started_at_utc` for UTC RFC3339. Include `description` only when supplied by the user or required by CLI validation. Do not include extra fields unless the CLI requires them.
 
 ## Descriptions
 
@@ -112,10 +112,10 @@ Bad unsupported specificity: `implemented payment API`, `fixed deployment outage
 
 ## Failure handling
 
-Repair dry-run failures only when current evidence supports the fix: command shape, payload shape, optional-description handling, extra fields, known missing fields, timestamp grammar/exclusivity, slot collisions, boundary splits, or allocation math that preserves the explicit total.
+Repair dry-run failures only when current evidence supports the fix: command shape, payload shape, optional-description handling, extra fields, known missing fields, timestamp grammar/exclusivity, slot collisions, boundary splits, or allocation math that preserves the normalized total.
 
 If automatic placement fails with `use --overtime to allow placement starting at or after day_end`, report that nothing was created and ask whether to retry with `--overtime`. Do not infer authorization from the original worklog-creation request.
 
-Ask the user only when the fix needs unavailable mandatory information or would change user-provided intent: missing/invalid duration, missing issue key after branch fallback, incompatible optional fields, non-syntactic duration change, allocation change beyond even split, date conflict, or conflict priority.
+Ask the user only when the fix needs unavailable mandatory information or would change user-provided intent: missing/invalid duration, missing issue key after branch fallback, incompatible optional fields, duration change beyond canonical minute rounding, allocation change beyond even whole-minute split, date conflict, or conflict priority.
 
 If dry-run succeeds but apply fails, do not claim success. Retry once only for command-shape or transient persistence failures that preserve intent. For storage or SQLite permission errors, say validation passed but local persistence failed.

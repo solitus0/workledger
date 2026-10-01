@@ -1271,13 +1271,14 @@ func normalizeFields(fields []string, allowDeleted bool) ([]string, error) {
 func parseStartedAt(cfg config.EffectiveConfig, localValue, utcValue string) (time.Time, error) {
 	switch {
 	case localValue != "":
-		return parseLocalTimestamp(localValue, cfg.Location)
+		parsed, err := parseLocalTimestamp(localValue, cfg.Location)
+		return parsed.UTC().Round(time.Minute), err
 	case utcValue != "":
 		parsed, err := time.Parse(time.RFC3339, utcValue)
 		if err != nil || parsed.Location() != time.UTC {
 			return time.Time{}, errors.New(startedUTCFormatMessage)
 		}
-		return parsed.UTC(), nil
+		return parsed.UTC().Round(time.Minute), nil
 	default:
 		return time.Time{}, errors.New("started time is required")
 	}
@@ -1427,14 +1428,10 @@ func parseDuration(value string, minimumSeconds int) (int, error) {
 	if err != nil {
 		return 0, errors.New("duration must be a valid Go duration")
 	}
-	if duration <= 0 {
-		return 0, errors.New("duration must be positive")
+	seconds, err := normalizeDuration(duration)
+	if err != nil {
+		return 0, err
 	}
-	if duration%time.Second != 0 {
-		return 0, errors.New("duration must normalize to whole seconds")
-	}
-
-	seconds := int(duration / time.Second)
 	if seconds < minimumSeconds {
 		return 0, fmt.Errorf("duration must be at least %d seconds", minimumSeconds)
 	}
@@ -1478,6 +1475,7 @@ func buildFitPlanForDate(cfg config.EffectiveConfig, selectedDate time.Time, win
 }
 
 func buildFillPlanAcrossDates(cfg config.EffectiveConfig, selectedDates []time.Time, window workdayWindow, active []LocalWorklog, base LocalWorklog, overtime bool) []LocalWorklog {
+	minimumDuration := minuteMinimum(cfg.MinimumDurationSeconds)
 	slots := make([]ContextFreeSlot, 0)
 	for _, selectedDate := range selectedDates {
 		slots = append(slots, buildAddPlacementFreeSlots(cfg, selectedDate, window, active, overtime)...)
@@ -1492,18 +1490,18 @@ func buildFillPlanAcrossDates(cfg config.EffectiveConfig, selectedDates []time.T
 		if remaining == 0 {
 			break
 		}
-		if slot.DurationSeconds < cfg.MinimumDurationSeconds {
+		if slot.DurationSeconds < minimumDuration {
 			continue
 		}
 
 		duration := min(remaining, slot.DurationSeconds)
-		if duration < cfg.MinimumDurationSeconds {
+		if duration < minimumDuration {
 			if len(plan) == 0 {
 				return nil
 			}
 			previous := &plan[len(plan)-1]
-			needed := cfg.MinimumDurationSeconds - duration
-			if previous.DurationSeconds-needed < cfg.MinimumDurationSeconds {
+			needed := minimumDuration - duration
+			if previous.DurationSeconds-needed < minimumDuration {
 				return nil
 			}
 			previous.DurationSeconds -= needed
@@ -1514,7 +1512,7 @@ func buildFillPlanAcrossDates(cfg config.EffectiveConfig, selectedDates []time.T
 		availableAfter := totalSlotDuration(slots[index+1:])
 		if remaining-duration > availableAfter {
 			duration = remaining - availableAfter
-			if duration > slot.DurationSeconds || duration < cfg.MinimumDurationSeconds {
+			if duration > slot.DurationSeconds || duration < minimumDuration {
 				return nil
 			}
 		}
@@ -1590,17 +1588,14 @@ func buildAddPlacementFreeSlots(cfg config.EffectiveConfig, selectedDate time.Ti
 
 	slots := make([]ContextFreeSlot, 0, len(base))
 	for _, item := range base {
-		if !item.Start.Before(item.End) {
+		slot, ok := minuteSlot(item.Start, item.End)
+		if !ok {
 			continue
 		}
-		if !overtime && !item.Start.Before(workdayEnd) {
+		if !overtime && !slot.Start.Before(workdayEnd) {
 			continue
 		}
-		slots = append(slots, ContextFreeSlot{
-			Start:           item.Start,
-			End:             item.End,
-			DurationSeconds: int(item.End.Sub(item.Start) / time.Second),
-		})
+		slots = append(slots, slot)
 	}
 	return slots
 }

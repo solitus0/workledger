@@ -103,7 +103,10 @@ func (s *Service) Shift(ctx context.Context, cfg config.EffectiveConfig, filters
 	shifted := make([]LocalWorklog, 0, len(matched))
 	for _, item := range matched {
 		next := item
-		next.StartedAtUTC = next.StartedAtUTC.Add(time.Duration(deltaSeconds) * time.Second)
+		next.StartedAtUTC, next.DurationSeconds, err = NormalizeTiming(item.StartedAtUTC.Add(time.Duration(deltaSeconds)*time.Second), item.DurationSeconds)
+		if err != nil {
+			return ShiftResult{}, ValidationError{Issues: []ValidationIssue{{Field: "shift", Message: fmt.Sprintf("worklog %s: %s", item.ID, err)}}}
+		}
 		shiftedByID[item.ID] = next
 		shifted = append(shifted, next)
 		previews = append(previews, ShiftPreviewItem{
@@ -113,7 +116,7 @@ func (s *Service) Shift(ctx context.Context, cfg config.EffectiveConfig, filters
 			StartedAtAfter:     next.StartedAtUTC.In(cfg.Location),
 			StartedAtUTCBefore: item.StartedAtUTC.UTC(),
 			StartedAtUTCAfter:  next.StartedAtUTC.UTC(),
-			DurationSeconds:    item.DurationSeconds,
+			DurationSeconds:    next.DurationSeconds,
 			Description:        item.Description,
 		})
 	}
@@ -147,7 +150,7 @@ func (s *Service) Shift(ctx context.Context, cfg config.EffectiveConfig, filters
 		return ShiftResult{}, err
 	}
 	updatedAt := sqlitestore.RFC3339UTC(s.now().UTC())
-	statement, err := tx.PrepareContext(ctx, `UPDATE worklogs SET started_at_utc = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ?`)
+	statement, err := tx.PrepareContext(ctx, `UPDATE worklogs SET started_at_utc = ?, duration_seconds = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ?`)
 	if err != nil {
 		_ = tx.Rollback()
 		return ShiftResult{}, err
@@ -156,6 +159,7 @@ func (s *Service) Shift(ctx context.Context, cfg config.EffectiveConfig, filters
 	for index, item := range shifted {
 		updateResult, err := statement.ExecContext(ctx,
 			sqlitestore.RFC3339UTC(item.StartedAtUTC),
+			item.DurationSeconds,
 			updatedAt,
 			item.ID,
 			item.Revision,
@@ -327,11 +331,12 @@ func parseShiftDelta(value string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("by must be a valid Go duration")
 	}
+	duration = duration.Round(time.Minute)
 	if duration == 0 {
-		return 0, fmt.Errorf("by must be non-zero")
+		return 0, fmt.Errorf("by must round to a non-zero number of minutes")
 	}
-	if duration%time.Second != 0 {
-		return 0, fmt.Errorf("by must normalize to whole seconds")
+	if duration%time.Minute != 0 {
+		return 0, fmt.Errorf("by is too large to round to whole minutes")
 	}
 	return int(duration / time.Second), nil
 }

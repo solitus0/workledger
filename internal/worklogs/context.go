@@ -311,7 +311,7 @@ func (s *Service) Context(ctx context.Context, cfg config.EffectiveConfig, input
 		Metadata: metadata,
 	}
 	result.Planning.IssueOrder = append(result.Planning.IssueOrder, filters.Issues...)
-	result.Planning.MinimumDurationSeconds = cfg.MinimumDurationSeconds
+	result.Planning.MinimumDurationSeconds = minuteMinimum(cfg.MinimumDurationSeconds)
 	result.Planning.PayloadContract = "apply_raw_adds_v1"
 	result.Planning.SlotOrder = "date_asc,start_asc"
 	for _, issueKey := range filters.Issues {
@@ -545,14 +545,11 @@ func buildFreeSlots(selectedDate time.Time, location *time.Location, window work
 
 	slots := make([]ContextFreeSlot, 0, len(base))
 	for _, item := range base {
-		if !item.Start.Before(item.End) {
+		slot, ok := minuteSlot(item.Start, item.End)
+		if !ok {
 			continue
 		}
-		slots = append(slots, ContextFreeSlot{
-			Start:           item.Start,
-			End:             item.End,
-			DurationSeconds: int(item.End.Sub(item.Start) / time.Second),
-		})
+		slots = append(slots, slot)
 	}
 	return slots
 }

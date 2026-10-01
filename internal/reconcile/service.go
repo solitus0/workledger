@@ -739,6 +739,9 @@ func (s *Service) CreateMultiPullPlan(ctx context.Context, cfg config.EffectiveC
 			return Plan{}, err
 		}
 		plans[0].ConfigFingerprint = fingerprint
+		if err := s.normalizePullPlan(ctx, &plans[0]); err != nil {
+			return Plan{}, err
+		}
 		if err := s.insertPlan(ctx, plans[0]); err != nil {
 			return Plan{}, err
 		}
@@ -746,6 +749,9 @@ func (s *Service) CreateMultiPullPlan(ctx context.Context, cfg config.EffectiveC
 	}
 	merged, err := mergePlans("pull", cfg, windowFrom, windowTo, plans)
 	if err != nil {
+		return Plan{}, err
+	}
+	if err := s.normalizePullPlan(ctx, &merged); err != nil {
 		return Plan{}, err
 	}
 	if err := s.insertPlan(ctx, merged); err != nil {
@@ -1828,6 +1834,23 @@ func (s *Service) executeSavedPlan(ctx context.Context, cfg config.EffectiveConf
 			return ApplyResult{}, fmt.Errorf("saved plan has no %s ready scopes", retryScope)
 		}
 		return ApplyResult{}, fmt.Errorf("saved plan has no unapplied ready scopes")
+	}
+	// Validate the complete execution set before attempts or mutations begin.
+	selectedPushGroups := map[string]bool{}
+	for _, item := range ready {
+		if item.PlanDirection == "push" {
+			selectedPushGroups[pushExecutionGroupKey(item)] = true
+		}
+	}
+	for _, item := range plan.Items {
+		if !selectItem(item) && !(item.PlanStatus == "ready" && item.PlanDirection == "push" && selectedPushGroups[pushExecutionGroupKey(item)]) {
+			continue
+		}
+		for _, row := range item.Payload {
+			if !worklogs.HasMinutePrecision(row.StartedAtUTC, row.DurationSeconds) {
+				return ApplyResult{}, ValidationError{Message: "saved plan contains second-precision timing; run 'workledger plan reconcile' to generate a new plan"}
+			}
+		}
 	}
 
 	sort.Slice(ready, func(i, j int) bool {
