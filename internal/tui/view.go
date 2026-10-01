@@ -15,7 +15,7 @@ import (
 
 var footerKeyTokens = map[string]struct{}{
 	"1": {}, "2": {}, "3": {}, "4": {}, "5": {}, "?": {}, "D": {}, "R": {}, "Tab": {}, "Enter": {}, "Esc": {},
-	"A": {}, "a": {}, "a/A": {}, "c": {}, "d": {}, "d/w": {}, "d/w/m": {}, "e": {}, "f": {}, "g": {}, "h/l": {}, "hjkl": {}, "j/k": {}, "m": {}, "n": {}, "p": {}, "q": {}, "r": {}, "s": {}, "s/c": {}, "t": {}, "u": {}, "v": {}, "w": {}, "x": {}, "y": {},
+	"M": {}, "A": {}, "a": {}, "a/A": {}, "c": {}, "d": {}, "d/w": {}, "d/w/m": {}, "e": {}, "f": {}, "g": {}, "h/l": {}, "hjkl": {}, "j/k": {}, "m": {}, "n": {}, "p": {}, "q": {}, "r": {}, "s": {}, "s/c": {}, "t": {}, "u": {}, "v": {}, "w": {}, "x": {}, "y": {},
 	"Ctrl+C": {}, "Ctrl+F": {}, "Ctrl+K": {}, "Ctrl+L": {}, "Ctrl+O": {}, "Ctrl+P": {}, "Ctrl+S": {}, "End": {}, "Home/End": {}, "PgUp/PgDn": {}, "PgUp/Dn": {}, "Shift+Tab": {}, "←/→": {}, "↑/↓": {},
 }
 
@@ -265,6 +265,9 @@ func (m model) planRailCounts() (unapplied, failed, uncertain int) {
 }
 
 func (m model) renderWorkspace(width, height int) string {
+	if m.move != nil {
+		return m.renderMove(width, height)
+	}
 	if m.issuePicker != nil {
 		return m.renderIssuePicker(width, height)
 	}
@@ -431,6 +434,11 @@ func (m model) renderFooter(width int) string {
 		text = "y / Enter Apply plan   n / Esc Cancel"
 	} else if m.overlay == retryFailedPlanOverlay || m.overlay == retryUncertainPlanOverlay {
 		text = "y / Enter Retry plan scopes   n / Esc Cancel"
+	} else if m.move != nil {
+		text = "↑/↓ Position   Ctrl+S Save   r Refresh positions   Esc Cancel"
+		if m.move.saving {
+			text = "Saving move…   Ctrl+C Interrupt"
+		}
 	} else if m.issuePicker != nil {
 		if m.issuePicker.searching {
 			text = "Ctrl+F Mode   Tab Pane   ↑/↓ Move   PgUp/PgDn Page   Enter Choose   Esc Close find"
@@ -492,8 +500,11 @@ func (m model) renderFooter(width int) string {
 		text = "d/w/m View  D Delete day  h/l Week  j/k Day  Enter Open  a Add  A Preset  t Today  ? Help  q Quit"
 	} else {
 		text = "d/w/m View  D Delete  a Add  A Preset  e Edit  h/l Date  t Today  r Refresh  ? Help  q Quit"
+		if m.selectedWorklog() != nil && !m.worklogLoading {
+			text = strings.Replace(text, "e Edit", "e Edit  M Move", 1)
+		}
 	}
-	if m.overlay == noOverlay && m.form == nil && m.presetForm == nil && m.presetPicker == nil && m.issuePicker == nil && m.focus != focusActivity {
+	if m.overlay == noOverlay && m.move == nil && m.form == nil && m.presetForm == nil && m.presetPicker == nil && m.issuePicker == nil && m.focus != focusActivity {
 		activityAction := "g Activity"
 		if m.activityOpen {
 			activityAction = "g Close activity"

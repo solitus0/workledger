@@ -138,6 +138,7 @@ type worklogsScreen struct {
 	conflict                 *worklogs.ConflictDetail
 	selectAfterID            string
 	reloadAfterForm          bool
+	moveGen                  int
 	deleteSelection          []worklogs.LocalWorklog
 }
 
@@ -169,6 +170,7 @@ type statusScreen struct {
 
 type interactionState struct {
 	overlay       overlay
+	move          *moveState
 	form          *formState
 	planForm      *planFormState
 	planOperation *planOperationState
@@ -184,6 +186,7 @@ const (
 	interactionHelp
 	interactionConfirmation
 	interactionWorklogForm
+	interactionMove
 	interactionPresetForm
 	interactionPresetPicker
 	interactionIssuePicker
@@ -212,6 +215,9 @@ func (state interactionState) kind() interactionKind {
 	}
 	if state.planForm != nil {
 		return interactionPlanForm
+	}
+	if state.move != nil {
+		return interactionMove
 	}
 	if state.form != nil {
 		return interactionWorklogForm
@@ -500,6 +506,8 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			m.statusConfigSelected = clampIndex(m.statusConfigSelected, len(m.statusConfigRows()))
 		}
 		return m, nil
+	case movePreviewMsg:
+		return m.applyMovePreview(msg)
 	case worklogResultMsg:
 		if msg.generation != m.worklogGen || !sameDay(msg.date, m.selectedDate) {
 			return m, nil
@@ -713,7 +721,11 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			if m.planOperation != nil {
 				return m, tea.Batch(cmds...)
 			}
-			if m.presetForm != nil {
+			if m.move != nil {
+				if !m.move.saving {
+					cmds = append(cmds, m.loadMove(m.move.preview.Source.Revision))
+				}
+			} else if m.presetForm != nil {
 				m.presetForm.stale = true
 				m.setNotice(noticeWarning, "presets changed externally; reload before saving")
 				cmds = append(cmds, m.startPresetLoad())
@@ -859,6 +871,8 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.updatePlanForm(msg)
 	case interactionPlanOperation:
 		return m.updatePlans(keyName)
+	case interactionMove:
+		return m.updateMove(keyName)
 	case interactionWorklogForm:
 		return m.updateForm(msg)
 	}
@@ -1208,7 +1222,7 @@ func refreshForMutation(kind string) refreshScope {
 	switch kind {
 	case "restore", "restore-day", "delete", "delete-day":
 		return refreshWorklogs | refreshTrash
-	case "add", "edit":
+	case "add", "edit", "move":
 		return refreshWorklogs
 	default:
 		return refreshWorkspace

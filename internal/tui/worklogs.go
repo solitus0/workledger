@@ -66,6 +66,12 @@ func (m model) updateWorklogs(key string) (tea.Model, tea.Cmd) {
 	case "right", "l":
 		m.selectedDate = m.selectedDate.AddDate(0, 0, 1)
 		return m, m.refreshCmd(refreshDateData)
+	case "M":
+		if !m.worklogLoading {
+			if selected := m.selectedWorklog(); selected != nil {
+				return m, m.openMove(*selected)
+			}
+		}
 	case "e":
 		if selected := m.selectedWorklog(); selected != nil {
 			m.openEditForm(*selected)

@@ -24,6 +24,7 @@ type statusChecker interface {
 }
 
 type worklogQueries interface {
+	PreviewMove(context.Context, config.EffectiveConfig, string, int64) (worklogs.MovePreview, error)
 	Context(context.Context, config.EffectiveConfig, worklogs.ContextInput) (worklogs.ContextResult, error)
 	ActiveIssueTotalSeconds(context.Context, string) (int, error)
 	ListKnownIssueKeys(context.Context, string, int) ([]string, error)
@@ -35,6 +36,7 @@ type worklogQueries interface {
 }
 
 type worklogMutations interface {
+	Move(context.Context, config.EffectiveConfig, string, int64, time.Time) (worklogs.LocalWorklog, error)
 	Add(context.Context, config.EffectiveConfig, worklogs.AddInput) (worklogs.AddResult, error)
 	Update(context.Context, config.EffectiveConfig, string, worklogs.PatchInput) (worklogs.LocalWorklog, error)
 	Delete(context.Context, string, int64) (worklogs.DeleteResult, error)

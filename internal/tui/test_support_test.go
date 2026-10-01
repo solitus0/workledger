@@ -135,6 +135,9 @@ func (f *fakeTracker) Poll(context.Context) (bool, error) {
 func (*fakeTracker) Close() error { return nil }
 
 type fakeWorklogState struct {
+	movePreview     worklogs.MovePreview
+	moveErr         error
+	moves           []recordedMove
 	items           []worklogs.LocalWorklog
 	context         worklogs.ContextResult
 	contextInputs   []worklogs.ContextInput
@@ -437,4 +440,20 @@ func resolvePreview(t *testing.T, m model, scheduled tea.Cmd) model {
 	}
 	next, _ = m.Update(result)
 	return next.(model)
+}
+
+func (f *fakeWorklogQueries) PreviewMove(_ context.Context, _ config.EffectiveConfig, _ string, _ int64) (worklogs.MovePreview, error) {
+	return f.state.movePreview, f.state.moveErr
+}
+func (f *fakeWorklogMutations) Move(_ context.Context, _ config.EffectiveConfig, id string, revision int64, destination time.Time) (worklogs.LocalWorklog, error) {
+	f.state.moves = append(f.state.moves, recordedMove{id, revision, destination})
+	record := f.state.movePreview.Source
+	record.StartedAtUTC = destination
+	return record, f.state.updateErr
+}
+
+type recordedMove struct {
+	id          string
+	revision    int64
+	destination time.Time
 }

@@ -165,6 +165,19 @@ func (m *model) acceptFormSuggestion(msg tea.Msg) (tea.Cmd, bool) {
 }
 
 func (m model) handleMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd) {
+	if msg.kind == "move" && m.move != nil {
+		m.move.saving = false
+		if msg.err != nil {
+			m.move.err = msg.err.Error()
+			m.move.preview.Positions = nil
+			if errors.Is(msg.err, worklogs.ErrPlacementChanged) {
+				return m, m.loadMove(m.move.preview.Source.Revision)
+			}
+			return m, nil
+		}
+		m.selectAfterID = m.move.preview.Source.ID
+		m.move = nil
+	}
 	if msg.err != nil {
 		if msg.kind == "preset-source" && errors.Is(msg.err, presets.ErrConflict) && m.form != nil {
 			m.form.sourcePresetID = ""

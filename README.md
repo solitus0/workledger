@@ -78,7 +78,7 @@ workledger status
 
 After configuring remote adapters, make the first reconciliation action a pull. The initial pull workflow is documented under [Configuration](#configuration); complete it before creating any push plan.
 
-Workledger also includes an interactive terminal UI, available through `workledger tui`.
+Workledger also includes an interactive terminal UI, available through `workledger tui`. In its Day view, select a worklog and press `M` to preview a move. Use the up/down arrows to choose a valid position before or after another booking or at a workday boundary, `Ctrl+S` to save, and `Esc` to cancel. Moves preserve duration and other bookings and avoid configured lunch; `r` refreshes the source and available positions.
 
 ## Daily workflow
 
