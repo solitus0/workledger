@@ -1,4 +1,4 @@
 interface:
   display_name: "Session Worklog Creator"
-  short_description: "Create local workledger worklogs from the current session with only duration required"
-  default_prompt: "Use $session-worklog-creator to create local workledger worklogs from the current session. Include only the duration, for example 1h30m. The issue can be derived from the current branch when available."
+  short_description: "Log session work with evidence-based descriptions"
+  default_prompt: "Use $session-worklog-creator to create local workledger worklogs from the current session. Include only the duration, for example 1h30m. Derive the issue from the current branch when available and generate a descriptive entry from session work evidence. Never ask for a description; create nothing if the session contains no work evidence."

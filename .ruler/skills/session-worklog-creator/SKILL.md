@@ -1,6 +1,6 @@
 ---
 name: session-worklog-creator
-description: Create local workledger worklogs from the current ChatGPT or coding-agent session after the user provides explicit duration. Duration is the only mandatory user input. Use the current branch to derive the issue key when needed; ask for issue only when no unambiguous key can be found. Never require started time, log count, date/window, description, or summary unless the user provides those details and they are conflicting or unusable.
+description: Create local workledger worklogs from the current ChatGPT or coding-agent session after the user provides explicit duration. Duration is the only mandatory user input. Use the current branch to derive the issue key when needed; ask for issue only when no unambiguous key can be found. Generate a descriptive worklog from evidence of work performed in the session; create nothing for an empty thread. Never ask the user for a description, even when one is missing or unusable. Never require started time, log count, date/window, or summary unless supplied details conflict or are unusable.
 ---
 
 # Session Worklog Creator
@@ -20,6 +20,7 @@ Create canonical local `workledger` worklogs from evidence visible in the curren
 
 ## Gate order
 
+0. **Work evidence first.** If the session contains no evidence of work performed, stop without commands or worklogs and explain that there is no work to log. A worklog request, duration, issue key, branch name, or proposed task alone is not evidence of work. Actual analysis, review, investigation, implementation, validation, and unsuccessful attempts count; do not claim an outcome the evidence does not support.
 1. **Duration only.** If the request lacks explicit duration, run no commands and ask only:
 
    ```text
@@ -27,33 +28,33 @@ Create canonical local `workledger` worklogs from evidence visible in the curren
    ```
 
 2. **Issue key next.** After duration is known, use a visible issue key from the current session. If none is visible, run only `git branch --show-current` and use an unambiguous Jira-style key from the current branch, such as `PROJ-123`. Ask only for the issue key if neither source works.
-3. **Defaults are not questions.** Do not ask for started time, date/window, log count, description, summary, or split just because they are absent. Default to one log, `--fill --today`, and no description unless the user provided one or the CLI requires one.
-4. **Optional fields stay optional.** Use user-provided started time, date/window, log count, split, and description when present. Ask only when the user provided an optional field but it conflicts, is malformed, or cannot be applied without changing intent.
+3. **Defaults are not questions.** Do not ask for started time, date/window, log count, description, summary, or split just because they are absent. Default to one log, `--fill --today`, and a descriptive entry generated from session evidence. Never ask for a description under any circumstances.
+4. **Optional fields stay optional.** Use user-provided started time, date/window, log count, and split when present. Ask only when those supplied fields conflict, are malformed, or cannot be applied without changing intent. Use a supplied description when it is descriptive and evidence-matched; otherwise generate one from the session without asking the user.
 
 Never invent duration, issue keys, or completed work. Normalize explicit duration syntax, then round the supplied total to the nearest minute with 30-second ties upward, following the canonical worklog contract. Starts also normalize to minute boundaries. Preserve the normalized total during placement and report changes from the supplied timing.
 
 ## Creation flow
 
-1. Extract explicit duration first.
+1. Confirm there is evidence of work performed, then extract explicit duration.
 2. Extract the issue key from current-session evidence, or derive it from `git branch --show-current`; ask only for the issue key if both fail.
-3. Extract optional user-provided started time, date/window, log count, description, and split details. Missing optional fields use defaults rather than prompts.
+3. Extract optional user-provided started time, date/window, log count, and split details. Generate a concise description from the work evidence, or use a supplied description that meets the same standard. Missing optional fields use defaults rather than prompts.
 4. Follow `references/worklog-creation-contract.md` for allowed commands, placement, payload shape, and failure handling.
 5. Use `worklogs add` for the default single-log path:
    - use `--fill --today` when no exact start or date/window is supplied
    - use a supplied date/window with `--fill` when the user provided one but no exact start
    - use `--fit` only when the user requests one continuous placement or the session clearly calls for a single earliest free slot
    - use `--started` or `--started-utc` only when the user supplies the exact start
-   - include `--description` only when the user supplied one or dry-run proves the CLI requires it
+   - include the evidence-based `--description` in the first dry-run and the apply command
 6. Use `worklogs apply` with one JSON payload when the user supplies multiple issues, per-entry durations, a log count, explicit split instructions, or payload-shaped evidence. For one total with multiple issues or a log count but no split, round the total once, divide its whole minutes evenly, and assign remainder minutes one at a time in input order. Preserve the normalized total; every fragment must satisfy the effective minimum.
 7. Dry-run first with `--output json`; apply immediately only after a clean dry-run.
-8. If dry-run fails, repair only evidence-supported command shape, payload shape, timestamp grammar/exclusivity, slot placement, optional-description handling, or allocation math that preserves the normalized total. When the CLI says placement would require `--overtime`, report that nothing was created and ask permission before retrying with `--overtime`. Otherwise ask only when the smallest safe correction needs a missing duration, a missing issue key, or a change to user-provided intent.
+8. If dry-run fails, repair only evidence-supported command shape, payload shape, timestamp grammar/exclusivity, slot placement, description normalization, or allocation math that preserves the normalized total. When the CLI says placement would require `--overtime`, report that nothing was created and ask permission before retrying with `--overtime`. Otherwise ask only when the smallest safe correction needs a missing duration, a missing issue key, or a change to timing, issue, or allocation intent. Repair description problems from session evidence; never ask the user to provide, clarify, or approve a description.
 9. If apply fails, do not claim success. Retry once only for a command-shape or transient persistence failure that preserves intent.
 
 ## Description and response style
 
-Descriptions are optional. When included, keep them concise, action-oriented, and evidence-matched. Use neutral wording such as `current session work` when the CLI requires a description but the session lacks enough detail for something more specific.
+Every worklog must have a descriptive, evidence-matched entry. Never ask the user for a description, including when a supplied one is blank, vague, conflicting, or rejected by validation. Make the best effort to name the action and its subject from whatever work evidence is available; keep outcome claims within that evidence. Sparse evidence calls for a narrower description, not a generic placeholder. See the description rules and examples in `references/worklog-creation-contract.md`. If there is no evidence of work performed, create nothing.
 
-For success, report created count, date/window, issue, duration, placement time when available, description only if used, IDs, and CLI warnings. For failure, report whether anything was created, the exact CLI error or warning, and the smallest correction needed.
+For success, report created count, date/window, issue, duration, placement time when available, description, IDs, and CLI warnings. For failure, report whether anything was created, the exact CLI error or warning, and the smallest correction needed.
 
 ```text
 Created 1 local worklog for today.
