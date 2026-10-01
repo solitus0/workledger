@@ -556,6 +556,7 @@ Placement rule:
 - [ ] NFR-435: Scope classifications shall use `ready`, `invalid`, `blocked`, `skipped`, and `check_failed`.
 - [ ] NFR-436: Final reconcile correctness shall be exact local-versus-remote row-set equality within the saved scope.
 - [ ] NFR-436a: For push plans, `comparison_status=remote_missing` shall be used when the normalized remote row count for the saved scope is zero, matching displayed `remote_row_count=0`.
+- [ ] NFR-436b: Jira Cloud and Data Center creates shall verify the returned start and duration against the requested row; disagreement shall fail and stop that scope, report the remote ID and requested and actual timing, and shall not trigger automatic mutation replay.
 - [ ] NFR-437: Per-entry remote worklog identity shall not be part of reconcile identity.
 - [ ] NFR-438: Remote cleanup and replacement shall consider only remote rows inside the saved target adapter instance, target issue, and saved reconcile time window, deleting unmatched rows and creating only missing saved rows.
 - [ ] NFR-438a: Jira-family reporting cleanup and replacement shall consider only current-user remote worklogs; foreign-authored rows may be reported as present but shall not make an otherwise empty current-user scope actionable or blocked.

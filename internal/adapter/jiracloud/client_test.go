@@ -116,7 +116,7 @@ func TestCreateAndDeleteWorklog(t *testing.T) {
 			if !ok || comment["type"] != "doc" || comment["version"].(float64) != 1 {
 				t.Fatalf("unexpected comment payload %#v", payload["comment"])
 			}
-			return jsonResponse(`{"id":"created"}`), nil
+			return jsonResponse(`{"id":"created","started":"2026-05-01T08:00:00.000+0000","timeSpentSeconds":3600}`), nil
 		case req.Method == http.MethodDelete && req.URL.Path == "/rest/api/3/issue/AAPP-1/worklog/created":
 			return &http.Response{StatusCode: 204, Status: "204 No Content", Header: make(http.Header), Body: io.NopCloser(bytes.NewBuffer(nil))}, nil
 		default:
@@ -139,6 +139,17 @@ func TestCreateAndDeleteWorklog(t *testing.T) {
 
 	if err := client.DeleteWorklog(context.Background(), "AAPP-1", "created"); err != nil {
 		t.Fatalf("DeleteWorklog failed: %v", err)
+	}
+}
+
+func TestCreateWorklogRejectsTruncatedDuration(t *testing.T) {
+	client := NewClient("https://example.atlassian.net", "user@example.com", "secret")
+	client.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(`{"id":"truncated","started":"2026-05-01T08:00:00.000+0000","timeSpentSeconds":11100}`), nil
+	})}
+	created, err := client.CreateWorklog(context.Background(), "AAPP-1", CandidateRow{StartedAtUTC: mustRFC3339("2026-05-01T08:00:00Z"), DurationSeconds: 11146, Description: "exact request"})
+	if err == nil || created.ID != "truncated" || !strings.Contains(err.Error(), "11146s") || !strings.Contains(err.Error(), "11100s") {
+		t.Fatalf("truncated create = %#v, %v", created, err)
 	}
 }
 

@@ -8252,8 +8252,18 @@ func newJiraCloudTestServer(t *testing.T, issues map[string][]string) *httptest.
 		case strings.HasPrefix(r.URL.Path, "/rest/api/3/issue/") && strings.HasSuffix(r.URL.Path, "/worklog") && r.Method == http.MethodPost:
 			parts := strings.Split(r.URL.Path, "/")
 			issueKey := parts[5]
-			issues[issueKey] = append(issues[issueKey], `{"id":"created-1","started":"2026-05-01T08:00:00.000+0000","timeSpentSeconds":3600,"comment":"Build feature","author":{"accountId":"user-1"}}`)
-			_, _ = w.Write([]byte(`{"id":"created-1"}`))
+			var entry map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+				t.Fatal(err)
+			}
+			entry["id"] = "created-1"
+			entry["author"] = map[string]any{"accountId": "user-1"}
+			encoded, err := json.Marshal(entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			issues[issueKey] = append(issues[issueKey], string(encoded))
+			_, _ = w.Write(encoded)
 		case strings.Contains(r.URL.Path, "/worklog/") && r.Method == http.MethodDelete:
 			_, _ = w.Write([]byte(`{}`))
 		default:

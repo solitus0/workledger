@@ -5,9 +5,34 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/solitus0/workledger/internal/reconcile/model"
 )
+
+func TestCreatedWorklogTimingVerification(t *testing.T) {
+	requested := model.Row{StartedAtUTC: mustRFC3339("2026-05-01T08:00:00Z"), DurationSeconds: 900}
+	for _, tc := range []struct {
+		start    string
+		seconds  int
+		mismatch bool
+	}{
+		{"2026-05-01T11:00:00.000+0300", 900, false},
+		{"2026-05-01T08:00:30.000+0000", 900, true},
+		{"2026-05-01T08:00:00.000+0000", 840, true},
+		{"invalid", 900, true},
+	} {
+		err := ValidateCreatedWorklog("APP-1", Worklog{ID: "remote-id", Started: tc.start, TimeSpentSeconds: tc.seconds}, requested)
+		if (err != nil) != tc.mismatch {
+			t.Fatalf("verification=%v", err)
+		}
+		if err != nil && (!strings.Contains(err.Error(), "remote-id") || !strings.Contains(err.Error(), "requested start") || !strings.Contains(err.Error(), "returned start")) {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestRequestUsesBearerHeader(t *testing.T) {
 	client := NewClient("https://jira.example.com", "secret")

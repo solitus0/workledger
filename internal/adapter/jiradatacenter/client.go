@@ -163,7 +163,17 @@ func (c *Client) CreateWorklog(ctx context.Context, issueKey string, row model.R
 	if err := c.doJSON(ctx, http.MethodPost, path.Join("/rest/api/2/issue", issueKey, "worklog"), payload, &item); err != nil {
 		return Worklog{}, err
 	}
-	return item, nil
+	return item, ValidateCreatedWorklog(issueKey, item, row)
+}
+
+// ValidateCreatedWorklog verifies persistence, including servers that silently
+// truncate timeSpentSeconds despite accepting the create request.
+func ValidateCreatedWorklog(issueKey string, item Worklog, requested model.Row) error {
+	start, err := time.Parse("2006-01-02T15:04:05.000-0700", item.Started)
+	if err != nil || !start.Equal(requested.StartedAtUTC) || item.TimeSpentSeconds != requested.DurationSeconds {
+		return fmt.Errorf("Jira worklog %s on %s differs from the request: requested start %s and duration %ds; returned start %s and duration %ds", item.ID, issueKey, requested.StartedAtUTC.UTC().Format(time.RFC3339Nano), requested.DurationSeconds, item.Started, item.TimeSpentSeconds)
+	}
+	return nil
 }
 
 func (c *Client) DeleteWorklog(ctx context.Context, issueKey, worklogID string) error {

@@ -200,7 +200,7 @@ func (c *Client) CreateWorklog(ctx context.Context, issueKey string, row model.R
 	if err := c.do(ctx, http.MethodPost, path.Join("/rest/api/3/issue", issueKey, "worklog"), payload, &item); err != nil {
 		return Worklog{}, err
 	}
-	return item, nil
+	return item, jiradatacenter.ValidateCreatedWorklog(issueKey, item, row)
 }
 
 func (c *Client) DeleteWorklog(ctx context.Context, issueKey, worklogID string) error {
