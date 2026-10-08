@@ -84,6 +84,9 @@ func (m model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.form.focus == issueField {
 			m.invalidateDescriptionSuggestions()
 			cmds = append(cmds, m.scheduleIssueSuggestions(true))
+			if m.form.editing {
+				cmds = append(cmds, m.formMetadataCmd())
+			}
 		}
 		if !m.form.editing && m.previewInputField(m.form.focus) {
 			cmds = append(cmds, m.schedulePreview())

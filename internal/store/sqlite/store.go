@@ -109,6 +109,12 @@ var schemaStatements = []string{
 		adapter_family TEXT NULL,
 		adapter_instance TEXT NULL
 	)`,
+	`CREATE TABLE IF NOT EXISTS issue_decorations (
+        issue_key TEXT PRIMARY KEY,
+        title TEXT NULL,
+        max_estimate_seconds INTEGER NULL CHECK(max_estimate_seconds IS NULL OR (typeof(max_estimate_seconds) = 'integer' AND max_estimate_seconds > 0)),
+        updated_at TEXT NOT NULL
+    )`,
 	`CREATE TABLE IF NOT EXISTS issue_metadata (
 		issue_key TEXT PRIMARY KEY,
 		max_estimate_seconds INTEGER NULL,
@@ -251,6 +257,9 @@ var schemaStatements = []string{
 	`CREATE TRIGGER IF NOT EXISTS trg_trash_activity_insert AFTER INSERT ON trashed_worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_trash_activity_update AFTER UPDATE ON trashed_worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_trash_activity_delete AFTER DELETE ON trashed_worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_decorations_insert AFTER INSERT ON issue_decorations BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_decorations_update AFTER UPDATE ON issue_decorations BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_decorations_delete AFTER DELETE ON issue_decorations BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_metadata_activity_insert AFTER INSERT ON issue_metadata BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_metadata_activity_update AFTER UPDATE ON issue_metadata BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_metadata_activity_delete AFTER DELETE ON issue_metadata BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
@@ -1013,6 +1022,15 @@ var requiredSchema = []tableRequirement{
 			{column: "origin_plan_item_id", typ: "TEXT", notNull: false},
 			{column: "adapter_family", typ: "TEXT", notNull: false},
 			{column: "adapter_instance", typ: "TEXT", notNull: false},
+		},
+	},
+	{
+		table: "issue_decorations",
+		columns: []columnRequirement{
+			{column: "issue_key", typ: "TEXT", notNull: false},
+			{column: "title", typ: "TEXT", notNull: false},
+			{column: "max_estimate_seconds", typ: "INTEGER", notNull: false},
+			{column: "updated_at", typ: "TEXT", notNull: true},
 		},
 	},
 	{

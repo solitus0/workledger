@@ -1,0 +1,52 @@
+[
+  {
+    "issue_key": "SBAH-1",
+    "title": "Manual document ordering",
+    "max_estimate_seconds": 14400
+  },
+  {
+    "issue_key": "SBAH-2",
+    "title": "Product data lifecycle",
+    "max_estimate_seconds": 57600
+  },
+  {
+    "issue_key": "SBAH-3",
+    "title": "Market-specific product images",
+    "max_estimate_seconds": 28800
+  },
+  {
+    "issue_key": "SBAH-4",
+    "title": "Document assignment",
+    "max_estimate_seconds": 14400
+  },
+  {
+    "issue_key": "SBAH-5",
+    "title": "Change requests with collaboration",
+    "max_estimate_seconds": 115200
+  },
+  {
+    "issue_key": "SBAH-6",
+    "title": "Shared document removal",
+    "max_estimate_seconds": 14400
+  },
+  {
+    "issue_key": "SBAH-7",
+    "title": "Product document page redesign",
+    "max_estimate_seconds": 57600
+  },
+  {
+    "issue_key": "SBAH-8",
+    "title": "Document association editing",
+    "max_estimate_seconds": 14400
+  },
+  {
+    "issue_key": "SBAH-9",
+    "title": "Bulk document acknowledgment",
+    "max_estimate_seconds": 14400
+  },
+  {
+    "issue_key": "SBAH-10",
+    "title": "Application performance optimization",
+    "max_estimate_seconds": 57600
+  }
+]

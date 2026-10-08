@@ -202,6 +202,9 @@ func (m model) updateIssuePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if picker.mode == worklogs.IssueFindByPrefix {
 			picker.mode = worklogs.IssueFindByDescription
 			picker.input.Placeholder = "Description text"
+		} else if picker.mode == worklogs.IssueFindByDescription {
+			picker.mode = worklogs.IssueFindByTitle
+			picker.input.Placeholder = "Issue title text"
 		} else {
 			picker.mode = worklogs.IssueFindByPrefix
 			picker.input.Placeholder = "Issue key prefix"
@@ -364,13 +367,28 @@ func (m model) issueDetailLines(width int) []string {
 		return nil
 	}
 	lines := make([]string, 0, len(picker.details)*3)
+	for _, item := range picker.items {
+		if item.IssueKey != picker.detailIssue {
+			continue
+		}
+		if item.Title != "" {
+			lines = append(lines, wrapIssueDescription(item.Title, width)...)
+		}
+		if item.MaxEstimateSeconds != nil {
+			lines = append(lines, "Max estimate: "+formatEstimateDuration(*item.MaxEstimateSeconds))
+		}
+		if item.Title != "" || item.MaxEstimateSeconds != nil {
+			lines = append(lines, "")
+		}
+		break
+	}
 	for _, item := range picker.details {
 		date := item.StartedAtUTC.In(m.workspace.cfg.Location).Format("2006-01-02")
 		marker := ""
 		if picker.searching && picker.mode == worklogs.IssueFindByDescription && picker.query != "" && strings.Contains(strings.ToLower(item.Description), strings.ToLower(picker.query)) {
 			marker = "* "
 		}
-		lines = append(lines, marker+date)
+		lines = append(lines, marker+date+" · "+formatDuration(item.DurationSeconds))
 		lines = append(lines, wrapIssueDescription(item.Description, width)...)
 		lines = append(lines, "")
 	}
@@ -426,15 +444,17 @@ func (m model) renderIssuePicker(width, height int) string {
 	picker := m.issuePicker
 	leftWidth, rightWidth := issuePickerPanelWidths(width)
 	leftInner, rightInner := leftWidth-4, rightWidth-4
-	left := []string{m.paint("Previously used issues", m.colors.Focus)}
+	left := []string{m.paint("Known issues", m.colors.Focus)}
 	if picker.searching {
 		mode := "Find by prefix"
 		if picker.mode == worklogs.IssueFindByDescription {
 			mode = "Find by description"
+		} else if picker.mode == worklogs.IssueFindByTitle {
+			mode = "Find by title"
 		}
 		left = append(left, mode, picker.input.View())
 	} else {
-		left = append(left, m.muted("Browse active worklogs"))
+		left = append(left, m.muted("Browse local issue catalog"))
 	}
 	left = append(left, "")
 	rowCount := max(1, height-len(left)-5)
@@ -445,9 +465,16 @@ func (m model) renderIssuePicker(width, height int) string {
 		if index == picker.selected {
 			marker = m.paint("> ", m.colors.Focus)
 		}
-		date := item.LastEnteredAt.In(m.workspace.cfg.Location).Format("2006-01-02")
+		date := "Unused"
+		if !item.LastEnteredAt.IsZero() {
+			date = item.LastEnteredAt.In(m.workspace.cfg.Location).Format("2006-01-02")
+		}
+		label := item.IssueKey
+		if item.Title != "" {
+			label += " · " + item.Title
+		}
 		keyWidth := max(1, leftInner-2-11)
-		left = append(left, fmt.Sprintf("%s%-*s %s", marker, keyWidth, truncate(item.IssueKey, keyWidth), date))
+		left = append(left, fmt.Sprintf("%s%-*s %s", marker, keyWidth, truncate(label, keyWidth), date))
 	}
 	if picker.loading {
 		left = append(left, m.paint("  Loading issues…", m.colors.Progress))

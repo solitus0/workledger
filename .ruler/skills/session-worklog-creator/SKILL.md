@@ -1,6 +1,6 @@
 ---
 name: session-worklog-creator
-description: Create local workledger worklogs from the current ChatGPT or coding-agent session after the user provides explicit duration. Duration is the only mandatory user input. Use the current branch to derive the issue key when needed; ask for issue only when no unambiguous key can be found. Generate a descriptive worklog from evidence of work performed in the session; create nothing for an empty thread. Never ask the user for a description, even when one is missing or unusable. Never require started time, log count, date/window, or summary unless supplied details conflict or are unusable.
+description: Create local workledger worklogs from the current ChatGPT or coding-agent session after the user provides explicit duration. Duration is the only mandatory user input. Use an unambiguous session or branch key, then a clear local metadata title match when needed; ask for issue only when selection remains unresolved. Generate a descriptive worklog from evidence of work performed in the session; create nothing for an empty thread. Never ask the user for a description, even when one is missing or unusable. Never require started time, log count, date/window, or summary unless supplied details conflict or are unusable.
 ---
 
 # Session Worklog Creator
@@ -13,7 +13,7 @@ Create canonical local `workledger` worklogs from evidence visible in the curren
 - Duration is the only mandatory user-provided field. Never infer it.
 - Use only current-session evidence: the request, chat or agent transcript, visible tool output, issue keys, branch/commit/PR snippets, and files or notes uploaded in this conversation.
 - Do not search unrelated conversation history, broad repository state, remote trackers, totals, or prior worklogs to fill gaps.
-- Do not run setup, diagnostics, totals, search, edit/delete, remote sync, reconciliation, or artifact-rendering flows.
+- Do not run setup, diagnostics, totals, worklog search, edit/delete, remote sync, reconciliation, or artifact-rendering flows. Local `issue-metadata list` is allowed only for unresolved issue attribution after the work-evidence and explicit-duration gates.
 - Never supply `--overtime` unless the user explicitly authorizes overtime placement in the current request or after a blocked dry-run.
 - Load `references/worklog-creation-contract.md` before choosing placement, building payloads, running `workledger`, or explaining CLI failures.
 - If `workledger` is unavailable, stop and report that no worklog was created.
@@ -27,7 +27,7 @@ Create canonical local `workledger` worklogs from evidence visible in the curren
    Provide the duration to log, for example 45m, 1h30m, or 2h. I won't infer it from the session.
    ```
 
-2. **Issue key next.** After duration is known, use a visible issue key from the current session. If none is visible, run only `git branch --show-current` and use an unambiguous Jira-style key from the current branch, such as `PROJ-123`. Ask only for the issue key if neither source works.
+2. **Issue key next.** Explicit user issue selection wins. Otherwise use only an unambiguous key in current-session evidence; if unresolved, run `git branch --show-current` once and use an unambiguous Jira-style key from that branch. If still unresolved, run local `workledger issue-metadata list --output json`, optionally narrowed by an evidence-supported `--search` title substring or `--issue-prefix`. Select a key only when the session's work evidence clearly matches one title. Similar, broad, conflicting, or absent title matches require asking for the issue key. Estimates, remaining budget, and key recency never establish attribution, and estimates never replace explicit duration.
 3. **Defaults are not questions.** Do not ask for started time, date/window, log count, description, summary, or split just because they are absent. Default to one log, `--fill --today`, and a descriptive entry generated from session evidence. Never ask for a description under any circumstances.
 4. **Optional fields stay optional.** Use user-provided started time, date/window, log count, and split when present. Ask only when those supplied fields conflict, are malformed, or cannot be applied without changing intent. Use a supplied description when it is descriptive and evidence-matched; otherwise generate one from the session without asking the user.
 
@@ -36,7 +36,7 @@ Never invent duration, issue keys, or completed work. Normalize explicit duratio
 ## Creation flow
 
 1. Confirm there is evidence of work performed, then extract explicit duration.
-2. Extract the issue key from current-session evidence, or derive it from `git branch --show-current`; ask only for the issue key if both fail.
+2. Resolve the issue in the gate order above: explicit selection, unambiguous session or branch key, then a clear single local metadata title match; ask for the key if unresolved.
 3. Extract optional user-provided started time, date/window, log count, and split details. Generate a concise description from the work evidence, or use a supplied description that meets the same standard. Missing optional fields use defaults rather than prompts.
 4. Follow `references/worklog-creation-contract.md` for allowed commands, placement, payload shape, and failure handling.
 5. Use `worklogs add` for the default single-log path:

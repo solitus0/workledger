@@ -130,6 +130,7 @@ type worklogsScreen struct {
 	issueTotalErr            string
 	issueTotalGen            int
 	issueSuggestionGen       int
+	formMetadataGen          int
 	issuePickerGen           int
 	issueDetailGen           int
 	descriptionSuggestionGen int
@@ -304,6 +305,13 @@ type issueSuggestionsResultMsg struct {
 	generation int
 	prefix     string
 	items      []string
+	err        error
+}
+
+type formMetadataResultMsg struct {
+	generation int
+	issueKey   string
+	metadata   map[string]worklogs.IssueMetadata
 	err        error
 }
 
@@ -546,6 +554,20 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.issueTotal = msg.totalSeconds
 		m.issueTotalErr = ""
 		return m, nil
+	case formMetadataResultMsg:
+		if m.form == nil || msg.generation != m.formMetadataGen || msg.issueKey != strings.TrimSpace(m.form.inputs[issueInput].Value()) {
+			return m, nil
+		}
+		if m.issueMetadata == nil {
+			m.issueMetadata = map[string]worklogs.IssueMetadata{}
+		}
+		delete(m.issueMetadata, msg.issueKey)
+		if msg.err == nil {
+			if item, ok := msg.metadata[msg.issueKey]; ok {
+				m.issueMetadata[msg.issueKey] = item
+			}
+		}
+		return m, nil
 	case issueSuggestionsResultMsg:
 		if m.form == nil || m.form.editing || msg.generation != m.issueSuggestionGen ||
 			msg.prefix != strings.ToUpper(strings.TrimSpace(m.form.inputs[issueInput].Value())) {
@@ -739,6 +761,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 					}
 				}
 				if m.form.editing {
+					cmds = append(cmds, m.formMetadataCmd())
 					m.form.stale = true
 					m.setNotice(noticeWarning, "worklogs changed externally; reload before saving")
 				} else {
@@ -821,6 +844,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		} else {
 			m.form.previewRecords = msg.records
 		}
+		delete(m.issueMetadata, strings.TrimSpace(m.form.inputs[issueInput].Value()))
 		if len(msg.metadata) > 0 {
 			if m.issueMetadata == nil {
 				m.issueMetadata = make(map[string]worklogs.IssueMetadata)
@@ -1626,6 +1650,7 @@ func (m *model) resizeForm() {
 
 func (m *model) invalidatePreview() {
 	m.form.previewGeneration++
+	m.formMetadataGen++
 	m.form.previewLoading = false
 	m.form.previewRecords = nil
 	m.form.previewError = ""
@@ -1639,11 +1664,11 @@ func (m *model) schedulePreview() tea.Cmd {
 	}
 	m.invalidatePreview()
 	if m.form.editing {
-		return nil
+		return m.formMetadataCmd()
 	}
 	if strings.TrimSpace(m.form.inputs[issueInput].Value()) == "" || strings.TrimSpace(m.form.inputs[durationInput].Value()) == "" ||
 		(m.form.placement == manualPlacement && strings.TrimSpace(m.form.inputs[startInput].Value()) == "") {
-		return nil
+		return m.formMetadataCmd()
 	}
 	m.form.previewLoading = true
 	generation := m.form.previewGeneration
@@ -1886,4 +1911,21 @@ func clampIndex(index, length int) int {
 		return 0
 	}
 	return min(max(index, 0), length-1)
+}
+
+// Form metadata remains available before duration or placement is entered.
+func (m *model) formMetadataCmd() tea.Cmd {
+	m.formMetadataGen++
+	if m.form == nil || m.workspace == nil {
+		return nil
+	}
+	issue := strings.TrimSpace(m.form.inputs[issueInput].Value())
+	if !worklogs.IsValidIssueKey(issue) {
+		return nil
+	}
+	generation, ws, ctx := m.formMetadataGen, m.workspace, m.ctx
+	return func() tea.Msg {
+		metadata, err := ws.worklogs.LookupIssueMetadata(ctx, []string{issue})
+		return formMetadataResultMsg{generation: generation, issueKey: issue, metadata: metadata, err: err}
+	}
 }

@@ -199,6 +199,9 @@ func (f *fakeWorklogQueries) ListUsedIssues(_ context.Context, mode worklogs.Iss
 	items := make([]worklogs.UsedIssue, 0)
 	for _, item := range f.state.usedIssues {
 		matches := mode == worklogs.IssueFindByPrefix && strings.HasPrefix(item.IssueKey, strings.ToUpper(query))
+		if mode == worklogs.IssueFindByTitle {
+			matches = strings.Contains(strings.ToLower(item.Title), strings.ToLower(query))
+		}
 		if mode == worklogs.IssueFindByDescription {
 			for _, detail := range f.state.issueDetails[item.IssueKey] {
 				if strings.Contains(strings.ToLower(detail.Description), strings.ToLower(query)) {

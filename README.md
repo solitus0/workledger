@@ -80,6 +80,31 @@ After configuring remote adapters, make the first reconciliation action a pull. 
 
 Workledger also includes an interactive terminal UI, available through `workledger tui`. In its Day view, select a worklog and press `M` to preview a move. Use the up/down arrows to choose a valid position before or after another booking or at a workday boundary, `Ctrl+S` to save, and `Esc` to cancel. Moves preserve duration and other bookings and avoid configured lunch; `r` refreshes the source and available positions.
 
+## Issue titles and estimates
+
+Decorate an issue locally, including before its first worklog:
+
+```sh
+workledger issue-metadata set --issue SBAH-2 --title "Product data lifecycle" --max-estimate 16h
+workledger issue-metadata list --search "lifecycle" --output json
+workledger issue-metadata set --issue SBAH-2 --clear-max-estimate
+```
+
+Title and maximum estimate are independently optional. Manual estimates override cached Jira estimates; clearing the manual estimate reveals Jira's value again. Jira refresh preserves local decorations. Estimates accept positive whole-second Go durations and remain informational: they never limit worklog creation or supply the duration an agent logs.
+
+Apply multiple decorations using a JSON array of `{issue_key, title, max_estimate_seconds}` patches. Omitted fields stay unchanged; `null` clears a local field. The whole batch is validated before atomic persistence, and `--dry` writes no decorations. The [ten-issue example](docs/examples/issue-metadata.json) uses `16h` as the maximum for both `8–16h` estimates:
+
+```sh
+workledger issue-metadata apply --file docs/examples/issue-metadata.json --dry --output json
+workledger issue-metadata apply --file docs/examples/issue-metadata.json
+```
+
+You can also provide the array through `--stdin`. Bare `issue-metadata list` includes all decorated and cached issues; date filters restrict it to issues with active local worklogs in that window. Keys stay usable without metadata.
+
+The TUI issue picker includes unused decorated issues and titles. `Ctrl+F` opens prefix search and then cycles description and title search; choosing an issue fills the draft. Selected-worklog detail shows all-time active local estimate usage, for example `62.5% (10h / 16h)` or `125.0% (20h / 16h) · 4h over estimate`. This measures logged effort, not completion; trash and additional remote rows are excluded. The local total is only as complete as the history available locally.
+
+Agents may use local titles to resolve a missing issue key only when the session's work evidence clearly matches one title. Explicit user selection takes priority, followed by an unambiguous session or branch key; ambiguous matches require clarification.
+
 ## Daily workflow
 
 Add work locally at an explicit time:

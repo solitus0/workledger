@@ -2,7 +2,6 @@ package worklogs
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"slices"
 	"sort"
@@ -18,11 +17,16 @@ const (
 )
 
 type IssueMetadata struct {
-	IssueKey            string
-	MaxEstimateSeconds  *int64
-	SourceAdapterFamily string
-	SourceAdapterInst   string
-	RefreshedAt         time.Time
+	IssueKey                 string
+	Title                    string
+	ManualMaxEstimateSeconds *int64
+	CachedMaxEstimateSeconds *int64
+	EstimateSource           string
+	UpdatedAt                time.Time
+	MaxEstimateSeconds       *int64
+	SourceAdapterFamily      string
+	SourceAdapterInst        string
+	RefreshedAt              time.Time
 }
 
 type ContextInput struct {
@@ -73,6 +77,7 @@ type ContextSettings struct {
 
 type ContextIssueHint struct {
 	IssueKey           string
+	Title              string
 	MaxEstimateSeconds *int64
 }
 
@@ -134,59 +139,6 @@ type workdayWindow struct {
 	dayStart        string
 	dayEnd          string
 	lunch           *ContextLunch
-}
-
-func (s *Service) LookupIssueMetadata(ctx context.Context, issueKeys []string) (map[string]IssueMetadata, error) {
-	unique := uniqueIssueKeys(issueKeys)
-	if len(unique) == 0 {
-		return map[string]IssueMetadata{}, nil
-	}
-
-	items := make(map[string]IssueMetadata, len(unique))
-	for start := 0; start < len(unique); start += sqliteQueryBatchSize {
-		end := min(start+sqliteQueryBatchSize, len(unique))
-		batch := unique[start:end]
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
-		args := make([]any, len(batch))
-		for index, issueKey := range batch {
-			args[index] = issueKey
-		}
-		rows, err := s.store.DB().QueryContext(ctx,
-			`SELECT issue_key, max_estimate_seconds, source_adapter_family, source_adapter_instance, refreshed_at FROM issue_metadata WHERE issue_key IN (`+placeholders+`)`,
-			args...,
-		)
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var item IssueMetadata
-			var maxEstimate sql.NullInt64
-			var refreshedAt string
-			if err := rows.Scan(&item.IssueKey, &maxEstimate, &item.SourceAdapterFamily, &item.SourceAdapterInst, &refreshedAt); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			if maxEstimate.Valid {
-				value := maxEstimate.Int64
-				item.MaxEstimateSeconds = &value
-			}
-			parsed, err := time.Parse(time.RFC3339, refreshedAt)
-			if err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			item.RefreshedAt = parsed.UTC()
-			items[item.IssueKey] = item
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
-	}
-	return items, nil
 }
 
 func (s *Service) ListIssueMetadata(ctx context.Context, issueKeys []string) ([]IssueMetadata, error) {
@@ -317,6 +269,7 @@ func (s *Service) Context(ctx context.Context, cfg config.EffectiveConfig, input
 	for _, issueKey := range filters.Issues {
 		result.Planning.Issues = append(result.Planning.Issues, ContextIssueHint{
 			IssueKey:           issueKey,
+			Title:              metadata[issueKey].Title,
 			MaxEstimateSeconds: metadataMaxEstimate(metadata, issueKey),
 		})
 	}

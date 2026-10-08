@@ -60,6 +60,11 @@ func (m model) renderWorklogWorkspace(width, height int) string {
 	confirmationOpen := m.overlay == deleteOverlay || m.overlay == deleteDayOverlay || m.overlay == forceOverlay || m.overlay == reloadOverlay
 	if confirmationOpen {
 		detail = m.renderConfirmation(width-2, detailHeight-2)
+	} else if m.form == nil {
+		// Keep primary issue metrics visible when the activity drawer leaves
+		// less room for timestamps, identifiers, and the full description.
+		lines := strings.Split(detail, "\n")
+		detail = strings.Join(lines[:min(len(lines), max(1, detailHeight-2))], "\n")
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.box(table, width, topHeight, m.focus != focusRail && m.form == nil && !confirmationOpen),
@@ -212,8 +217,26 @@ func (m model) renderWorklogDetail() string {
 	local := item.StartedAtUTC.In(m.workspace.cfg.Location)
 	created := item.CreatedAt.In(m.workspace.cfg.Location)
 	updated := item.UpdatedAt.In(m.workspace.cfg.Location)
-	return fmt.Sprintf("Issue             %s\nLocal issue total %s\nStart             %s\nDuration          %s\nCreated           %s\nUpdated           %s\nID                %s\n\n%s",
-		item.IssueKey, m.renderIssueTotal(item.IssueKey), local.Format("2006-01-02 15:04"), formatDuration(item.DurationSeconds),
+	metadata := m.issueMetadata[item.IssueKey]
+	extra := ""
+	if metadata.Title != "" {
+		extra += "\nTitle             " + metadata.Title
+	}
+	if metadata.MaxEstimateSeconds != nil && *metadata.MaxEstimateSeconds > 0 {
+		usage := "Unavailable"
+		if m.issueTotalIssue == item.IssueKey && !m.issueTotalLoading && m.issueTotalErr == "" {
+			maximum := *metadata.MaxEstimateSeconds
+			usage = fmt.Sprintf("%.1f%% (%s / %s)", 100*float64(m.issueTotal)/float64(maximum), formatEstimateDuration(int64(m.issueTotal)), formatEstimateDuration(maximum))
+			if int64(m.issueTotal) > maximum {
+				usage += " · " + formatEstimateDuration(int64(m.issueTotal)-maximum) + " over estimate"
+			}
+		} else if m.issueTotalLoading {
+			usage = "Loading…"
+		}
+		extra += "\nEstimate used:    " + usage
+	}
+	return fmt.Sprintf("Issue             %s%s\nLocal issue total %s\nStart             %s\nDuration          %s\nCreated           %s\nUpdated           %s\nID                %s\n\n%s",
+		item.IssueKey, extra, m.renderIssueTotal(item.IssueKey), local.Format("2006-01-02 15:04"), formatDuration(item.DurationSeconds),
 		created.Format("2006-01-02 15:04"), updated.Format("2006-01-02 15:04"), item.ID, item.Description)
 }
 
@@ -255,8 +278,8 @@ func (m model) renderForm() string {
 		}
 		lines = append(lines, m.renderFormRow(label, m.form.inputs[index].View(), field == m.form.focus))
 		if field == issueField {
-			if context := m.renderIssueContext(); context != "" && m.height >= 32 {
-				lines = append(lines, fmt.Sprintf("%-12s %s", "Issue info", m.muted(context)))
+			if context := m.renderIssueContext(); context != "" {
+				lines = append(lines, fmt.Sprintf("%-12s %s", "Issue info", m.muted(truncate(context, max(1, m.formContentWidth()-13)))))
 			}
 		}
 	}
@@ -291,7 +314,7 @@ func (m model) renderForm() string {
 		reservedLines++
 	}
 	lines = compactFormLines(lines, m.formLineBudget()-reservedLines, []string{
-		"booked", "Issue info", "After        ", m.form.placement.Description(),
+		"booked", "After        ", m.form.placement.Description(), "Issue info",
 	})
 	if m.form.stale {
 		lines = append(lines, m.paint("Changed externally — reload before saving.", m.colors.Warning))
@@ -467,12 +490,18 @@ func (m model) renderIssueContext() string {
 	if !ok {
 		return ""
 	}
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 3)
+	if metadata.Title != "" {
+		parts = append(parts, metadata.Title)
+	}
+	if metadata.EstimateSource == "manual" {
+		parts = append(parts, "manual")
+	}
 	if metadata.SourceAdapterFamily != "" {
 		parts = append(parts, strings.ReplaceAll(metadata.SourceAdapterFamily, "_", " "))
 	}
 	if metadata.MaxEstimateSeconds != nil {
-		parts = append(parts, "estimate "+formatDuration(int(*metadata.MaxEstimateSeconds)))
+		parts = append(parts, "estimate "+formatEstimateDuration(*metadata.MaxEstimateSeconds))
 	}
 	return strings.Join(parts, " · ")
 }
@@ -531,4 +560,22 @@ func pluralizeWorklogs(count int) string {
 		return "1 worklog"
 	}
 	return fmt.Sprintf("%d worklogs", count)
+}
+
+// Estimates retain whole seconds; unlike worklogs, they need not be minute-aligned.
+func formatEstimateDuration(seconds int64) string {
+	parts := make([]string, 0, 3)
+	if hours := seconds / 3600; hours > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", hours))
+	}
+	if minutes := (seconds % 3600) / 60; minutes > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", minutes))
+	}
+	if remainder := seconds % 60; remainder > 0 {
+		parts = append(parts, fmt.Sprintf("%ds", remainder))
+	}
+	if len(parts) == 0 {
+		return "0h"
+	}
+	return strings.Join(parts, "")
 }

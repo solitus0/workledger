@@ -39,10 +39,10 @@ func TestUsedIssueSearchExcludesTrashAndRanksByEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	items, more, err := service.ListUsedIssues(ctx, IssueFindByPrefix, "", 20, 0)
-	if err != nil || more || len(items) != 3 {
+	if err != nil || more || len(items) != 4 {
 		t.Fatalf("browse = %#v, more=%t, err=%v", items, more, err)
 	}
-	for index, want := range []string{"APP-2", "APP-1", "APP-4"} {
+	for index, want := range []string{"APP-2", "APP-1", "APP-4", "META-1"} {
 		if items[index].IssueKey != want {
 			t.Fatalf("item %d = %q, want %q", index, items[index].IssueKey, want)
 		}
@@ -120,13 +120,22 @@ func TestUsedIssueSearchPagesBeyondHundred(t *testing.T) {
 func TestIssueDescriptionsKeepRepeatedWorklogs(t *testing.T) {
 	store, service := newTestService(t)
 	defer store.Close()
-	for _, id := range []string{"one", "two"} {
-		if _, err := store.DB().Exec(`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, 'APP-1', '2026-04-01T09:00:00Z', 900, 'same text', '2026-05-01T09:00:00Z', '2026-05-01T09:00:00Z')`, id); err != nil {
+	for index, id := range []string{"one", "two"} {
+		if _, err := store.DB().Exec(`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, 'APP-1', '2026-04-01T09:00:00Z', ?, 'same text', '2026-05-01T09:00:00Z', '2026-05-01T09:00:00Z')`, id, []int{900, 5400}[index]); err != nil {
 			t.Fatal(err)
 		}
 	}
 	items, more, err := service.ListIssueWorklogDescriptions(context.Background(), "APP-1", 10, 0)
 	if err != nil || more || len(items) != 2 || items[0].Description != "same text" || items[1].Description != "same text" {
 		t.Fatalf("repeated descriptions = %#v, more=%t, err=%v", items, more, err)
+	}
+	for offset, wantDuration := range []int{900, 5400} {
+		if items[offset].DurationSeconds != wantDuration {
+			t.Fatalf("entry %d duration = %d, want %d", offset, items[offset].DurationSeconds, wantDuration)
+		}
+		page, hasMore, err := service.ListIssueWorklogDescriptions(context.Background(), "APP-1", 1, offset)
+		if err != nil || hasMore != (offset == 0) || len(page) != 1 || page[0].DurationSeconds != wantDuration || page[0].Description != "same text" {
+			t.Fatalf("page %d = %#v, more=%t, err=%v", offset, page, hasMore, err)
+		}
 	}
 }

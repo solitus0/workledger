@@ -703,7 +703,7 @@ func TestAutomaticAddFormExplainsDayAndProjectedOutcome(t *testing.T) {
 	rendered := m.render()
 	for _, expected := range []string{
 		"Add worklog · Thu, May 21 · 2h 00m logged · 6h 00m remaining",
-		"jira cloud · estimate 4h 00m",
+		"jira cloud · estimate 4h",
 		"█ booked  ▓ proposed  · lunch  ─ free",
 		"2 worklogs · 10:00–12:00 + 12:45–13:45",
 		"5h 00m total · 3h 00m below daily target",

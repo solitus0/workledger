@@ -1535,6 +1535,8 @@ func (a *app) newIssueMetadataCommand() *cobra.Command {
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	cmd.AddCommand(a.newIssueMetadataListCommand())
+	cmd.AddCommand(a.newIssueMetadataSetCommand())
+	cmd.AddCommand(a.newIssueMetadataApplyCommand())
 	cmd.AddCommand(a.newIssueMetadataRefreshCommand())
 	return cmd
 }
@@ -1542,6 +1544,7 @@ func (a *app) newIssueMetadataCommand() *cobra.Command {
 func (a *app) newIssueMetadataListCommand() *cobra.Command {
 	var issue string
 	var issuePrefix string
+	var search string
 	var today bool
 	var yesterday bool
 	var tomorrow bool
@@ -1562,7 +1565,7 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "list",
-		Short:   "List cached issue metadata",
+		Short:   "List local issue metadata",
 		Example: "  workledger issue-metadata list --issue PROJ-123\n  workledger issue-metadata list --from 2026-05-14 --to 2026-05-16",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
@@ -1573,6 +1576,16 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 			defer cleanup()
 
 			weekOffsetSet := cmd.Flags().Changed("week-offset")
+			if issue != "" && issuePrefix != "" {
+				return a.fail(mode, 2, "validation_error", "issue and issue-prefix are mutually exclusive", nil)
+			}
+			if issuePrefix != "" && !worklogs.IsValidIssuePrefix(issuePrefix) {
+				return a.fail(mode, 2, "validation_error", "issue-prefix must be a project key", nil)
+			}
+			if weekOffsetSet && !(monday || tuesday || wednesday || thursday || friday || saturday || sunday) {
+				return a.fail(mode, 2, "validation_error", "week-offset requires a weekday selector", nil)
+			}
+
 			raw := worklogs.ListFilters{
 				Issue:         issue,
 				IssuePrefix:   issuePrefix,
@@ -1611,6 +1624,15 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 					return a.handleIssueMetadataError(mode, err)
 				}
 				items = []worklogs.IssueMetadata{item}
+			} else if !hasSelector(raw) {
+				filters.Timezone = effective.TimezoneName
+				if issuePrefix != "" {
+					filters.IssuePrefix = &issuePrefix
+				}
+				items, err = service.SearchIssueMetadata(cmd.Context(), issuePrefix, search)
+				if err != nil {
+					return a.handleWorklogError(mode, effective, err)
+				}
 			} else {
 				active, effectiveFilters, err := service.List(cmd.Context(), effective, raw)
 				if err != nil {
@@ -1623,14 +1645,24 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 				filters = effectiveFilters
 			}
 
-			if mode == "json" {
-				return a.renderIssueMetadataListJSON(raw, filters, items, effective.Location)
+			if search != "" {
+				filtered := make([]worklogs.IssueMetadata, 0, len(items))
+				for _, item := range items {
+					if strings.Contains(strings.ToLower(item.Title), strings.ToLower(search)) {
+						filtered = append(filtered, item)
+					}
+				}
+				items = filtered
 			}
-			return renderTable(a.stdout, []string{"ISSUE", "MAX_ESTIMATE_SECONDS", "SOURCE_ADAPTER", "SOURCE_INSTANCE", "REFRESHED_AT"}, issueMetadataRows(items))
+			if mode == "json" {
+				return a.renderIssueMetadataListJSON(raw, filters, items, effective.Location, search)
+			}
+			return renderTable(a.stdout, []string{"ISSUE", "TITLE", "MAX_ESTIMATE_SECONDS", "ESTIMATE_SOURCE", "SOURCE_ADAPTER", "SOURCE_INSTANCE", "REFRESHED_AT"}, issueMetadataRows(items))
 		},
 	}
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter to one issue")
+	cmd.Flags().StringVar(&search, "search", "", "Filter by case-insensitive title substring")
 	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
@@ -3422,7 +3454,7 @@ func totalsDaysJSON(days []totals.DayResult) []map[string]any {
 	return items
 }
 
-func (a *app) renderIssueMetadataListJSON(raw worklogs.ListFilters, effective worklogs.EffectiveFilters, items []worklogs.IssueMetadata, location *time.Location) error {
+func (a *app) renderIssueMetadataListJSON(raw worklogs.ListFilters, effective worklogs.EffectiveFilters, items []worklogs.IssueMetadata, location *time.Location, search string) error {
 	payload := map[string]any{
 		"filters": selectorFiltersJSON(raw, effective, location),
 	}
@@ -3431,6 +3463,7 @@ func (a *app) renderIssueMetadataListJSON(raw worklogs.ListFilters, effective wo
 	for _, item := range items {
 		records = append(records, issueMetadataRecordJSON(item))
 	}
+	payload["filters"].(map[string]any)["search"] = emptyToNil(search)
 	payload["items"] = records
 	payload["total"] = len(records)
 	return a.writeJSON(payload)
@@ -3593,6 +3626,7 @@ func (a *app) renderContextJSON(raw worklogs.ContextInput, result worklogs.Conte
 	for _, item := range result.Planning.Issues {
 		planningIssues = append(planningIssues, map[string]any{
 			"issue_key":            item.IssueKey,
+			"title":                emptyToNil(item.Title),
 			"max_estimate_seconds": int64PtrToAny(item.MaxEstimateSeconds),
 		})
 	}
@@ -4089,12 +4123,24 @@ func filterRecord(record map[string]any, fields []string) map[string]any {
 }
 
 func issueMetadataRecordJSON(item worklogs.IssueMetadata) map[string]any {
+	var refreshed, updated any
+	if !item.RefreshedAt.IsZero() {
+		refreshed = item.RefreshedAt.UTC().Format(time.RFC3339)
+	}
+	if !item.UpdatedAt.IsZero() {
+		updated = item.UpdatedAt.UTC().Format(time.RFC3339)
+	}
 	return map[string]any{
-		"issue_key":               item.IssueKey,
-		"max_estimate_seconds":    int64PtrToAny(item.MaxEstimateSeconds),
-		"source_adapter_family":   item.SourceAdapterFamily,
-		"source_adapter_instance": item.SourceAdapterInst,
-		"refreshed_at":            item.RefreshedAt.UTC().Format(time.RFC3339),
+		"issue_key":                   item.IssueKey,
+		"title":                       emptyToNil(item.Title),
+		"max_estimate_seconds":        int64PtrToAny(item.MaxEstimateSeconds),
+		"manual_max_estimate_seconds": int64PtrToAny(item.ManualMaxEstimateSeconds),
+		"cached_max_estimate_seconds": int64PtrToAny(item.CachedMaxEstimateSeconds),
+		"estimate_source":             item.EstimateSource,
+		"source_adapter_family":       emptyToNil(item.SourceAdapterFamily),
+		"source_adapter_instance":     emptyToNil(item.SourceAdapterInst),
+		"refreshed_at":                refreshed,
+		"updated_at":                  updated,
 	}
 }
 
@@ -4302,10 +4348,12 @@ func issueMetadataRows(items []worklogs.IssueMetadata) [][]string {
 		}
 		rows = append(rows, []string{
 			item.IssueKey,
+			item.Title,
 			value,
+			item.EstimateSource,
 			item.SourceAdapterFamily,
 			item.SourceAdapterInst,
-			item.RefreshedAt.UTC().Format(time.RFC3339),
+			formatOptionalMetadataTime(item.RefreshedAt),
 		})
 	}
 	return rows
@@ -4330,4 +4378,11 @@ func contextRows(result worklogs.ContextResult) [][]string {
 		})
 	}
 	return rows
+}
+
+func formatOptionalMetadataTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
 }

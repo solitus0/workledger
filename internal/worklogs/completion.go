@@ -14,17 +14,19 @@ type IssueFindMode string
 const (
 	IssueFindByPrefix      IssueFindMode = "prefix"
 	IssueFindByDescription IssueFindMode = "description"
+	IssueFindByTitle       IssueFindMode = "title"
 )
 
-// UsedIssue is one issue key evidenced by an active local worklog.
+// UsedIssue is a known local issue, with optional worklog history and metadata.
 type UsedIssue struct {
-	IssueKey      string
-	LastEnteredAt time.Time
+	IssueKey           string
+	LastEnteredAt      time.Time
+	Title              string
+	MaxEstimateSeconds *int64
 }
 
-// ListUsedIssues returns active local issue keys in latest-entry order. When
-// finding by description, a matching worklog admits its issue, but all active
-// worklogs for that issue determine its latest-entry rank.
+// ListUsedIssues returns the local issue catalog, with used issues first by
+// latest entry and unused metadata by latest update. History search never uses trash.
 func (s *Service) ListUsedIssues(ctx context.Context, mode IssueFindMode, query string, limit, offset int) ([]UsedIssue, bool, error) {
 	if limit <= 0 || offset < 0 {
 		return []UsedIssue{}, false, nil
@@ -34,24 +36,33 @@ func (s *Service) ListUsedIssues(ctx context.Context, mode IssueFindMode, query 
 	switch mode {
 	case IssueFindByPrefix:
 		lower, upper := sqlitestore.PrefixRange(strings.ToUpper(strings.TrimSpace(query)))
-		where, args = `issue_key >= ? AND issue_key < ?`, []any{lower, upper}
+		where, args = `k.issue_key >= ? AND k.issue_key < ?`, []any{lower, upper}
 	case IssueFindByDescription:
-		trimmed := strings.TrimSpace(query)
-		if trimmed == "" {
+		if strings.TrimSpace(query) == "" {
 			where = `1 = 1`
 		} else {
-			where, args = `issue_key IN (SELECT issue_key FROM worklogs WHERE description LIKE ? ESCAPE '\' COLLATE NOCASE)`, []any{literalSubstringPattern(trimmed)}
+			where, args = `EXISTS (SELECT 1 FROM worklogs w WHERE w.issue_key = k.issue_key AND w.description LIKE ? ESCAPE '\' COLLATE NOCASE)`, []any{literalSubstringPattern(strings.TrimSpace(query))}
+		}
+	case IssueFindByTitle:
+		if strings.TrimSpace(query) == "" {
+			where = `1 = 1`
+		} else {
+			where, args = `m.title LIKE ? ESCAPE '\' COLLATE NOCASE`, []any{literalSubstringPattern(strings.TrimSpace(query))}
 		}
 	default:
 		return nil, false, fmt.Errorf("unsupported issue find mode %q", mode)
 	}
 	args = append(args, limit+1, offset)
-	rows, err := s.store.DB().QueryContext(ctx, `
-		SELECT issue_key, MAX(created_at) AS last_entered_at
-		FROM worklogs WHERE `+where+`
-		GROUP BY issue_key
-		ORDER BY last_entered_at DESC, issue_key
-		LIMIT ? OFFSET ?`, args...)
+	rows, err := s.store.DB().QueryContext(ctx, issueCatalogSQL+`, known_keys AS (
+        SELECT issue_key FROM worklogs UNION SELECT issue_key FROM metadata
+    ), used AS (SELECT issue_key, MAX(created_at) AS last_entered_at FROM worklogs GROUP BY issue_key)
+    SELECT k.issue_key, COALESCE(u.last_entered_at, ''), COALESCE(m.title, ''),
+        COALESCE(m.manual_estimate, CASE WHEN m.cached_estimate > 0 THEN m.cached_estimate END)
+    FROM known_keys k LEFT JOIN used u ON u.issue_key = k.issue_key
+    LEFT JOIN metadata m ON m.issue_key = k.issue_key WHERE `+where+`
+    ORDER BY u.last_entered_at IS NULL, u.last_entered_at DESC,
+        CASE WHEN u.last_entered_at IS NULL THEN m.recent_at END DESC, k.issue_key
+    LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -60,12 +71,16 @@ func (s *Service) ListUsedIssues(ctx context.Context, mode IssueFindMode, query 
 	for rows.Next() {
 		var item UsedIssue
 		var enteredAt string
-		if err := rows.Scan(&item.IssueKey, &enteredAt); err != nil {
+		var estimate *int64
+		if err := rows.Scan(&item.IssueKey, &enteredAt, &item.Title, &estimate); err != nil {
 			return nil, false, err
 		}
-		item.LastEnteredAt, err = time.Parse(time.RFC3339, enteredAt)
-		if err != nil {
-			return nil, false, err
+		item.MaxEstimateSeconds = estimate
+		if enteredAt != "" {
+			item.LastEnteredAt, err = time.Parse(time.RFC3339, enteredAt)
+			if err != nil {
+				return nil, false, err
+			}
 		}
 		items = append(items, item)
 	}
@@ -80,8 +95,9 @@ func (s *Service) ListUsedIssues(ctx context.Context, mode IssueFindMode, query 
 }
 
 type IssueWorklogDescription struct {
-	StartedAtUTC time.Time
-	Description  string
+	StartedAtUTC    time.Time
+	DurationSeconds int
+	Description     string
 }
 
 // ListIssueWorklogDescriptions returns every active worklog description for an
@@ -91,7 +107,7 @@ func (s *Service) ListIssueWorklogDescriptions(ctx context.Context, issueKey str
 		return []IssueWorklogDescription{}, false, nil
 	}
 	rows, err := s.store.DB().QueryContext(ctx, `
-		SELECT started_at_utc, description
+		SELECT started_at_utc, duration_seconds, description
 		FROM worklogs WHERE issue_key = ?
 		ORDER BY created_at DESC, id
 		LIMIT ? OFFSET ?`, strings.ToUpper(strings.TrimSpace(issueKey)), limit+1, offset)
@@ -103,7 +119,7 @@ func (s *Service) ListIssueWorklogDescriptions(ctx context.Context, issueKey str
 	for rows.Next() {
 		var item IssueWorklogDescription
 		var startedAt string
-		if err := rows.Scan(&startedAt, &item.Description); err != nil {
+		if err := rows.Scan(&startedAt, &item.DurationSeconds, &item.Description); err != nil {
 			return nil, false, err
 		}
 		item.StartedAtUTC, err = time.Parse(time.RFC3339, startedAt)
@@ -198,54 +214,17 @@ func (s *Service) ListTrashByIDPrefix(prefix string, limit int) ([]TrashRecord, 
 	return items, rows.Err()
 }
 
-// ListKnownIssueKeys returns locally known issue keys from active worklogs and
-// cached issue metadata. Results are case-insensitively prefix-filtered and
-// ordered by recent local activity, with metadata-only issues last.
+// ListKnownIssueKeys shares the picker catalog and its entry ordering.
 func (s *Service) ListKnownIssueKeys(ctx context.Context, prefix string, limit int) ([]string, error) {
-	if limit <= 0 {
-		return []string{}, nil
-	}
-
-	trimmedPrefix := strings.ToUpper(strings.TrimSpace(prefix))
-	lower, upper := sqlitestore.PrefixRange(trimmedPrefix)
-	rows, err := s.store.DB().QueryContext(ctx,
-		`WITH candidates AS (
-			SELECT issue_key, MAX(updated_at) AS recent_at, 0 AS metadata_only
-			FROM worklogs
-			WHERE issue_key >= ? AND issue_key < ?
-			GROUP BY issue_key
-			UNION ALL
-			SELECT metadata.issue_key, metadata.refreshed_at AS recent_at, 1 AS metadata_only
-			FROM issue_metadata AS metadata
-			WHERE metadata.issue_key >= ? AND metadata.issue_key < ?
-			  AND NOT EXISTS (
-				SELECT 1 FROM worklogs WHERE worklogs.issue_key = metadata.issue_key
-			  )
-		 )
-		 SELECT issue_key
-		 FROM candidates
-		 ORDER BY metadata_only, recent_at DESC, issue_key COLLATE NOCASE, issue_key
-		 LIMIT ?`,
-		lower,
-		upper,
-		lower,
-		upper,
-		limit,
-	)
+	issues, _, err := s.ListUsedIssues(ctx, IssueFindByPrefix, prefix, limit, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	items := make([]string, 0)
-	for rows.Next() {
-		var issueKey string
-		if err := rows.Scan(&issueKey); err != nil {
-			return nil, err
-		}
-		items = append(items, issueKey)
+	keys := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		keys = append(keys, issue.IssueKey)
 	}
-	return items, rows.Err()
+	return keys, nil
 }
 
 // ListRecentDescriptions returns distinct descriptions recently used by one

@@ -34,8 +34,12 @@ Placement rule:
 - [ ] NFR-014b: The `trashed_worklogs` table shall use a dedicated archive `id` as its CLI identity.
 - [ ] NFR-014c: The `trashed_worklogs` table shall retain `storage_scope`, nullable `source_worklog_id`, nullable `source_created_at`, nullable `source_updated_at`, nullable `source_revision`, canonical worklog fields, `trashed_at`, reason fields, `plan_direction`, nullable plan lineage, and nullable adapter lineage.
 - [ ] NFR-014d: The SQLite schema shall define indexes on `trashed_worklogs(issue_key, started_at_utc)`, `trashed_worklogs(trashed_at)`, `trashed_worklogs(reason_code)`, and `trashed_worklogs(storage_scope, trashed_at)`.
-- [ ] NFR-015: Additive storage shall use `issue_metadata`, `saved_plans`, `saved_plan_items`, and `delivery_attempts` tables.
+- [ ] NFR-015: Additive storage shall use `issue_decorations`, `issue_metadata`, `saved_plans`, `saved_plan_items`, and `delivery_attempts` tables.
 - [ ] NFR-016: The `issue_metadata` table shall include `issue_key`, `max_estimate_seconds`, `source_adapter_family`, `source_adapter_instance`, and `refreshed_at`.
+- [ ] NFR-016a: `issue_decorations` shall store a unique canonical `issue_key`, nullable local `title`, nullable positive whole-second `max_estimate_seconds`, and UTC `updated_at`, separately from the Jira cache. Initialization shall add this table without discarding existing cache or worklog rows; ordinary CLI and TUI reads shall not repair storage.
+- [ ] NFR-016b: Local titles shall be trimmed, non-empty single-line text when supplied; null shall clear them. CLI estimates shall use Go duration syntax and require positive whole seconds without applying worklog minimum duration or minute rounding; JSON estimates shall be positive integers or null, with no range representation.
+- [ ] NFR-016c: Metadata list JSON shall preserve `filters`, `items`, and `total`; items shall expose nullable `title`, effective `max_estimate_seconds`, `manual_max_estimate_seconds`, `cached_max_estimate_seconds`, `estimate_source` as `manual|jira|none`, nullable cache provenance and refresh time, and nullable local update time. Metadata mutation JSON shall expose `dry_run`, normalized patch `items`, and `total`.
+
 - [ ] NFR-017: The `saved_plans` table shall include `id`, `created_at`, `plan_direction`, `adapter_family`, `config_fingerprint`, `window_from_utc`, `window_to_utc`, immutable planning status in `aggregate_status`, and terminal-success time in `applied_at`.
 - [ ] NFR-018: The `saved_plan_items` table shall include `id`, `plan_id`, `issue_key`, `target_issue`, `route_profile`, `plan_direction`, `target_adapter_family`, `target_adapter_instance`, `window_from_utc`, `window_to_utc`, `plan_status`, `planned_action`, `comparison_status`, `reason_code`, `reason_detail`, `payload_json`, `inspection_summary_json`, `delivery_key`, `content_hash`, `local_row_count`, `local_total_seconds`, `remote_row_count`, and `remote_total_seconds`; item execution state, time, and message shall not be duplicated outside delivery attempts.
 - [ ] NFR-019: The `delivery_attempts` table shall include `id`, `plan_id`, `plan_item_id`, `attempt_state`, `message`, and `created_at`.
@@ -729,6 +733,6 @@ Placement rule:
 - [ ] NFR-567: Activity persistence shall be owned by an `internal/activity` service with consumer-facing operations that accept `context.Context`.
 - [ ] NFR-568: Activity logging failures shall never replace or modify the result of the operation being observed.
 - [ ] NFR-569: Activity error persistence shall use fixed sanitized codes and messages rather than arbitrary raw errors.
-- [ ] NFR-570: TUI domain change detection shall advance only for worklog, trash, preset, and issue-metadata commits; activity-only commits shall refresh activity without marking drafts stale or recalculating availability.
+- [ ] NFR-570: TUI domain change detection shall advance only for worklog, trash, preset, issue-metadata, and issue-decoration commits; activity-only commits shall refresh activity without marking drafts stale or recalculating availability.
 - [ ] NFR-571: The TUI shall show an optimistic running activity immediately and correlate asynchronous completion with the same activity ID.
 - [ ] NFR-572: Activity rendering shall fit the existing 100-by-28 minimum viewport, remain usable without color, and shall not add a numbered TUI destination.

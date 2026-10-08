@@ -20,7 +20,7 @@ func TestIssuePickerModesPagingDetailsAndDraft(t *testing.T) {
 	for i := 124; i >= 0; i-- {
 		key := fmt.Sprintf("APP-%03d", i)
 		state.usedIssues = append(state.usedIssues, worklogs.UsedIssue{IssueKey: key})
-		state.issueDetails[key] = []worklogs.IssueWorklogDescription{{Description: "recognizable work", StartedAtUTC: time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC)}}
+		state.issueDetails[key] = []worklogs.IssueWorklogDescription{{Description: "recognizable work", StartedAtUTC: time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC), DurationSeconds: 5400}}
 	}
 	m := newModel(context.Background(), deps, ws, nil)
 	m.width, m.height = minimumWidth, minimumHeight
@@ -42,7 +42,7 @@ func TestIssuePickerModesPagingDetailsAndDraft(t *testing.T) {
 	next, _ = m.Update(cmd())
 	m = next.(model)
 	view := m.render()
-	if !strings.Contains(view, "recognizable work") || !strings.Contains(view, "2026-05-04") || strings.Contains(view, "\x1b[") {
+	if !strings.Contains(view, "recognizable work") || !strings.Contains(view, "2026-05-04 · 1h 30m") || strings.Contains(view, "\x1b[") {
 		t.Fatalf("detail pane / NO_COLOR failed:\n%s", view)
 	}
 	if width, height := lipgloss.Width(view), lipgloss.Height(view); width != minimumWidth || height != minimumHeight {
@@ -209,6 +209,50 @@ func TestIssuePickerIgnoresResultsFromPreviousOpening(t *testing.T) {
 	m = next.(model)
 	if len(m.issuePicker.details) != 1 || m.issuePicker.details[0].Description != "new detail" {
 		t.Fatalf("new detail = %#v", m.issuePicker.details)
+	}
+}
+
+func TestIssuePickerEntryDateAndDuration(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		duration int
+		search   bool
+		header   string
+	}{
+		{name: "minutes", duration: 900, header: "2026-10-07 · 0h 15m"},
+		{name: "multi-hour search match", duration: 12600, search: true, header: "* 2026-10-07 · 3h 30m"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, deps := testWorkspace(t)
+			ws.cfg.Location = time.FixedZone("local", 2*60*60)
+			state := worklogState(ws)
+			state.usedIssues = []worklogs.UsedIssue{{IssueKey: "APP-1"}}
+			state.issueDetails = map[string][]worklogs.IssueWorklogDescription{"APP-1": {{
+				StartedAtUTC:    time.Date(2026, 10, 6, 23, 0, 0, 0, time.UTC),
+				DurationSeconds: tc.duration,
+				Description:     "Recognizable work",
+			}}}
+			m := newModel(context.Background(), deps, ws, nil)
+			m.width, m.height = minimumWidth, minimumHeight
+			m.openAddForm()
+			cmd := m.openIssuePicker()
+			next, cmd := m.Update(cmd())
+			m = next.(model)
+			next, _ = m.Update(cmd())
+			m = next.(model)
+			if tc.search {
+				m.issuePicker.searching = true
+				m.issuePicker.mode = worklogs.IssueFindByDescription
+				m.issuePicker.query = "recognizable"
+			}
+			view := m.render()
+			if !strings.Contains(view, tc.header) || !strings.Contains(view, "Recognizable work") || strings.Contains(view, "\x1b[") {
+				t.Fatalf("entry header / NO_COLOR failed:\n%s", view)
+			}
+			if width, height := lipgloss.Width(view), lipgloss.Height(view); width != minimumWidth || height != minimumHeight {
+				t.Fatalf("picker render = %dx%d, want %dx%d", width, height, minimumWidth, minimumHeight)
+			}
+		})
 	}
 }
 
