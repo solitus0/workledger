@@ -9,10 +9,10 @@ import (
 
 func TestLayoutOwnsRenderAndMouseGeometry(t *testing.T) {
 	layout := calculateLayout(120, 40, true)
-	if layout.rail.width != 30 || layout.workspace.x != 31 {
+	if layout.rail.width != navigationWidth || layout.workspace.x != navigationWidth+1 {
 		t.Fatalf("rail=%+v workspace=%+v", layout.rail, layout.workspace)
 	}
-	if !layout.activity.contains(31, layout.activity.y) || layout.workspace.contains(31, layout.activity.y) {
+	if !layout.activity.contains(layout.workspace.x, layout.activity.y) || layout.workspace.contains(layout.workspace.x, layout.activity.y) {
 		t.Fatalf("activity and workspace rectangles overlap or leave the right panel: %+v", layout)
 	}
 

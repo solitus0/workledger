@@ -149,7 +149,7 @@ func TestPlansRailSummarizesActionableVisibleScopes(t *testing.T) {
 	}
 
 	rail := stripANSI(m.renderRail(38))
-	for _, expected := range []string{"Unapplied  3", "Failed     2", "Uncertain  3"} {
+	for _, expected := range []string{"Plans 3 ready", "Failed 2", "Uncertain 3"} {
 		if !strings.Contains(rail, expected) {
 			t.Fatalf("plans rail missing %q:\n%s", expected, rail)
 		}
@@ -159,7 +159,7 @@ func TestPlansRailSummarizesActionableVisibleScopes(t *testing.T) {
 	}
 
 	compact := stripANSI(m.renderRail(28))
-	if !strings.Contains(compact, "3 apply · 5 retry") {
+	if !strings.Contains(compact, "Plans 3 ready") || !strings.Contains(compact, "Failed 2") || !strings.Contains(compact, "Uncertain 3") {
 		t.Fatalf("compact plans rail missing combined counts:\n%s", compact)
 	}
 }

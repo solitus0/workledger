@@ -12,39 +12,20 @@ import (
 func (m model) renderMonthWorkspace(width, height int) string {
 	heading := m.selectedDate.Format("January 2006") + " · Local booked " + formatDuration(m.contextSummary.BookedSeconds)
 	lines := []string{heading, m.renderWorklogViewSelector(), ""}
-	if m.form != nil {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			m.box(strings.Join(lines, "\n"), width, 5, false),
-			m.box(m.renderForm(), width, height-5, true),
-		)
-	}
 	compact := monthCalendarCompact(m.selectedDate, height)
-	lines = append(lines, m.monthCalendarRows(width-4, compact)...)
-	summary := ""
+	lines = append(lines, m.monthCalendarRows(width-2, compact)...)
+	empty, short := m.monthGaps()
+	summary := fmt.Sprintf("Past weekdays: %d empty · %d short · %s/day quota", empty, short, formatDuration(m.dailyQuotaSeconds()))
 	if len(m.contextDays) == 0 {
 		summary = "No monthly context available."
 		if m.worklogLoading {
 			summary = "Loading month…"
 		}
-		summary = m.muted(summary)
-	} else {
-		empty, short := m.monthGaps()
-		summary = fmt.Sprintf("Past weekdays: %d empty · %d short · %s/day quota", empty, short, formatDuration(m.dailyQuotaSeconds()))
 	}
-	if height >= len(lines)+9 {
-		lines = append(lines, m.paint(strings.Repeat("─", width-4), m.colors.Border), summary)
-	} else {
-		// Put the summary inside the divider when a separate row would hide the day preview.
-		trailing := strings.Repeat("─", max(0, width-7-lipgloss.Width(summary)))
-		lines = append(lines, m.paint("─ ", m.colors.Border)+summary+m.paint(" "+trailing, m.colors.Border))
-	}
-	lines = append(lines, m.renderMonthLegend())
-	topHeight := len(lines) + 2
-	detailHeight := height - topHeight
-	return lipgloss.JoinVertical(lipgloss.Left,
-		m.box(strings.Join(lines, "\n"), width, topHeight, m.focus != focusRail),
-		m.box(m.renderMonthDayDetail(width-4, detailHeight-2), width, detailHeight, false),
-	)
+	lines = append(lines, m.rule(width-2), m.muted(truncate(summary, width-2)), m.renderMonthLegend())
+	topHeight := len(lines)
+	return lipgloss.JoinVertical(lipgloss.Left, m.pane(strings.Join(lines, "\n"), width, topHeight),
+		m.pane(m.renderMonthDayDetail(width-2, height-topHeight), width, height-topHeight))
 }
 
 func monthCalendarCompact(date time.Time, height int) bool {
@@ -202,13 +183,16 @@ func (m model) renderMonthDayDetail(width, height int) string {
 		heading += " · " + formatDuration(m.dailyQuotaSeconds()-booked) + " short"
 	}
 	lines := []string{truncate(heading, width)}
-	if height >= 3 {
-		lines = append(lines, m.renderDayTimeline(nil, ""))
+	timeline := m.renderDayTimelineWidth(nil, "", width)
+	if height >= lipgloss.Height(timeline)+3 {
+		lines = append(lines, timeline)
+		legend := wrapIssueDescription(m.renderTimelineLegendWidth(nil, "", width), width)
+		if height >= lipgloss.Height(strings.Join(lines, "\n"))+len(legend)+2 {
+			lines = append(lines, "")
+			lines = append(lines, legend...)
+		}
 	}
-	if height >= 7 {
-		lines = append(lines, "", strings.Repeat(" ", 6)+m.renderTimelineLegend(nil, ""))
-	}
-	available := height - len(lines)
+	available := height - lipgloss.Height(strings.Join(lines, "\n"))
 	lines = append(lines, m.unselectedWorklogRows(width, available)...)
 	if len(m.worklogs) == 0 && available > 0 {
 		message := "No worklogs yet."

@@ -82,6 +82,10 @@ func (m model) updateTrash(key string) (tea.Model, tea.Cmd) {
 		m.trashSelected = max(0, m.trashSelected-1)
 	case "down", "j":
 		m.trashSelected = min(max(0, len(m.trashItems)-1), m.trashSelected+1)
+	case "enter":
+		if m.selectedTrash() != nil {
+			m.openDetails("Trash details", m.renderTrashDetail())
+		}
 	case "left", "h":
 		m.selectedDate = m.selectedDate.AddDate(0, 0, -1)
 		return m, m.refreshCmd(refreshDateData)

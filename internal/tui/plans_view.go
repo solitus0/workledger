@@ -11,16 +11,13 @@ import (
 
 func (m model) renderPlansWorkspace(width, height int) string {
 	if m.workspace == nil || m.workspace.plans == nil {
-		return m.box("Plans unavailable", width, height, false)
-	}
-	if m.overlay == reconcilePlanOverlay || m.overlay == applyPlanOverlay || m.overlay == retryFailedPlanOverlay || m.overlay == retryUncertainPlanOverlay {
-		return m.renderOverlay(width, height)
-	}
-	if m.planForm != nil && m.overlay == noOverlay && m.planOperation == nil {
-		return m.box(m.renderPlanForm(), width, height, true)
+		return m.pane("Plans unavailable", width, height)
 	}
 	if m.planOperation != nil {
-		return m.box(m.renderPlanOperation(), width, height, true)
+		return m.pane(m.renderPlanOperation(), width, height)
+	}
+	if m.planForm != nil {
+		return m.pane(m.renderPlanForm(), width, height)
 	}
 	if m.plan != nil {
 		return m.renderPlanDetailWorkspace(width, height)
@@ -29,41 +26,37 @@ func (m model) renderPlansWorkspace(width, height int) string {
 }
 
 func (m model) renderPlanListWorkspace(width, height int) string {
-	topHeight := max(10, height*3/5)
-	detailHeight := height - topHeight
+	listWidth, _ := inspectorWidths(width)
 	rangeLabel := m.selectedDate.Format("Monday, 2006-01-02")
 	if m.planListView == planWeekListView {
 		start, end := weekBounds(m.selectedDate)
 		rangeLabel = start.Format("2006-01-02") + "–" + end.Format("2006-01-02")
 	}
-	lines := []string{"Saved plans · " + rangeLabel + " (newest 100)", m.renderPlanListSelectors(), "", m.muted(fmt.Sprintf("  %-17s %-6s %-19s %-16s %5s %5s", "CREATED", "DIR", "WINDOW", "STATE", "OPEN", "DONE"))}
-	start, end := visibleRange(m.planSelected, len(m.plans), max(1, topHeight-6))
+	chrome := m.pane("Saved plans · "+rangeLabel+" (newest 100)\n"+m.renderPlanListSelectors()+"\n", width, 3)
+	height -= 3
+	lines := []string{m.muted("  Created     DIR  STATE             OPEN DONE")}
+	start, end := visibleRange(m.planSelected, len(m.plans), height-len(lines))
 	for index := start; index < end; index++ {
 		item := m.plans[index]
 		prefix := "  "
 		if index == m.planSelected {
-			prefix = m.paint("> ", m.colors.Focus)
+			prefix = "> "
 		}
-		window := formatPlanWindow(item.WindowFromUTC, item.WindowToUTC, m.workspace.cfg.Location)
-		lines = append(lines, fmt.Sprintf("%s%-17s %-6s %-19s %s %5d %5d",
-			prefix, item.CreatedAt.In(m.workspace.cfg.Location).Format("2006-01-02 15:04"), item.Direction,
-			truncate(window, 19), m.paintPlanState(fmt.Sprintf("%-16s", truncate(item.ExecutionState, 16))), item.OpenItems, item.SucceededItems))
+		row := fmt.Sprintf("%s%-11s %-4s %-17s %4d %4d", prefix, item.CreatedAt.In(m.workspace.cfg.Location).Format("02 Jan 15:04"), item.Direction, truncate(item.ExecutionState, 17), item.OpenItems, item.SucceededItems)
+		lines = append(lines, m.selectedRow(row, listWidth-2, index == m.planSelected))
 	}
 	if len(m.plans) == 0 {
+		message := "No saved plans in this " + m.planListViewLabel() + "."
 		if m.planLoading {
-			lines = append(lines, "  "+m.paint("Loading…", m.colors.Progress))
-		} else {
-			lines = append(lines, "  No saved plans in this "+m.planListViewLabel()+".")
+			message = "Loading…"
 		}
+		lines = append(lines, message)
 	}
 	detail := "No saved plan selected."
 	if selected := m.selectedPlanEntry(); selected != nil {
-		detail = fmt.Sprintf("Plan       %s\nDirection  %s\nAdapters   %s\nInstances  %s\nWindow     %s\nStatus     Planning %s · Execution %s\n\n%d scopes · %d actionable · %d open · %d succeeded",
-			selected.ID, selected.Direction, emptyDash(strings.Join(selected.AdapterFamilies, ", ")), emptyDash(strings.Join(selected.TargetInstances, ", ")),
-			formatPlanWindow(selected.WindowFromUTC, selected.WindowToUTC, m.workspace.cfg.Location), m.paintState(selected.PlanningStatus), m.paintState(selected.ExecutionState),
-			selected.TotalItems, selected.ActionableItems, selected.OpenItems, selected.SucceededItems)
+		detail = fmt.Sprintf("Saved plan\n\nDirection %s\nPlanning %s\nExecution %s\n\n%d scopes\n%d actionable · %d open\n%d succeeded\n\nWindow\n%s\nAdapters %s\nInstances %s\n\nPlan ID\n%s", selected.Direction, m.paintState(selected.PlanningStatus), m.paintState(selected.ExecutionState), selected.TotalItems, selected.ActionableItems, selected.OpenItems, selected.SucceededItems, formatPlanWindow(selected.WindowFromUTC, selected.WindowToUTC, m.workspace.cfg.Location), emptyDash(strings.Join(selected.AdapterFamilies, ", ")), emptyDash(strings.Join(selected.TargetInstances, ", ")), selected.ID)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, m.box(strings.Join(lines, "\n"), width, topHeight, m.focus != focusRail), m.box(detail, width, detailHeight, false))
+	return lipgloss.JoinVertical(lipgloss.Left, chrome, m.inspector(strings.Join(lines, "\n"), detail, width, height))
 }
 
 func (m model) renderPlanListSelectors() string {
@@ -84,53 +77,77 @@ func (m model) planListViewLabel() string {
 }
 
 func (m model) renderPlanDetailWorkspace(width, height int) string {
-	topHeight := max(12, height*3/5)
-	detailHeight := height - topHeight
+	listWidth, detailWidth := inspectorWidths(width)
 	items := m.visiblePlanItems()
-	mode := "actionable scopes"
+	mode := "ready scopes"
 	if m.planShowAll {
 		mode = "all scopes"
 	}
-	lines := []string{
-		fmt.Sprintf("Plan %s · %s · %s", m.plan.ID, m.plan.Direction, formatPlanWindow(m.plan.WindowFromUTC, m.plan.WindowToUTC, m.workspace.cfg.Location)),
-		fmt.Sprintf("Planning %s · Execution %s", m.paintState(m.plan.PlanningStatus), m.paintState(m.plan.ExecutionState)),
-		"Showing " + mode,
-		"",
-		m.muted(fmt.Sprintf("  %-18s %-16s %-12s %-10s %5s %6s", "TARGET", "PROFILE", "ACTION", "STATE", "CREATE", "DELETE")),
-	}
-	start, end := visibleRange(m.planItemSelected, len(items), max(1, topHeight-7))
+	lines := []string{"Scope review · " + m.plan.Direction, fmt.Sprintf("Planning %s · Execution %s", m.paintState(m.plan.PlanningStatus), m.paintState(m.plan.ExecutionState)), "Showing " + mode, "", m.muted("  Target                 Action       State")}
+	start, end := visibleRange(m.planItemSelected, len(items), max(1, height-len(lines)-6))
 	for index := start; index < end; index++ {
 		item := items[index]
 		prefix := "  "
 		if index == m.planItemSelected {
-			prefix = m.paint("> ", m.colors.Focus)
+			prefix = "> "
 		}
-		target := item.TargetAdapterInstance + "/" + item.TargetIssue
-		createCount := planDiffMetric(item, item.InspectionSummary.CreateRowCount)
-		deleteCount := planDiffMetric(item, item.InspectionSummary.DeleteRowCount)
-		execution := m.paintPlanState(fmt.Sprintf("%-10s", truncate(item.ExecutionState, 10)))
-		lines = append(lines, fmt.Sprintf("%s%-18s %-16s %-12s %s %5s %6s", prefix, truncate(target, 18), truncate(emptyDash(item.RouteProfile), 16),
-			truncate(item.PlannedAction, 12), execution, createCount, deleteCount))
-	}
-	if len(items) == 0 {
-		lines = append(lines, "  No scopes in this view.")
+		row := fmt.Sprintf("%s%-22s %-12s %s", prefix, truncate(item.TargetAdapterInstance+"/"+item.TargetIssue, 22), truncate(item.PlannedAction, 12), m.paintState(item.ExecutionState))
+		lines = append(lines, m.selectedRow(row, listWidth-2, index == m.planItemSelected))
 	}
 	detail := "No plan scope selected."
 	if item := m.selectedPlanItem(); item != nil {
-		detail = m.renderPlanItemDetail(*item)
+		lines = append(lines, "", m.rule(listWidth-2), "Profile "+emptyDash(item.RouteProfile), "Comparison "+m.paintState(item.ComparisonStatus), "Reason "+emptyDash(item.ReasonCode))
+		if item.ReasonDetail != "" {
+			lines = append(lines, wrapIssueDescription(item.ReasonDetail, listWidth-2)...)
+		}
+		detail = m.renderPlanItemInspector(*item, detailWidth-2, height)
 	}
-	confirmationOpen := m.overlay == applyPlanOverlay || m.overlay == retryFailedPlanOverlay || m.overlay == retryUncertainPlanOverlay
-	if confirmationOpen {
-		detail = m.renderConfirmation(width-2, detailHeight-2)
+	if len(items) == 0 {
+		lines = append(lines, "No scopes in this view.")
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, m.box(strings.Join(lines, "\n"), width, topHeight, m.focus != focusRail && !confirmationOpen), m.box(detail, width, detailHeight, false))
+	return m.inspector(strings.Join(lines, "\n"), detail, width, height)
 }
 
-func (m model) renderPlanItemDetail(item reconcile.PlanItem) string {
-	return fmt.Sprintf("Target      %s / %s\nIssue       %s\nProfile     %s\nPlan status %s\nComparison  %s\nExecution   %s\nRows        local %d · remote %d · matched %s\nChanges     create %s · delete %s\nReason      %s\n\n%s",
-		item.TargetAdapterFamily, item.TargetAdapterInstance, item.TargetIssue, emptyDash(item.RouteProfile), m.paintState(item.PlanStatus),
-		m.paintState(item.ComparisonStatus), m.paintState(item.ExecutionState), item.LocalRowCount, item.RemoteRowCount, planDiffMetric(item, item.InspectionSummary.MatchedRowCount),
-		planDiffMetric(item, item.InspectionSummary.CreateRowCount), planDiffMetric(item, item.InspectionSummary.DeleteRowCount), emptyDash(item.ReasonCode), emptyDash(item.ReasonDetail))
+func (m model) renderPlanItemInspector(item reconcile.PlanItem, width, height int) string {
+	lines := m.planComparisonLines(item)
+	if len(item.Payload) > 0 {
+		lines = append(lines, "", m.secondary("Saved desired entries"))
+		for index, row := range item.Payload {
+			if len(lines) >= height-1 {
+				lines = append(lines, fmt.Sprintf("+ %d more entries", len(item.Payload)-index))
+				break
+			}
+			lines = append(lines, truncate(row.StartedAtUTC.In(m.workspace.cfg.Location).Format("02 Jan 15:04")+" "+formatEstimateDuration(int64(row.DurationSeconds)), width))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) planComparisonLines(item reconcile.PlanItem) []string {
+	lines := []string{m.paintBold("Saved comparison", m.colors.Secondary), "", "Local at planning", fmt.Sprintf("%d rows · %s", item.LocalRowCount, formatEstimateDuration(int64(item.LocalTotal))), "Remote at planning", fmt.Sprintf("%d rows · %s", item.RemoteRowCount, formatEstimateDuration(int64(item.RemoteTotal))), "", m.paintBold("After apply", m.colors.Proposed)}
+	if item.ComparisonStatus == "not_checked" || item.ComparisonStatus == "check_failed" {
+		lines[5] = "Unavailable"
+	}
+	rows, total := item.LocalRowCount, item.LocalTotal
+	target := "Remote"
+	if m.plan.Direction == "pull" {
+		rows, total, target = item.RemoteRowCount, item.RemoteTotal, "Local"
+	}
+	if len(item.Payload) > 0 {
+		rows, total = len(item.Payload), 0
+		for _, row := range item.Payload {
+			total += row.DurationSeconds
+		}
+	}
+	if item.PlanStatus != "ready" {
+		lines = append(lines, "No executable changes")
+	} else if len(item.Payload) == 0 && !item.HasDiffMetrics() {
+		lines = append(lines, "Desired state unavailable")
+	} else {
+		lines = append(lines, fmt.Sprintf("%s: %d rows · %s", target, rows, formatEstimateDuration(int64(total))))
+	}
+	lines = append(lines, fmt.Sprintf("Create %s · Delete %s", planDiffMetric(item, item.InspectionSummary.CreateRowCount), planDiffMetric(item, item.InspectionSummary.DeleteRowCount)), "Matched "+planDiffMetric(item, item.InspectionSummary.MatchedRowCount), "Execution "+m.paintState(item.ExecutionState))
+	return lines
 }
 
 func planDiffMetric(item reconcile.PlanItem, value int) string {
@@ -138,6 +155,21 @@ func planDiffMetric(item reconcile.PlanItem, value int) string {
 		return "-"
 	}
 	return fmt.Sprint(value)
+}
+
+func (m model) renderPlanScopeDetails(item reconcile.PlanItem) string {
+	lines := []string{"Target " + item.TargetAdapterFamily + " / " + item.TargetAdapterInstance + " / " + item.TargetIssue,
+		"Profile " + emptyDash(item.RouteProfile), "Window " + formatPlanWindow(item.WindowFromUTC, item.WindowToUTC, m.workspace.cfg.Location),
+		"Planning " + item.PlanStatus + " · Action " + item.PlannedAction, "Comparison " + item.ComparisonStatus,
+		"Reason " + emptyDash(item.ReasonCode), item.ReasonDetail, "", strings.Join(m.planComparisonLines(item), "\n")}
+	if len(item.Payload) > 0 {
+		lines = append(lines, "", "All saved desired entries")
+		for index, row := range item.Payload {
+			lines = append(lines, fmt.Sprintf("%d. %s · %s · %s", index+1, row.StartedAtUTC.In(m.workspace.cfg.Location).Format("2006-01-02 15:04"), formatEstimateDuration(int64(row.DurationSeconds)), row.IssueKey), row.Description, "")
+		}
+	}
+	lines = append(lines, "", "Plan ID "+emptyDash(m.plan.ID), "Scope ID "+emptyDash(item.ID))
+	return strings.Join(lines, "\n")
 }
 
 func (m model) renderPlanForm() string {

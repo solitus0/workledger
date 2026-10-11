@@ -290,6 +290,10 @@ func (m model) updatePlans(key string) (tea.Model, tea.Cmd) {
 	}
 	if m.plan != nil {
 		switch key {
+		case "enter":
+			if item := m.selectedPlanItem(); item != nil {
+				m.openDetails("Scope details", m.renderPlanScopeDetails(*item))
+			}
 		case "esc":
 			m.plan = nil
 			m.planItemSelected = 0

@@ -129,10 +129,11 @@ func TestWeekAddShortcutsAndEmptyPresetNotice(t *testing.T) {
 	if footer := m.renderFooter(m.width); !strings.Contains(footer, "a Add") || !strings.Contains(footer, "A Preset") {
 		t.Fatalf("worklogs footer does not expose both add shortcuts: %q", footer)
 	}
-	m.overlay = helpOverlay
-	help, _ := m.overlayContent()
-	if strings.Contains(help.body, "a add") || !strings.Contains(help.body, "action bar is the authoritative shortcut reference") {
-		t.Fatalf("help should defer shortcut definitions to the action bar: %q", help.body)
+	next, _ = m.Update(textKey("?"))
+	m = next.(model)
+	m.actions.input.SetValue("add from preset")
+	if matches := m.matchingActions(); len(matches) != 1 || matches[0].key != "A" || !strings.Contains(m.renderActions(72, 24), "Add from preset") {
+		t.Fatalf("Week Actions did not expose preset add: %#v", matches)
 	}
 }
 

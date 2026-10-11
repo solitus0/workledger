@@ -4,6 +4,12 @@ import tea "charm.land/bubbletea/v2"
 
 func (m model) updateStatus(key string) (tea.Model, tea.Cmd) {
 	switch key {
+	case "enter":
+		if m.statusView == statusConfigView {
+			m.openDetails("Configuration details", m.renderConfigDetail())
+		} else {
+			m.openDetails("Diagnostic details", m.renderStatusDetail())
+		}
 	case "s", "left", "h":
 		m.statusView = statusDiagnosticsView
 	case "c", "right", "l":

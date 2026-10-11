@@ -4,40 +4,32 @@ import (
 	"fmt"
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	"github.com/solitus0/workledger/internal/worklogs"
 )
 
 func (m model) renderTrashWorkspace(width, height int) string {
 	if m.workspace == nil {
-		return m.box("Trash unavailable", width, height, false)
+		return m.pane("Trash unavailable", width, height)
 	}
-	topHeight := max(13, height*3/5)
-	if m.trashView == dayWorklogView {
-		topHeight = max(10, height/2)
-	}
-	detailHeight := height - topHeight
+	listWidth, _ := inspectorWidths(width)
 	lines := []string{m.trashTitle(), m.renderTrashSelectors(), ""}
 	if m.trashView == weekWorklogView {
-		lines = append(lines, m.muted(fmt.Sprintf("  %-5s %-11s %-7s %-8s %s", "DAY", "DATE", "LOCAL", "REMOTE", "DURATION")))
-		lines = append(lines, m.trashWeekRows()...)
+		lines = append(lines, m.muted("  Day Date       Local Remote Duration"))
+		for _, row := range m.trashWeekRows() {
+			lines = append(lines, m.selectedRow(row, listWidth-2, strings.HasPrefix(row, "> ")))
+		}
 	} else {
-		lines = append(lines, m.muted(fmt.Sprintf("  %-7s %-8s %-14s %-18s %s", "TIME", "SCOPE", "ISSUE", "REASON", "DESCRIPTION")))
-		lines = append(lines, m.trashRows(width-6, max(1, topHeight-6))...)
+		lines = append(lines, m.muted("  Start Scope  Issue        Reason"))
+		lines = append(lines, m.trashRows(listWidth-2, height-len(lines))...)
 		if len(m.trashItems) == 0 {
+			message := "No trash for this date and scope."
 			if m.trashLoading {
-				lines = append(lines, "  "+m.paint("Loading…", m.colors.Progress))
-			} else {
-				lines = append(lines, "  No trash for this date and scope.")
+				message = "Loading…"
 			}
+			lines = append(lines, message)
 		}
 	}
-	detail := m.renderTrashDetail()
-	if m.overlay == restoreOverlay || m.overlay == restoreDayOverlay {
-		detail = m.renderConfirmation(width-2, detailHeight-2)
-	}
-	confirmationOpen := m.overlay == restoreOverlay || m.overlay == restoreDayOverlay
-	return lipgloss.JoinVertical(lipgloss.Left, m.box(strings.Join(lines, "\n"), width, topHeight, m.focus != focusRail && !confirmationOpen), m.box(detail, width, detailHeight, false))
+	return m.inspector(strings.Join(lines, "\n"), m.renderTrashDetail(), width, height)
 }
 
 func (m model) trashTitle() string {
@@ -70,20 +62,14 @@ func (m model) renderTrashSelectors() string {
 func (m model) trashRows(width, height int) []string {
 	start, end := visibleRange(m.trashSelected, len(m.trashItems), height)
 	rows := make([]string, 0, end-start)
-	for i := start; i < end; i++ {
-		item := m.trashItems[i]
+	for index := start; index < end; index++ {
+		item := m.trashItems[index]
 		prefix := "  "
-		if i == m.trashSelected {
-			prefix = m.paint("> ", m.colors.Focus)
+		if index == m.trashSelected {
+			prefix = "> "
 		}
-		local := item.StartedAtUTC.In(m.workspace.cfg.Location)
-		scope := fmt.Sprintf("%-8s", item.StorageScope)
-		if item.StorageScope == worklogs.TrashScopeRemote {
-			scope = m.paint(scope, m.colors.Warning)
-		} else {
-			scope = m.paint(scope, m.colors.Secondary)
-		}
-		rows = append(rows, fmt.Sprintf("%s%-7s %s %-14s %-18s %s", prefix, local.Format("15:04"), scope, item.IssueKey, truncate(item.ReasonCode, 18), truncate(item.Description, max(8, width-55))))
+		row := fmt.Sprintf("%s%-5s %-6s %-12s %s", prefix, item.StartedAtUTC.In(m.workspace.cfg.Location).Format("15:04"), item.StorageScope, truncate(item.IssueKey, 12), item.ReasonCode)
+		rows = append(rows, m.selectedRow(row, width, index == m.trashSelected))
 	}
 	return rows
 }
@@ -105,7 +91,7 @@ func (m model) trashWeekRows() []string {
 		}
 		prefix := "  "
 		if sameDay(date, m.selectedDate) {
-			prefix = m.paint("> ", m.colors.Focus)
+			prefix = "> "
 		}
 		rows = append(rows, fmt.Sprintf("%s%-5s %-11s %-7d %-8d %s", prefix, date.Format("Mon"), date.Format("2006-01-02"), local, remote, formatDuration(total)))
 	}
@@ -131,5 +117,5 @@ func (m model) renderTrashDetail() string {
 	} else if item.SourceWorklogID == nil {
 		restoreState = m.paint("Not restorable; original identity is unavailable", m.colors.Destructive)
 	}
-	return fmt.Sprintf("Issue       %s\nStart       %s\nDuration    %s\nScope       %s\nReason      %s\nOriginal ID %s\nTrash ID    %s\n\n%s\n%s", item.IssueKey, item.StartedAtUTC.In(m.workspace.cfg.Location).Format("2006-01-02 15:04"), formatDuration(item.DurationSeconds), item.StorageScope, item.ReasonCode, original, item.ID, item.Description, restoreState)
+	return fmt.Sprintf("%s\n\nIssue       %s\nStart       %s\nDuration    %s\nScope       %s\nReason      %s\nOriginal ID %s\nTrash ID    %s\n\n%s", restoreState, item.IssueKey, item.StartedAtUTC.In(m.workspace.cfg.Location).Format("2006-01-02 15:04"), formatDuration(item.DurationSeconds), item.StorageScope, item.ReasonCode, original, item.ID, item.Description)
 }

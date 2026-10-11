@@ -213,7 +213,7 @@ func TestMonthCalendarFitsMinimumViewportWithActivityAndColor(t *testing.T) {
 						t.Fatalf("render = %dx%d; want 100x28:\n%s", w, h, rendered)
 					}
 					plain := stripANSI(rendered)
-					for _, expected := range []string{"Local booked", "Day  Week  [Month]", "Mon", "Sun", "Past weekdays:", "? below quota", "! overlap", date.Format("2006-01-02"), "WL-1234", "PgUp/Dn Month", "g Activity"} {
+					for _, expected := range []string{"Local booked", "Day  Week", "Mon", "Sun", "Past weekdays:", "? below quota", "! overlap", date.Format("2006-01-02"), "WL-1234", "PgUp/Dn Month", "g Activity"} {
 						if activity && expected == "g Activity" {
 							expected = "g Close activity"
 						}
@@ -234,17 +234,19 @@ func TestMonthMouseSelectsCalendarCellsAndIgnoresPadding(t *testing.T) {
 	for _, activity := range []bool{false, true} {
 		m := testMonthModel(t, time.Date(2026, 5, 21, 0, 0, 0, 0, time.UTC))
 		m.activityOpen = activity
+		layout := calculateLayout(m.width, m.height, activity)
+		cellWidth := min(14, (layout.workspace.width-2)/7)
 		rowHeight := 2
-		if activity {
+		if monthCalendarCompact(m.selectedDate, layout.workspace.height) {
 			rowHeight = 1
 		}
 		// May 20 is Wednesday in the fourth displayed week.
-		next, _ := m.Update(mouseClick(33+2*9, 5+3*rowHeight, tea.MouseLeft))
+		next, _ := m.Update(mouseClick(layout.workspace.x+1+2*cellWidth, layout.workspace.y+4+3*rowHeight, tea.MouseLeft))
 		m = next.(model)
 		if m.selectedDate.Day() != 20 || m.worklogs[0].ID != "2026-05-20" {
 			t.Fatalf("calendar click selected %s", m.selectedDate)
 		}
-		next, _ = m.Update(mouseClick(33, 5, tea.MouseLeft))
+		next, _ = m.Update(mouseClick(layout.workspace.x+1, layout.workspace.y+4, tea.MouseLeft))
 		if next.(model).selectedDate.Day() != 20 {
 			t.Fatal("adjacent-month padding cell was selectable")
 		}

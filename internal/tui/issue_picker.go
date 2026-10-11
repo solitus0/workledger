@@ -35,7 +35,8 @@ func (m *model) openIssuePicker() tea.Cmd {
 
 func (m *model) resizeIssuePickerInput() {
 	if m.issuePicker != nil {
-		m.issuePicker.input.SetWidth(max(12, min(40, (m.width-31)/2-8)))
+		left, _ := issuePickerPanelWidths(m.issuePickerWorkspaceWidth())
+		m.issuePicker.input.SetWidth(max(12, left-4))
 	}
 }
 
@@ -474,7 +475,7 @@ func (m model) renderIssuePicker(width, height int) string {
 			label += " · " + item.Title
 		}
 		keyWidth := max(1, leftInner-2-11)
-		left = append(left, fmt.Sprintf("%s%-*s %s", marker, keyWidth, truncate(label, keyWidth), date))
+		left = append(left, m.selectedRow(fmt.Sprintf("%s%-*s %s", marker, keyWidth, truncate(label, keyWidth), date), leftInner, index == picker.selected))
 	}
 	if picker.loading {
 		left = append(left, m.paint("  Loading issues…", m.colors.Progress))

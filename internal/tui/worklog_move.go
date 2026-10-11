@@ -154,9 +154,9 @@ func (m model) renderMove(width, height int) string {
 	timeline.contextSettings = state.preview.Settings
 	proposed := source
 	proposed.StartedAtUTC = state.destination
-	lines = append(lines, "", timeline.renderDayTimeline([]worklogs.LocalWorklog{proposed}, ""), "", timeline.renderTimelineLegend([]worklogs.LocalWorklog{proposed}, ""))
+	lines = append(lines, "", timeline.renderDayTimelineWidth([]worklogs.LocalWorklog{proposed}, "", width-2), "", timeline.renderTimelineLegendWidth([]worklogs.LocalWorklog{proposed}, "", width-2))
 	if state.err != "" {
 		lines = append(lines, m.paint(state.err, m.colors.Destructive))
 	}
-	return m.box(strings.Join(lines, "\n"), width, height, true)
+	return m.pane(strings.Join(lines, "\n"), width, height)
 }

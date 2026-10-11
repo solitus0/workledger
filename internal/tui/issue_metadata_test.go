@@ -38,14 +38,29 @@ func TestEstimateUsageAndMetadataLayout(t *testing.T) {
 			if detail := m.renderWorklogDetail(); !strings.Contains(detail, scenario.expected) || !strings.Contains(detail, "Product data lifecycle") {
 				t.Fatalf("detail: %s", detail)
 			}
+			compactParts := []string{strings.Join(strings.Fields(scenario.expected), " ")}
+			if parts := strings.SplitN(scenario.expected, " (", 2); len(parts) == 2 {
+				durations := strings.SplitN(parts[1], ")", 2)
+				compactParts = []string{"Estimate used: " + parts[0], durations[0]}
+				if durations[1] != "" {
+					compactParts = append(compactParts, strings.TrimPrefix(durations[1], " · "))
+				}
+			}
 			view := m.render()
-			if !strings.Contains(view, scenario.expected) {
-				t.Fatalf("estimate usage hidden at minimum size: %s", view)
+			for _, expected := range compactParts {
+				if !strings.Contains(view, expected) {
+					t.Fatalf("estimate usage %q hidden at minimum size: %s", expected, view)
+				}
 			}
 			m.activityOpen = true
 			drawerView := m.render()
 			m.activityOpen = false
-			if !strings.Contains(drawerView, scenario.expected) || lipgloss.Width(drawerView) != minimumWidth || lipgloss.Height(drawerView) != minimumHeight {
+			for _, expected := range compactParts {
+				if !strings.Contains(drawerView, expected) {
+					t.Fatalf("metric %q hidden with Activity: %s", expected, drawerView)
+				}
+			}
+			if lipgloss.Width(drawerView) != minimumWidth || lipgloss.Height(drawerView) != minimumHeight {
 				t.Fatalf("estimate usage with activity drawer: %s", drawerView)
 			}
 			if lipgloss.Width(view) != minimumWidth || lipgloss.Height(view) != minimumHeight {

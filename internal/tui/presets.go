@@ -68,6 +68,10 @@ func (m *model) restorePresetSelection(id string) {
 
 func (m model) updatePresets(key string) (tea.Model, tea.Cmd) {
 	switch key {
+	case "enter":
+		if m.selectedPreset() != nil {
+			m.openDetails("Preset details", m.renderPresetDetail())
+		}
 	case "up", "k":
 		m.presetSelected = max(0, m.presetSelected-1)
 	case "down", "j":

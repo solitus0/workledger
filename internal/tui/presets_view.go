@@ -10,43 +10,43 @@ import (
 
 func (m model) renderPresetWorkspace(width, height int) string {
 	if m.workspace == nil {
-		return m.box("Presets unavailable", width, height, false)
+		return m.pane("Presets unavailable", width, height)
 	}
 	if m.presetForm != nil {
-		return m.box(m.renderPresetForm(), width, height, true)
+		return m.pane(m.renderPresetForm(), width, height)
 	}
-	topHeight := max(10, height/2)
-	detailHeight := height - topHeight
-	lines := []string{"Worklog presets", "", m.muted(fmt.Sprintf("  %-22s %-14s %-7s %-10s %s", "NAME", "ISSUE", "START", "DURATION", "DESCRIPTION"))}
-	start, end := visibleRange(m.presetSelected, len(m.presets), max(1, topHeight-5))
+	listWidth, _ := inspectorWidths(width)
+	lines := []string{m.paintBold("Worklog presets", m.colors.Secondary), "", m.muted("  Name                 Issue        Duration")}
+	start, end := visibleRange(m.presetSelected, len(m.presets), height-len(lines))
 	for index := start; index < end; index++ {
 		item := m.presets[index]
 		prefix := "  "
 		if index == m.presetSelected {
-			prefix = m.paint("> ", m.colors.Focus)
+			prefix = "> "
 		}
-		lines = append(lines, fmt.Sprintf("%s%-22s %-14s %-7s %-10s %s", prefix, truncate(item.Name, 22), item.IssueKey, item.StartTime, formatDuration(item.DurationSeconds), truncate(item.Description, max(8, width-65))))
+		lines = append(lines, m.selectedRow(fmt.Sprintf("%s%-20s %-12s %s", prefix, truncate(item.Name, 20), truncate(item.IssueKey, 12), formatEstimateDuration(int64(item.DurationSeconds))), listWidth-2, index == m.presetSelected))
 	}
 	if len(m.presets) == 0 {
+		message := "No presets yet."
 		if m.presetLoading {
-			lines = append(lines, "  "+m.paint("Loading…", m.colors.Progress))
-		} else {
-			lines = append(lines, "  No presets yet.")
+			message = "Loading…"
 		}
+		lines = append(lines, message)
 	}
+	detail := m.renderPresetDetail()
+	return m.inspector(strings.Join(lines, "\n"), detail, width, height)
+}
+
+func (m model) renderPresetDetail() string {
 	detail := "No preset selected."
 	if item := m.selectedPreset(); item != nil {
 		lastUsed := "Never"
 		if item.LastUsedAt != nil {
 			lastUsed = item.LastUsedAt.In(m.workspace.cfg.Location).Format("2006-01-02 15:04")
 		}
-		detail = fmt.Sprintf("Name        %s\nIssue       %s\nStart time  %s\nDuration    %s\nLast used   %s\nUpdated     %s\n\n%s", item.Name, item.IssueKey, item.StartTime, formatDuration(item.DurationSeconds), lastUsed, item.UpdatedAt.In(m.workspace.cfg.Location).Format("2006-01-02 15:04"), item.Description)
+		detail = fmt.Sprintf("Preset details\n\nName %s\nIssue %s\nStart time %s\nDuration %s\n\nLast used\n%s\nUpdated\n%s\n\n%s", item.Name, item.IssueKey, item.StartTime, formatDuration(item.DurationSeconds), lastUsed, item.UpdatedAt.In(m.workspace.cfg.Location).Format("2006-01-02 15:04"), item.Description)
 	}
-	if m.overlay == deletePresetOverlay {
-		detail = m.renderConfirmation(width-2, detailHeight-2)
-	}
-	confirmationOpen := m.overlay == deletePresetOverlay
-	return lipgloss.JoinVertical(lipgloss.Left, m.box(strings.Join(lines, "\n"), width, topHeight, m.focus != focusRail && !confirmationOpen), m.box(detail, width, detailHeight, false))
+	return detail
 }
 
 func (m model) renderPresetForm() string {
@@ -79,7 +79,7 @@ func (m model) renderPresetPicker(width, height int) string {
 		if m.presetPicker.selected == index {
 			prefix = m.paint("> ", m.colors.Focus)
 		}
-		lines = append(lines, prefix+item.Name+"  "+m.muted(presetSummary(item)))
+		lines = append(lines, m.selectedRow(prefix+item.Name+"  "+m.muted(presetSummary(item)), width-12, index == m.presetPicker.selected))
 		if len(lines) >= min(14, height-5) {
 			break
 		}
@@ -94,7 +94,10 @@ func (m model) renderPresetPicker(width, height int) string {
 	}
 	modalWidth = min(modalWidth, max(48, longest+4))
 	modal := m.box(strings.Join(lines, "\n"), modalWidth, min(max(10, len(lines)+2), height-4), true)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
+	background := m
+	background.presetPicker = nil
+	base := background.renderWorkspace(width, height)
+	return lipgloss.NewCompositor(lipgloss.NewLayer(base), lipgloss.NewLayer(modal).X((width-lipgloss.Width(modal))/2).Y((height-lipgloss.Height(modal))/2).Z(1)).Render()
 }
 
 func formatPresetTimestamp(value *time.Time, location *time.Location) string {

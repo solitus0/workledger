@@ -3,8 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-
-	"charm.land/lipgloss/v2"
 )
 
 func (m model) renderStatusWorkspace(width, height int) string {
@@ -15,88 +13,80 @@ func (m model) renderStatusWorkspace(width, height int) string {
 }
 
 func (m model) renderStatusDiagnosticsWorkspace(width, height int) string {
-	topHeight := max(10, height/2)
-	detailHeight := height - topHeight
-	rows := make([]string, 0)
-	if m.statusLoading && len(m.statusItems) == 0 {
-		for _, category := range []string{"local", "env", "routing", "connectivity"} {
-			rows = append(rows, fmt.Sprintf("  %-14s %-26s %s", category, "loading", m.paint("…", m.colors.Progress)))
-		}
-	} else {
-		rows = append(rows, m.statusRows(width-6, topHeight-7)...)
+	listWidth, _ := inspectorWidths(width)
+	ok, warnings, failures := statusCounts(m.statusItems)
+	checked := "Not checked"
+	if !m.statusChecked.IsZero() {
+		checked = "Checked " + m.statusChecked.In(m.selectedDate.Location()).Format("02 Jan 15:04")
 	}
-	header := fmt.Sprintf("  %-14s %-26s %-10s %s", "CATEGORY", "TARGET", "STATE", "MESSAGE")
-	table := "Status diagnostics\n" + m.renderStatusSelectors() + "\n\n" + m.muted(header) + "\n" + strings.Join(rows, "\n")
-	if len(rows) == 0 {
-		if m.statusErr != "" {
-			table += "\n  " + m.paint("Status check failed", m.colors.Destructive)
-		} else {
-			table += "\n  No diagnostics"
+	lines := []string{m.paintBold("Status diagnostics", m.colors.Secondary), m.renderStatusSelectors(),
+		m.paint(fmt.Sprintf("OK %d", ok), m.colors.Success) + " · " + m.paint(fmt.Sprintf("Warnings %d", warnings), m.colors.Warning) + " · " + m.paint(fmt.Sprintf("Errors %d", failures), m.colors.Destructive), m.muted(checked), "", m.muted("  Category   Target                 State")}
+	lines = append(lines, m.statusRows(listWidth-2, height-len(lines))...)
+	if len(m.statusItems) == 0 {
+		message := "No diagnostics"
+		if m.statusLoading {
+			message = "Loading diagnostics…"
+		} else if m.statusErr != "" {
+			message = "Status check failed"
 		}
+		lines = append(lines, message)
 	}
+	detail := m.renderStatusDetail()
+	return m.inspector(strings.Join(lines, "\n"), detail, width, height)
+}
+
+func (m model) renderStatusDetail() string {
 	detail := "Select a diagnostic to inspect its full message."
 	if m.statusErr != "" {
-		detail = m.paint("Status check failed", m.colors.Destructive) + "\n\n" + m.paint(m.statusErr, m.colors.Destructive)
+		detail = m.paint("Status check failed", m.colors.Destructive) + "\n\n" + m.statusErr
 	} else if len(m.statusItems) > 0 {
 		item := m.statusItems[clampIndex(m.statusSelected, len(m.statusItems))]
-		detail = fmt.Sprintf("Target       %s\nCategory     %s\nState        %s\nFailure kind %s\n\n%s",
-			item.Target, item.Category, m.paintState(item.Status), emptyDash(string(item.FailureKind)), m.paintStateMessage(item.Status, item.Message))
+		detail = fmt.Sprintf("Diagnostic details\n\nState %s\nCategory %s\nTarget %s\nFailure kind %s\n\n%s", m.paintState(item.Status), item.Category, item.Target, emptyDash(string(item.FailureKind)), m.paintStateMessage(item.Status, item.Message))
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
-		m.box(table, width, topHeight, m.focus != focusRail),
-		m.box(detail, width, detailHeight, false),
-	)
+	return detail
 }
 
 func (m model) renderStatusConfigWorkspace(width, height int) string {
-	topHeight := max(10, height/2)
-	detailHeight := height - topHeight
+	listWidth, _ := inspectorWidths(width)
 	rows := m.statusConfigRows()
-	visibleRows := make([]string, 0)
-	if m.statusLoading && len(rows) == 0 {
-		visibleRows = append(visibleRows, "  "+m.paint("Loading configuration…", m.colors.Progress))
-	} else {
-		start, end := visibleRange(m.statusConfigSelected, len(rows), topHeight-8)
-		visibleRows = make([]string, 0, end-start)
-		for index := start; index < end; index++ {
-			row := rows[index]
-			prefix := "  "
-			if index == m.statusConfigSelected {
-				prefix = m.paint("> ", m.colors.Focus)
-			}
-			visibleRows = append(visibleRows, fmt.Sprintf("%s%-30s %s", prefix, truncate(row.field, 30), truncate(row.value, max(8, width-39))))
-		}
-	}
-
-	tableLines := []string{
-		"Effective configuration",
-		m.renderStatusSelectors(),
-		"",
-	}
+	lines := []string{m.paintBold("Effective configuration", m.colors.Secondary), m.renderStatusSelectors(), ""}
 	if len(m.statusConfigIssues) > 0 {
-		tableLines = append(tableLines, m.paint("Configuration validation errors", m.colors.Destructive))
+		lines = append(lines, m.paint("Configuration validation errors", m.colors.Destructive))
 	}
-	tableLines = append(tableLines, m.muted(fmt.Sprintf("  %-30s %s", "FIELD", "VALUE")), strings.Join(visibleRows, "\n"))
-	table := strings.Join(tableLines, "\n")
-	if len(rows) == 0 && !m.statusLoading {
-		table += "\n  No configuration details"
+	lines = append(lines, m.muted("  Field                    Value"))
+	start, end := visibleRange(m.statusConfigSelected, len(rows), height-len(lines))
+	for index := start; index < end; index++ {
+		row := rows[index]
+		prefix := "  "
+		if index == m.statusConfigSelected {
+			prefix = "> "
+		}
+		lines = append(lines, m.selectedRow(fmt.Sprintf("%s%-24s %s", prefix, truncate(row.field, 24), row.value), listWidth-2, index == m.statusConfigSelected))
 	}
+	detail := m.renderConfigDetail()
+	if len(rows) == 0 {
+		message := "No configuration details"
+		if m.statusLoading {
+			message = "Loading configuration…"
+		}
+		lines = append(lines, message)
+	}
+	return m.inspector(strings.Join(lines, "\n"), detail, width, height)
+}
 
+func (m model) renderConfigDetail() string {
+	rows := m.statusConfigRows()
 	detail := "Select a configuration field to inspect its full value."
 	if m.statusErr != "" {
-		detail = m.paint("Configuration check failed", m.colors.Destructive) + "\n\n" + m.paint(m.statusErr, m.colors.Destructive)
+		detail = "Configuration check failed\n\n" + m.statusErr
 	} else if len(rows) > 0 {
 		row := rows[clampIndex(m.statusConfigSelected, len(rows))]
+		detail = "Configuration details\n\nField " + row.field + "\n\nValue\n" + row.value + "\n\nRead-only effective configuration."
 		if len(m.statusConfigIssues) > 0 {
-			detail = fmt.Sprintf("%s\n\nField   %s\nMessage %s", m.paint("Validation issue", m.colors.Destructive), row.field, m.paint(row.value, m.colors.Destructive))
-		} else {
-			detail = fmt.Sprintf("Field %s\nValue %s\n\nRead-only effective configuration.", row.field, row.value)
+			detail = m.paint("Validation issue", m.colors.Destructive) + "\n\nField " + row.field + "\n\nMessage\n" + m.paint(row.value, m.colors.Destructive)
 		}
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
-		m.box(table, width, topHeight, m.focus != focusRail),
-		m.box(detail, width, detailHeight, false),
-	)
+	return detail
 }
 
 func (m model) renderStatusSelectors() string {
@@ -146,20 +136,16 @@ func (m model) statusConfigRows() []statusConfigRow {
 }
 
 func (m model) statusRows(width, height int) []string {
-	if len(m.statusItems) == 0 {
-		return nil
-	}
 	start, end := visibleRange(m.statusSelected, len(m.statusItems), height)
 	rows := make([]string, 0, end-start)
 	for index := start; index < end; index++ {
 		item := m.statusItems[index]
 		prefix := "  "
 		if index == m.statusSelected {
-			prefix = m.paint("> ", m.colors.Focus)
+			prefix = "> "
 		}
-		state := m.statusPaint(item.Status)
-		messageWidth := max(8, width-56)
-		rows = append(rows, fmt.Sprintf("%s%-14s %-26s %-10s %s", prefix, truncate(item.Category, 14), truncate(item.Target, 26), state, truncate(item.Message, messageWidth)))
+		row := fmt.Sprintf("%s%-10s %-22s %s", prefix, truncate(item.Category, 10), truncate(item.Target, 22), m.paintState(item.Status))
+		rows = append(rows, m.selectedRow(row, width, index == m.statusSelected))
 	}
 	return rows
 }

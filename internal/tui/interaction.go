@@ -8,10 +8,20 @@ import (
 )
 
 func (m model) updateOverlay(key string) (tea.Model, tea.Cmd) {
-	if m.overlay == helpOverlay {
-		if key == "esc" || key == "?" {
+	if m.overlay == detailsOverlay {
+		if key == "esc" || key == "enter" {
 			m.overlay = noOverlay
+			return m, nil
 		}
+		if key == "home" {
+			m.detailViewport.GotoTop()
+			return m, nil
+		}
+		if key == "end" {
+			m.detailViewport.GotoBottom()
+			return m, nil
+		}
+		m.detailViewport, _ = m.detailViewport.Update(actionKey(key))
 		return m, nil
 	}
 	if key == "esc" || key == "n" {

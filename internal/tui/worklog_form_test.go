@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/solitus0/workledger/internal/worklogs"
 )
 
@@ -443,7 +444,7 @@ func TestManualConflictPreviewRemainsVisibleAndMarked(t *testing.T) {
 		t.Fatalf("manual conflict preview = records %#v conflict %q", m.form.previewRecords, m.form.previewConflict)
 	}
 	rendered := m.render()
-	for _, expected := range []string{"! conflict", "1 worklog · 12:00–13:00 · overlap"} {
+	for _, expected := range []string{"! conflict", "1 worklog · Manual", "12:00–13:00", "overlap"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("manual conflict render missing %q:\n%s", expected, rendered)
 		}
@@ -702,18 +703,18 @@ func TestAutomaticAddFormExplainsDayAndProjectedOutcome(t *testing.T) {
 
 	rendered := m.render()
 	for _, expected := range []string{
-		"Add worklog · Thu, May 21 · 2h 00m logged · 6h 00m remaining",
+		"Add worklog", "Thu 21 May 2026", "2h logged / 8h target", "6h remaining",
 		"jira cloud · estimate 4h",
-		"█ booked  ▓ proposed  · lunch  ─ free",
-		"2 worklogs · 10:00–12:00 + 12:45–13:45",
-		"5h 00m total · 3h 00m below daily target",
-		"Ctrl+S create 2 worklogs",
+		"█ booked  ░ proposed  ╱ lunch  □ free",
+		"2 worklogs · Fill", "10:00–12:00", "12:45–13:45",
+		"5h 00m total · 3h 00m below daily", "target",
+		"Ctrl+S Create 2 worklogs",
 	} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("day-aware add form missing %q:\n%s", expected, rendered)
 		}
 	}
-	formLines := strings.Split(m.renderForm(), "\n")
+	formLines := strings.Split(m.renderWorklogFormWorkspace(121, 33), "\n")
 	timelineLine, legendLine := -1, -1
 	for index, line := range formLines {
 		if strings.Contains(line, "08:00") {
@@ -724,7 +725,8 @@ func TestAutomaticAddFormExplainsDayAndProjectedOutcome(t *testing.T) {
 			break
 		}
 	}
-	if timelineLine < 0 || legendLine != timelineLine+2 {
+	timelineHeight := lipgloss.Height(m.renderDayTimelineWidth(m.form.previewRecords, "", 119))
+	if timelineLine < 0 || legendLine != timelineLine+timelineHeight {
 		t.Fatalf("calculated timeline and legend are not separated by one blank row: timeline=%d legend=%d\n%s", timelineLine, legendLine, strings.Join(formLines, "\n"))
 	}
 }

@@ -78,8 +78,8 @@ func TestActivityLifecycleAndDrawer(t *testing.T) {
 		t.Fatalf("activity drawer missing: %s", rendered)
 	}
 	activityTitleLine := strings.Split(rendered, "\n")[minimumHeight-3-activityDrawerHeight+1]
-	if offset := strings.Index(activityTitleLine, "Activity"); offset < 31 {
-		t.Fatalf("activity drawer starts at column %d, want right panel column 31 or later: %q", offset, activityTitleLine)
+	if offset := strings.Index(activityTitleLine, "Activity"); offset < calculateLayout(m.width, m.height, true).workspace.x {
+		t.Fatalf("activity drawer starts at column %d, want inside the right panel: %q", offset, activityTitleLine)
 	}
 	m.openAddForm()
 	if strings.Contains(m.render(), "worklogs.add") {

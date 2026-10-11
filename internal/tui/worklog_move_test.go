@@ -48,7 +48,7 @@ func TestMoveKeyboardPreviewSaveAndSelection(t *testing.T) {
 		t.Fatal("arrows changed selection or wrong destination")
 	}
 	content := stripANSI(m.render())
-	if !strings.Contains(content, "16:00–17:00") || !strings.Contains(content, "11:00–12:00") || !strings.Contains(content, "▓") {
+	if !strings.Contains(content, "16:00–17:00") || !strings.Contains(content, "11:00–12:00") || !strings.Contains(content, "░") {
 		t.Fatalf("missing preview: %s", content)
 	}
 	if lipgloss.Width(content) > 100 || lipgloss.Height(content) > 28 {

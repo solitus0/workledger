@@ -6,11 +6,17 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"charm.land/lipgloss/v2"
 	"github.com/solitus0/workledger/internal/worklogs"
 )
 
 func (m model) renderDayTimeline(previewRecords []worklogs.LocalWorklog, selectedID string) string {
 	timeline, _ := m.renderDayTimelineState(previewRecords, selectedID)
+	return timeline
+}
+
+func (m model) renderDayTimelineWidth(previewRecords []worklogs.LocalWorklog, selectedID string, width int) string {
+	timeline, _ := m.renderTimelineState(previewRecords, selectedID, width)
 	return timeline
 }
 
@@ -20,6 +26,12 @@ type timelineVisibility struct {
 }
 
 func (m model) renderDayTimelineState(previewRecords []worklogs.LocalWorklog, selectedID string) (string, timelineVisibility) {
+	return m.renderTimelineState(previewRecords, selectedID, calculateLayout(m.width, m.height, false).workspace.width-2)
+}
+
+// Timeline geometry is domain-specific: Lip Gloss provides borders and solid
+// fills, while timestamps determine the ruler and every interval's cell range.
+func (m model) renderTimelineState(previewRecords []worklogs.LocalWorklog, selectedID string, width int) (string, timelineVisibility) {
 	visibility := timelineVisibility{}
 	startText, endText := m.workdayBounds()
 	workdayStart, startErr := m.clockOnSelectedDay(startText)
@@ -27,8 +39,7 @@ func (m model) renderDayTimelineState(previewRecords []worklogs.LocalWorklog, se
 	if startErr != nil || endErr != nil || !workdayStart.Before(workdayEnd) {
 		return m.muted("Workday unavailable"), visibility
 	}
-	timelineStart := workdayStart
-	timelineEnd := workdayEnd
+	timelineStart, timelineEnd := workdayStart, workdayEnd
 	for _, record := range appendTimelineRecords(m.worklogs, previewRecords) {
 		start := record.StartedAtUTC.In(m.workspace.cfg.Location)
 		end := start.Add(time.Duration(record.DurationSeconds) * time.Second)
@@ -39,111 +50,190 @@ func (m model) renderDayTimelineState(previewRecords []worklogs.LocalWorklog, se
 			timelineEnd = end
 		}
 	}
-	hasEarlyOvertime := timelineStart.Before(workdayStart)
-	hasLateOvertime := timelineEnd.After(workdayEnd)
-	selectedStart, selectedEnd, hasSelection := m.selectedTimelineInterval(selectedID, timelineStart, timelineEnd)
-	barWidth := min(52, max(18, m.formContentWidth()-26))
-	boundaryCount := 0
-	if hasEarlyOvertime {
-		boundaryCount++
+	framed := width >= 60 && calculateLayout(m.width, m.height, m.activityVisible()).workspace.height >= 23
+	barWidth := max(3, width)
+	if framed {
+		barWidth = max(3, width-4)
 	}
-	if hasLateOvertime {
-		boundaryCount++
-	}
-	cellCount := barWidth - boundaryCount
 	span := timelineEnd.Sub(timelineStart)
-	startBoundaryIndex, endBoundaryIndex := -1, -1
-	if hasEarlyOvertime {
-		startBoundaryIndex = int(math.Ceil(float64(cellCount)*float64(workdayStart.Sub(timelineStart))/float64(span) - 0.5))
-		startBoundaryIndex = min(max(1, startBoundaryIndex), cellCount-1)
+	selectedStart, selectedEnd, hasSelection := m.selectedTimelineInterval(selectedID, timelineStart, timelineEnd)
+	type cell struct {
+		symbol   string
+		color    string
+		selected bool
 	}
-	if hasLateOvertime {
-		endBoundaryIndex = int(math.Ceil(float64(cellCount)*float64(workdayEnd.Sub(timelineStart))/float64(span) - 0.5))
-		endBoundaryIndex = min(max(1, endBoundaryIndex), cellCount-1)
-	}
-	segments := make([]string, 0, barWidth)
-	topMargin := make([]string, 0, barWidth)
-	bottomMargin := make([]string, 0, barWidth)
-	hasVisibleSelection := false
-	for index := 0; index < cellCount; index++ {
-		if index == startBoundaryIndex || index == endBoundaryIndex {
-			marginTop, marginBottom := " ", " "
-			boundaryTime := workdayStart
-			if index == endBoundaryIndex {
-				boundaryTime = workdayEnd
-			}
-			if hasSelection && selectedStart.Before(boundaryTime) && selectedEnd.After(boundaryTime) {
-				marginTop, marginBottom = "▔", "▁"
-			}
-			segments = append(segments, m.paint("│", m.colors.Secondary))
-			topMargin = append(topMargin, marginTop)
-			bottomMargin = append(bottomMargin, marginBottom)
-		}
-		local := timelineStart.Add(time.Duration(float64(span) * (float64(index) + 0.5) / float64(cellCount)))
-		symbol, color := "─", m.colors.Muted
+	cells := make([]cell, barWidth)
+	selectedCells := 0
+	for index := range cells {
+		local := timelineStart.Add(time.Duration(float64(span) * (float64(index) + 0.5) / float64(barWidth)))
+		symbol, color := "free", m.colors.Border
 		persisted := worklogAt(m.worklogs, local)
 		if persisted != nil {
-			switch {
-			case local.Before(workdayStart) || !local.Before(workdayEnd):
+			if local.Before(workdayStart) || !local.Before(workdayEnd) {
 				symbol, color = "▒", m.colors.Warning
-			default:
+			} else {
 				symbol, color = "█", m.colors.Information
 			}
 		} else if m.inLunch(local) {
-			symbol, color = "·", m.colors.Secondary
+			symbol, color = "╱", m.colors.Secondary
 		} else if m.dayContext.Date != "" && m.dayContext.FreeSlots != nil && !containsFreeSlot(m.dayContext.FreeSlots, local) &&
 			!(m.lunchAvailableForPlacement() && m.inConfiguredLunch(local)) {
 			symbol, color = "█", m.colors.Information
 		}
-		preview := worklogAt(previewRecords, local)
-		if preview != nil {
+		if preview := worklogAt(previewRecords, local); preview != nil {
 			if persisted != nil && m.form != nil && m.form.previewConflict != "" {
 				symbol, color = "!", m.colors.Destructive
 			} else if !local.Before(workdayStart) && local.Before(workdayEnd) {
-				symbol, color = "▓", m.colors.Proposed
+				symbol, color = "░", m.colors.Proposed
 			} else {
 				symbol, color = "▒", m.colors.Warning
 			}
 		}
-		switch symbol {
-		case "·":
-			visibility.lunch = true
-		case "─":
-			visibility.free = true
+		selected := hasSelection && !local.Before(selectedStart) && local.Before(selectedEnd)
+		if selected {
+			selectedCells++
 		}
-		marginTop, marginBottom := " ", " "
-		if hasSelection && !local.Before(selectedStart) && local.Before(selectedEnd) {
-			hasVisibleSelection = true
-			marginTop, marginBottom = "▔", "▁"
+		cells[index] = cell{symbol: symbol, color: color, selected: selected}
+	}
+	if hasSelection && selectedCells == 0 {
+		index := min(barWidth-1, timelineColumn(selectedStart.Add(selectedEnd.Sub(selectedStart)/2), timelineStart, timelineEnd, barWidth))
+		symbol := "█"
+		if !selectedEnd.After(workdayStart) || !selectedStart.Before(workdayEnd) {
+			symbol = "▒"
 		}
-		topMargin = append(topMargin, marginTop)
-		segments = append(segments, m.paint(symbol, color))
-		bottomMargin = append(bottomMargin, marginBottom)
+		cells[index] = cell{symbol: symbol, color: m.colors.Focus, selected: true}
+		selectedCells = 1
 	}
-	startLabel := timelineEndLabel(m.selectedDate, timelineStart)
-	endLabel := timelineEndLabel(m.selectedDate, timelineEnd)
-	middle := startLabel + " " + strings.Join(segments, "") + " " + endLabel
-	if !hasSelection || !hasVisibleSelection {
-		return middle, visibility
+	ticks := map[int]bool{}
+	for tick := timelineHourAfter(timelineStart); tick.Before(timelineEnd); tick = tick.Add(time.Hour) {
+		ticks[timelineColumn(tick, timelineStart, timelineEnd, barWidth)] = true
 	}
-	paintSelectionMargin := func(cells []string) string {
-		var line strings.Builder
-		for _, cell := range cells {
-			if cell == " " {
-				line.WriteString(cell)
-				continue
+	boundaries := map[int]bool{}
+	markBoundary := func(value time.Time) {
+		index := min(barWidth-1, max(0, int(math.Ceil(float64(barWidth)*float64(value.Sub(timelineStart))/float64(span)-0.5))))
+		// A boundary cannot consume the only visible cell of a selection.
+		if selectedCells == 1 && cells[index].selected {
+			if index > 0 {
+				index--
+			} else {
+				index++
 			}
-			line.WriteString(m.paint(cell, m.colors.Focus))
 		}
-		return line.String()
+		boundaries[index] = true
 	}
-	leftMarginWidth := utf8.RuneCountInString(startLabel) + 1
-	rightMarginWidth := utf8.RuneCountInString(endLabel) + 1
-	leftMargin := strings.Repeat(" ", leftMarginWidth)
-	rightMargin := strings.Repeat(" ", rightMarginWidth)
-	return leftMargin + paintSelectionMargin(topMargin) + rightMargin + "\n" +
-		middle + "\n" +
-		leftMargin + paintSelectionMargin(bottomMargin) + rightMargin, visibility
+	if timelineStart.Before(workdayStart) {
+		markBoundary(workdayStart)
+	}
+	if timelineEnd.After(workdayEnd) {
+		markBoundary(workdayEnd)
+	}
+	upper, lower := make([]string, barWidth), make([]string, barWidth)
+	for index, cell := range cells {
+		top, bottom := cell.symbol, cell.symbol
+		switch cell.symbol {
+		case "free":
+			visibility.free = true
+			top, bottom = "─", "─"
+			if ticks[index] {
+				top, bottom = "┬", "┴"
+			}
+			if index == 0 || cells[index-1].symbol != "free" {
+				top, bottom = "┌", "└"
+			}
+			if index == barWidth-1 || cells[index+1].symbol != "free" {
+				if top == "┌" {
+					top, bottom = "╷", "╵"
+				} else {
+					top, bottom = "┐", "┘"
+				}
+			}
+		case "╱":
+			visibility.lunch = true
+		}
+		if cell.selected {
+			if cell.symbol != "▒" && cell.symbol != "!" {
+				top, bottom = "▓", "▓"
+			} else {
+				top = "▓"
+			}
+		}
+		if !m.deps.noColor && m.colorReady && (cell.symbol == "█" || cell.selected && cell.symbol != "▒" && cell.symbol != "!") {
+			top, bottom = "▄", "▀"
+		}
+		if boundaries[index] {
+			top, bottom = "│", "│"
+		}
+		upper[index] = m.renderTimelineCell(top, cell.color, cell.selected)
+		lower[index] = m.renderTimelineCell(bottom, cell.color, cell.selected)
+	}
+	lines := []string{m.muted(timelineRuler(m.selectedDate, timelineStart, timelineEnd, barWidth)), strings.Join(upper, ""), strings.Join(lower, "")}
+	if visibility.lunch && width >= 60 {
+		lunch := m.contextSettings.Lunch
+		start, _ := m.clockOnSelectedDay(lunch.Start)
+		end, _ := m.clockOnSelectedDay(lunch.End)
+		label := "Lunch " + lunch.Start + "–" + lunch.End
+		position := timelineColumn(start.Add(end.Sub(start)/2), timelineStart, timelineEnd, barWidth)
+		padding := min(max(0, position-lipgloss.Width(label)/2), max(0, barWidth-lipgloss.Width(label)))
+		lines = append(lines, strings.Repeat(" ", padding)+m.muted(label))
+	}
+	content := strings.Join(lines, "\n")
+	if framed {
+		style := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(0, 1).Width(width)
+		if !m.deps.noColor && m.colorReady {
+			style = style.BorderForeground(lipgloss.Color(m.colors.Border))
+		}
+		content = style.Render(content)
+	}
+	return content, visibility
+}
+
+func (m model) renderTimelineCell(symbol, color string, selected bool) string {
+	if m.deps.noColor || !m.colorReady {
+		return symbol
+	}
+	if selected {
+		color = m.colors.Focus
+	}
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+	if selected && symbol != "▄" && symbol != "▀" {
+		style = style.Reverse(true)
+	}
+	return style.Render(symbol)
+}
+
+func timelineColumn(value, start, end time.Time, width int) int {
+	return min(width-1, max(0, int(math.Round(float64(width)*float64(value.Sub(start))/float64(end.Sub(start))))))
+}
+
+func timelineHourAfter(value time.Time) time.Time {
+	return time.Date(value.Year(), value.Month(), value.Day(), value.Hour(), 0, 0, 0, value.Location()).Add(time.Hour)
+}
+
+func timelineRuler(selectedDate, start, end time.Time, width int) string {
+	ruler := []rune(strings.Repeat(" ", width))
+	first, last := timelineEndLabel(selectedDate, start), timelineEndLabel(selectedDate, end)
+	copy(ruler, []rune(first))
+	lastColumn := max(0, width-len(last))
+	copy(ruler[lastColumn:], []rune(last))
+	previousEnd := len(first)
+	for tick := timelineHourAfter(start); tick.Before(end); tick = tick.Add(time.Hour) {
+		label := tick.Format("15:04")
+		column := max(0, timelineColumn(tick, start, end, width)-len(label)/2)
+		// Keep one cell between labels at either end of the ruler; shifting
+		// an edge label by one cell is preferable to losing a whole hour.
+		if previousEnd == len(first) && column == previousEnd {
+			column++
+		}
+		if column == lastColumn-len(label) {
+			column--
+		}
+		if column <= previousEnd || column+len(label) >= lastColumn {
+			continue
+		}
+		copy(ruler[column:], []rune(label))
+		previousEnd = column + len(label)
+	}
+	return string(ruler)
 }
 
 func appendTimelineRecords(persisted, preview []worklogs.LocalWorklog) []worklogs.LocalWorklog {
@@ -159,15 +249,19 @@ type timelineLegendItem struct {
 }
 
 func (m model) renderTimelineLegend(previewRecords []worklogs.LocalWorklog, selectedID string) string {
+	return m.renderTimelineLegendWidth(previewRecords, selectedID, calculateLayout(m.width, m.height, false).workspace.width-2)
+}
+
+func (m model) renderTimelineLegendWidth(previewRecords []worklogs.LocalWorklog, selectedID string, width int) string {
 	items := []timelineLegendItem{
 		{symbol: "█", color: m.colors.Information, label: "booked"},
 	}
-	_, visibility := m.renderDayTimelineState(previewRecords, selectedID)
+	_, visibility := m.renderTimelineState(previewRecords, selectedID, width)
 	if selectedID != "" && m.selectedWorklogExists(selectedID) {
-		items = append(items, timelineLegendItem{symbol: "─", color: m.colors.Focus, label: "selected"})
+		items = append(items, timelineLegendItem{symbol: "▓", color: m.colors.Focus, label: "selected"})
 	}
 	if len(previewRecords) > 0 {
-		items = append(items, timelineLegendItem{symbol: "▓", color: m.colors.Proposed, label: "proposed"})
+		items = append(items, timelineLegendItem{symbol: "░", color: m.colors.Proposed, label: "proposed"})
 		if m.form != nil && m.form.previewConflict != "" {
 			items = append(items, timelineLegendItem{symbol: "!", color: m.colors.Destructive, label: "conflict"})
 		}
@@ -196,23 +290,23 @@ func (m model) renderTimelineLegend(previewRecords []worklogs.LocalWorklog, sele
 		items = append(items, timelineLegendItem{symbol: "│", color: m.colors.Secondary, label: "day end"})
 	}
 	if hasEarlyOvertime || hasLateOvertime {
-		m.compactTimelineLegend(items)
+		m.compactTimelineLegend(items, calculateLayout(m.width, m.height, false).workspace.width-2)
 	}
 	return m.renderLegendItems(items)
 }
 
 func (m model) appendBaseTimelineLegend(items []timelineLegendItem, visibility timelineVisibility) []timelineLegendItem {
 	if visibility.lunch {
-		items = append(items, timelineLegendItem{symbol: "·", color: m.colors.Secondary, label: "lunch"})
+		items = append(items, timelineLegendItem{symbol: "╱", color: m.colors.Secondary, label: "lunch"})
 	}
 	if visibility.free {
-		items = append(items, timelineLegendItem{symbol: "─", color: m.colors.Muted, label: "free"})
+		items = append(items, timelineLegendItem{symbol: "□", color: m.colors.Muted, label: "free"})
 	}
 	return items
 }
 
-func (m model) compactTimelineLegend(items []timelineLegendItem) {
-	if timelineLegendWidth(items) <= m.formContentWidth()-13 {
+func (m model) compactTimelineLegend(items []timelineLegendItem, width int) {
+	if timelineLegendWidth(items) <= width {
 		return
 	}
 	for index := range items {

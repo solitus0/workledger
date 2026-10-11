@@ -4,20 +4,14 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/solitus0/workledger/internal/activity"
 	"github.com/solitus0/workledger/internal/status"
 	"github.com/solitus0/workledger/internal/worklogs"
 )
-
-var footerKeyTokens = map[string]struct{}{
-	"1": {}, "2": {}, "3": {}, "4": {}, "5": {}, "?": {}, "D": {}, "R": {}, "Tab": {}, "Enter": {}, "Esc": {},
-	"M": {}, "A": {}, "a": {}, "a/A": {}, "c": {}, "d": {}, "d/w": {}, "d/w/m": {}, "e": {}, "f": {}, "g": {}, "h/l": {}, "hjkl": {}, "j/k": {}, "m": {}, "n": {}, "p": {}, "q": {}, "r": {}, "s": {}, "s/c": {}, "t": {}, "u": {}, "v": {}, "w": {}, "x": {}, "y": {},
-	"Ctrl+C": {}, "Ctrl+F": {}, "Ctrl+K": {}, "Ctrl+L": {}, "Ctrl+O": {}, "Ctrl+P": {}, "Ctrl+S": {}, "End": {}, "Home/End": {}, "PgUp/PgDn": {}, "PgUp/Dn": {}, "Shift+Tab": {}, "←/→": {}, "↑/↓": {},
-}
 
 func (m model) View() tea.View {
 	view := tea.NewView(m.render())
@@ -39,9 +33,48 @@ func (m model) render() string {
 	if showActivity {
 		rightPanel = lipgloss.JoinVertical(lipgloss.Left, rightPanel, m.renderActivityDrawer(layout.activity.width, layout.activity.height))
 	}
-	body := lipgloss.JoinHorizontal(lipgloss.Top, rail, " ", rightPanel)
+	dividerColor := m.colors.Border
+	if m.focus == focusRail {
+		dividerColor = m.colors.Focus
+	}
+	divider := m.paint(strings.TrimSuffix(strings.Repeat("│\n", layout.body.height), "\n"), dividerColor)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, rail, divider, rightPanel)
 	footer := m.renderFooter(m.width)
-	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(m.width), body, footer)
+}
+
+func (m model) renderHeader(width int) string {
+	title := m.paintBold("Workledger", m.colors.Secondary)
+	date := m.secondary(m.selectedDate.Format("Mon 02 Jan 2006"))
+	line := " " + title + strings.Repeat(" ", max(1, width-lipgloss.Width(title)-lipgloss.Width(date)-2)) + date + " "
+	return line + "\n" + m.rule(width)
+}
+
+func (m model) rule(width int) string {
+	return m.paint(strings.Repeat("─", max(0, width)), m.colors.Border)
+}
+
+func (m model) pane(content string, width, height int) string {
+	return lipgloss.NewStyle().Width(width).Height(height).MaxWidth(width).MaxHeight(height).Padding(0, 1).Render(content)
+}
+
+func (m model) inspector(list, detail string, width, height int) string {
+	listWidth, detailWidth := inspectorWidths(width)
+	divider := m.paint(strings.TrimSuffix(strings.Repeat("│\n", height), "\n"), m.colors.Border)
+	return lipgloss.JoinHorizontal(lipgloss.Top, m.pane(list, listWidth, height), divider, m.pane(ansi.Wrap(detail, detailWidth-2, ""), detailWidth, height))
+}
+
+func (m model) selectedRow(value string, width int, selected bool) string {
+	value = truncate(value, width)
+	if !selected {
+		return value
+	}
+	style := lipgloss.NewStyle().Width(width)
+	value = ansi.Strip(value)
+	if !m.deps.noColor && m.colorReady {
+		style = style.Foreground(lipgloss.Color(m.colors.Focus)).Reverse(true)
+	}
+	return style.Render(value)
 }
 
 func (m model) renderActivityDrawer(width, height int) string {
@@ -100,159 +133,41 @@ func (m model) renderRail(height int) string {
 }
 
 func (m model) renderRailLayout(height int) (string, [5]rectangle) {
-	innerWidth := 26
-	compact := height < 36
-	statusActive := m.activeTab == statusTab
-	worklogsActive := m.activeTab == worklogsTab
-	trashActive := m.activeTab == trashTab
-	presetsActive := m.activeTab == presetsTab
-	plansActive := m.activeTab == plansTab
-	statusTitle := m.railTitle("1 Status", statusActive)
-	statusState := m.paint("Loading diagnostics…", m.colors.Progress)
-	if !m.statusLoading {
-		if m.statusErr != "" {
-			statusState = m.paint("Check failed", m.colors.Destructive) + "\n" + truncate(m.statusErr, innerWidth)
-		} else {
-			ok, warnings, failures := statusCounts(m.statusItems)
-			statusState = strings.Join([]string{
-				m.statusSummaryLine("OK", ok, m.colors.Success),
-				m.statusSummaryLine("Warnings", warnings, m.colors.Warning),
-				m.statusSummaryLine("Errors", failures, m.colors.Destructive),
-			}, "\n")
-			if !m.statusChecked.IsZero() {
-				statusState += "\n" + m.muted(fmt.Sprintf("%-10s%s", "Checked", m.statusChecked.Format("15:04:05")))
-			}
+	labels := [...]string{"1 Status", "2 Worklogs", "3 Plans", "4 Presets", "5 Trash"}
+	lines := []string{"", ""}
+	var rows [5]rectangle
+	for index, label := range labels {
+		rows[index] = rectangle{x: 0, y: appHeaderHeight + len(lines), width: navigationWidth, height: 1}
+		prefix := "  "
+		if tab(index) == m.activeTab {
+			prefix = "> "
+		}
+		line := prefix + m.railTitle(label, tab(index) == m.activeTab)
+		if m.focus == focusRail && tab(index) == m.activeTab {
+			line = m.selectedRow(prefix+label, navigationWidth-2, true)
+		}
+		lines = append(lines, line, "")
+	}
+	lines = append(lines, m.rule(navigationWidth-2))
+	unapplied, failed, uncertain := m.planRailCounts()
+	lines = append(lines, "Plans "+m.paint(fmt.Sprintf("%d ready", unapplied), m.colors.Information))
+	if failed > 0 {
+		lines = append(lines, m.paint(fmt.Sprintf("Failed %d", failed), m.colors.Destructive))
+	}
+	if uncertain > 0 {
+		lines = append(lines, m.paint(fmt.Sprintf("Uncertain %d", uncertain), m.colors.Warning))
+	}
+	if m.statusErr != "" {
+		lines = append(lines, m.paint("Check failed", m.colors.Destructive))
+	} else if !m.statusLoading {
+		_, warnings, failures := statusCounts(m.statusItems)
+		if failures > 0 {
+			lines = append(lines, m.paint(fmt.Sprintf("%d errors", failures), m.colors.Destructive))
+		} else if warnings > 0 {
+			lines = append(lines, m.paint(fmt.Sprintf("%d warnings", warnings), m.colors.Warning))
 		}
 	}
-	if compact {
-		if m.statusLoading {
-			statusState = m.paint("Loading…", m.colors.Progress)
-		} else if m.statusErr != "" {
-			statusState = m.paint("Check failed", m.colors.Destructive)
-		} else {
-			ok, warnings, failures := statusCounts(m.statusItems)
-			statusState = strings.Join([]string{
-				m.statusSummaryLine("OK", ok, m.colors.Success),
-				m.statusSummaryLine("Warnings", warnings, m.colors.Warning),
-				m.statusSummaryLine("Errors", failures, m.colors.Destructive),
-			}, "  ")
-		}
-	}
-	separator := "\n\n"
-	if compact {
-		separator = "\n"
-	}
-	statusCard := statusTitle + separator + statusState
-
-	worklogsTitle := m.railTitle("2 Worklogs", worklogsActive)
-	worklogsState := "Unavailable"
-	if m.workspace != nil {
-		period := "This week"
-		if m.worklogView == monthWorklogView {
-			period = "This month"
-		}
-		worklogsState = fmt.Sprintf("%-10s %s\n%-10s %s", "Selected", m.paint(fmt.Sprintf("%s  (%d)", formatDuration(m.dayBookedSeconds()), len(m.worklogs)), m.colors.Information),
-			period, m.paint(fmt.Sprintf("%s  (%d)", formatDuration(m.contextSummary.BookedSeconds), m.contextSummary.WorklogCount), m.colors.Information))
-		if m.worklogLoading {
-			worklogsState += "\n" + m.paint("Refreshing…", m.colors.Progress)
-		}
-	} else if m.workspaceLoading {
-		worklogsState = m.paint("Loading workspace…", m.colors.Progress)
-	} else if m.workspaceErr != nil {
-		worklogsState += "\n" + truncate(m.workspaceErr.Error(), innerWidth)
-	}
-	worklogsCard := worklogsTitle + "\n\n" + worklogsState
-	if compact {
-		worklogsCard = worklogsTitle + "\n" + fmt.Sprintf("%s · %d rows", formatDuration(m.dayBookedSeconds()), len(m.worklogs))
-	}
-	trashTitle := m.railTitle("5 Trash", trashActive)
-	trashState := "Unavailable"
-	if m.workspace != nil {
-		localCount, remoteCount := 0, 0
-		for _, item := range m.trashItems {
-			if item.StorageScope == worklogs.TrashScopeLocal {
-				localCount++
-			} else {
-				remoteCount++
-			}
-		}
-		trashState = fmt.Sprintf("Selected  %d\nLocal     %d\nRemote    %d", len(m.trashItems), localCount, remoteCount)
-		if m.trashLoading {
-			trashState += "\n" + m.paint("Refreshing…", m.colors.Progress)
-		}
-	}
-	trashCard := trashTitle + "\n\n" + trashState
-	if compact {
-		trashCard = trashTitle + "\n" + fmt.Sprintf("%d selected", len(m.trashItems))
-	}
-	presetsTitle := m.railTitle("4 Presets", presetsActive)
-	presetsState := "Unavailable"
-	if m.workspace != nil {
-		presetsState = fmt.Sprintf("Available  %d", len(m.presets))
-		if selected := m.selectedPreset(); selected != nil {
-			presetsState += "\nSelected   " + truncate(selected.Name, 14)
-		}
-		if m.presetLoading {
-			presetsState += "\n" + m.paint("Refreshing…", m.colors.Progress)
-		}
-	}
-	presetsCard := presetsTitle + "\n\n" + presetsState
-	if compact {
-		presetsCard = presetsTitle + "\n" + fmt.Sprintf("%d available", len(m.presets))
-	}
-	plansTitle := m.railTitle("3 Plans", plansActive)
-	plansState := "Unavailable"
-	if m.workspace != nil {
-		unapplied, failed, uncertain := m.planRailCounts()
-		plansState = fmt.Sprintf("%-11s%s\n%-11s%s\n%-11s%s",
-			"Unapplied", m.paint(fmt.Sprint(unapplied), m.colors.Information),
-			"Failed", m.paint(fmt.Sprint(failed), m.colors.Destructive),
-			"Uncertain", m.paint(fmt.Sprint(uncertain), m.colors.Warning))
-		if m.planLoading && !compact {
-			plansTitle += " " + m.paint("↻", m.colors.Progress)
-		}
-	}
-	plansCard := plansTitle + "\n\n" + plansState
-	if compact {
-		statusCard = statusTitle + "\n" + statusState
-		worklogsCard = worklogsTitle + "  " + fmt.Sprintf("%s · %d", formatDuration(m.dayBookedSeconds()), len(m.worklogs))
-		trashCard = trashTitle + "  " + fmt.Sprintf("%d selected", len(m.trashItems))
-		presetsCard = presetsTitle + "  " + fmt.Sprintf("%d available", len(m.presets))
-		unapplied, failed, uncertain := m.planRailCounts()
-		plansCard = plansTitle + "  " + fmt.Sprintf("%d apply · %d retry", unapplied, failed+uncertain)
-	}
-
-	statusFocused := m.focus == focusRail && statusActive
-	worklogsFocused := m.focus == focusRail && worklogsActive
-	plansFocused := m.focus == focusRail && plansActive
-	presetsFocused := m.focus == focusRail && presetsActive
-	trashFocused := m.focus == focusRail && trashActive
-	cardSpace := max(15, height)
-	firstHeight := max(3, cardSpace/5)
-	secondHeight := max(3, cardSpace/5)
-	thirdHeight := max(3, cardSpace/5)
-	fourthHeight := max(3, cardSpace/5)
-	fifthHeight := max(3, cardSpace-firstHeight-secondHeight-thirdHeight-fourthHeight)
-	first := m.box(statusCard, 30, firstHeight, statusFocused)
-	second := m.box(worklogsCard, 30, secondHeight, worklogsFocused)
-	third := m.box(plansCard, 30, thirdHeight, plansFocused)
-	fourth := m.box(presetsCard, 30, fourthHeight, presetsFocused)
-	fifth := m.box(trashCard, 30, fifthHeight, trashFocused)
-	parts := []string{first, second, third, fourth, fifth}
-	rail := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	if delta := height - lipgloss.Height(rail); delta != 0 {
-		fifthHeight = max(3, fifthHeight+delta)
-		parts[4] = m.box(trashCard, 30, fifthHeight, trashFocused)
-		rail = lipgloss.JoinVertical(lipgloss.Left, parts...)
-	}
-	var cards [5]rectangle
-	top := 0
-	for index, part := range parts {
-		partHeight := lipgloss.Height(part)
-		cards[index] = rectangle{x: 0, y: top, width: 30, height: partHeight}
-		top += partHeight
-	}
-	return rail, cards
+	return m.pane(strings.Join(lines, "\n"), navigationWidth, height), rows
 }
 
 func (m model) planRailCounts() (unapplied, failed, uncertain int) {
@@ -265,6 +180,28 @@ func (m model) planRailCounts() (unapplied, failed, uncertain int) {
 }
 
 func (m model) renderWorkspace(width, height int) string {
+	if m.overlay != noOverlay {
+		background := m
+		background.overlay = noOverlay
+		base := background.renderWorkspace(width, height)
+		modalWidth := min(72, width-6)
+		var text string
+		color := m.colors.Focus
+		switch m.overlay {
+		case helpOverlay:
+			text = m.renderActions(modalWidth, height-2)
+		case detailsOverlay:
+			text = m.paintBold(m.detailTitle, color) + "\n\n" + m.detailViewport.View()
+		default:
+			content, borderColor := m.overlayContent()
+			color = borderColor
+			text = m.renderOverlayCopy(content, color)
+		}
+		text = lipgloss.NewStyle().Width(modalWidth - 4).Render(text)
+		modalHeight := min(height-2, lipgloss.Height(text)+2)
+		modal := m.boxWithBorder(text, modalWidth, modalHeight, color)
+		return lipgloss.NewCompositor(lipgloss.NewLayer(base), lipgloss.NewLayer(modal).X((width-modalWidth)/2).Y((height-modalHeight)/2).Z(1)).Render()
+	}
 	if m.move != nil {
 		return m.renderMove(width, height)
 	}
@@ -273,9 +210,6 @@ func (m model) renderWorkspace(width, height int) string {
 	}
 	if m.presetPicker != nil {
 		return m.renderPresetPicker(width, height)
-	}
-	if m.overlay == helpOverlay {
-		return m.renderOverlay(width, height)
 	}
 	if m.activeTab == statusTab {
 		return m.renderStatusWorkspace(width, height)
@@ -292,13 +226,6 @@ func (m model) renderWorkspace(width, height int) string {
 	return m.renderWorklogWorkspace(width, height)
 }
 
-func (m model) renderOverlay(width, height int) string {
-	content, color := m.overlayContent()
-	modalWidth := min(68, width-8)
-	modal := m.boxWithBorder(m.renderOverlayCopy(content, color), modalWidth, min(14, height-4), color)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
-}
-
 func (m model) renderOverlayCopy(content overlayCopy, color string) string {
 	return strings.Join([]string{m.paint(content.title, color), content.body}, "\n\n")
 }
@@ -312,9 +239,6 @@ func (m model) overlayContent() (overlayCopy, string) {
 	var title, body string
 	color := m.colors.Focus
 	switch m.overlay {
-	case helpOverlay:
-		title = "Help"
-		body = "The action bar is the authoritative shortcut reference and adapts to the current view and selection.\n\nThe left rail switches workspaces. Worklogs offer Day, Week, and Month views. Month shows a calendar of local booked time and gaps on past weekdays; today is in progress and future dates are pending. Weekday quota assumes Monday through Friday without holiday or leave adjustments. Trash offers Day and Week views. Plans move from saved plans to scope review. Remote trash is audit-only."
 	case deleteOverlay:
 		title, color = "Move selected worklog to trash?", m.colors.Destructive
 		if len(m.deleteSelection) == 1 {
@@ -399,218 +323,126 @@ func deleteSelectionDuration(items []worklogs.LocalWorklog) int {
 	return total
 }
 
-func (m model) renderConfirmation(width, height int) string {
-	content, color := m.overlayContent()
-	text := m.renderOverlayCopy(content, color)
-	modalWidth := min(68, max(24, width-6))
-	desiredHeight := 10
-	if m.conflict != nil {
-		desiredHeight = max(desiredHeight, 8+len(m.conflict.ConflictingIDs))
-	}
-	modalHeight := min(desiredHeight, max(7, height-2))
-	modal := m.boxWithBorder(text, modalWidth, modalHeight, color)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
-}
-
 func (m model) renderFooter(width int) string {
-	text := "1 Status   2 Worklogs   3 Plans   4 Presets   5 Trash   ? Help   q Quit"
-	if m.overlay == helpOverlay {
-		text = "Esc / ? Close help"
-	} else if m.overlay == deleteOverlay {
-		text = "y / Enter Confirm delete   n / Esc Cancel"
-	} else if m.overlay == deleteDayOverlay {
-		text = "y / Enter Move day to trash   n / Esc Cancel"
-	} else if m.overlay == forceOverlay {
-		text = "y / Enter Save despite conflict   n / Esc Return"
-	} else if m.overlay == reloadOverlay {
-		text = "y / Enter Reload and discard draft   n / Esc Keep draft"
-	} else if m.overlay == restoreOverlay || m.overlay == restoreDayOverlay {
-		text = "y / Enter Restore   n / Esc Cancel"
-	} else if m.overlay == deletePresetOverlay {
-		text = "y / Enter Delete preset   n / Esc Cancel"
-	} else if m.overlay == reconcilePlanOverlay {
-		text = "y / Enter Inspect and save plan   n / Esc Cancel"
-	} else if m.overlay == applyPlanOverlay {
-		text = "y / Enter Apply plan   n / Esc Cancel"
-	} else if m.overlay == retryFailedPlanOverlay || m.overlay == retryUncertainPlanOverlay {
-		text = "y / Enter Retry plan scopes   n / Esc Cancel"
-	} else if m.move != nil {
-		text = "↑/↓ Position   Ctrl+S Save   r Refresh positions   Esc Cancel"
-		if m.move.saving {
-			text = "Saving move…   Ctrl+C Interrupt"
-		}
-	} else if m.issuePicker != nil {
-		if m.issuePicker.searching {
-			text = "Ctrl+F Mode   Tab Pane   ↑/↓ Move   PgUp/PgDn Page   Enter Choose   Esc Close find"
-		} else {
-			text = "Ctrl+F Find   Tab Pane   ↑/↓ Move   PgUp/PgDn Page   Enter Choose   Esc Cancel"
-		}
-	} else if m.presetPicker != nil {
-		if m.presetPicker.searching {
-			text = "Type Filter   Tab Complete   ↑/↓ Select   Enter Choose   Esc Close find"
-		} else {
-			text = "Ctrl+F Find   ↑/↓ Select   Enter Choose   Esc Cancel"
-		}
-	} else if m.presetForm != nil {
-		text = "↑/↓ or Tab/Shift+Tab Fields   Ctrl+S Save   Esc Cancel"
-	} else if m.focus == focusActivity {
-		text = "↑/↓ or j/k Select   PgUp/PgDn Page   Home/End Edge   r Refresh   g Close activity   q Quit"
-	} else if m.activeTab == statusTab {
-		text = "s/c View   ←/→ Switch   ↑/↓ Select   r Refresh   ? Help   q Quit"
-	} else if m.activeTab == trashTab {
-		if m.trashView == weekWorklogView {
-			text = "d/w View  s Scope  R Restore day  h/l Week  j/k Day  t Today  r Refresh  ? Help  q Quit"
-		} else {
-			text = "d/w View  s Scope  R Restore  h/l Date  j/k Row  t Today  r Refresh  ? Help  q Quit"
-		}
-	} else if m.activeTab == presetsTab {
-		text = "a Add   e Edit   D Delete   j/k Select   r Refresh   ? Help   q Quit"
-	} else if m.activeTab == plansTab {
-		if m.planOperation != nil {
-			text = "Esc Cancel operation   Ctrl+C Interrupt"
-		} else if m.planForm != nil {
-			text = "p Push   u Pull   d/w/c Window   x Target   v Profile   Enter Inspect   Esc Cancel"
-		} else if m.plan != nil {
-			actions := []string{"a Ready/All"}
-			if m.planExecutableCount("not_attempted") > 0 {
-				actions = append(actions, "A Apply")
-			}
-			if m.planExecutableCount("failed") > 0 {
-				actions = append(actions, "f Retry failed")
-			}
-			if m.planExecutableCount("uncertain") > 0 {
-				actions = append(actions, "u Retry uncertain")
-			}
-			actions = append(actions, "j/k Scope", "r Refresh", "Esc Back")
-			text = strings.Join(actions, "   ")
-		} else {
-			text = "d/w View   h/l Date/week   n New plan   Enter Review   j/k Select   t Today   r Refresh   ? Help   q Quit"
-		}
-	} else if m.form != nil {
-		text = m.renderFormNavigationHint() + "   Ctrl+S Save   Esc Cancel"
-		if !m.form.editing {
-			text = m.renderAddFormFooter(width)
-		}
-	} else if m.worklogView == monthWorklogView {
-		text = "d/w/m View  hjkl Day  PgUp/Dn Month  Enter Open  a/A Add/preset  t Today  r Refresh  ? Help  q Quit"
-		if width < 120 {
-			text = "d/w/m View hjkl Day PgUp/Dn Month Enter Day a/A Add/preset t Now ? Help q Quit"
-		}
-	} else if m.worklogView == weekWorklogView {
-		text = "d/w/m View  D Delete day  h/l Week  j/k Day  Enter Open  a Add  A Preset  t Today  ? Help  q Quit"
-	} else {
-		text = "d/w/m View  D Delete  a Add  A Preset  e Edit  h/l Date  t Today  r Refresh  ? Help  q Quit"
-		if m.selectedWorklog() != nil && !m.worklogLoading {
-			text = strings.Replace(text, "e Edit", "e Edit  M Move", 1)
-		}
-	}
-	if m.overlay == noOverlay && m.move == nil && m.form == nil && m.presetForm == nil && m.presetPicker == nil && m.issuePicker == nil && m.focus != focusActivity {
-		activityAction := "g Activity"
-		if m.activityOpen {
-			activityAction = "g Close activity"
-		}
-		text += "   " + activityAction
-		if lipgloss.Width(text) > width-4 {
-			text = strings.Join(strings.Fields(text), " ")
-		}
-		text = truncate(text, width-4)
-	}
-	notice := strings.TrimSpace(m.notice)
-	styled := m.styleFooterHints(text)
-	if m.confirmationOverlayOpen() {
-		_, confirmationColor := m.overlayContent()
-		styled = m.styleFooterHintsWith(text, map[string]string{
-			"y": confirmationColor, "Enter": confirmationColor,
-			"n": m.colors.Secondary, "Esc": m.colors.Secondary,
-		})
-	}
-	if notice != "" {
-		noticeColor := m.colors.Information
-		switch m.noticeKind {
-		case noticeSuccess:
-			noticeColor = m.colors.Success
-		case noticeWarning:
-			noticeColor = m.colors.Warning
-		case noticeError:
-			noticeColor = m.colors.Destructive
-		}
-		notice = truncate(notice, width-4)
-		styled = m.paint(notice, noticeColor)
-		if actionWidth := width - 4 - lipgloss.Width(notice) - 3; actionWidth > 0 {
-			styled += "   " + m.styleFooterHints(truncate(text, actionWidth))
-		}
-	}
-	if m.form != nil && !m.form.editing && len(m.form.previewRecords) > 0 {
-		action := "create " + pluralizeWorklogs(len(m.form.previewRecords))
-		styled = strings.Replace(styled, action, m.paint(action, m.colors.Proposed), 1)
-	}
-	return m.box(styled, width, 2, false)
-}
-
-func (m model) renderAddFormFooter(width int) string {
-	navigation := m.renderFormNavigationHint()
-	pickerAction := ""
-	if m.form.focus == issueField {
-		pickerAction = "Ctrl+K Issues   "
-		navigation = m.formCompletionHint()
-	}
-	nextPlacement := "Manual"
-	switch m.form.placement {
-	case manualPlacement:
-		nextPlacement = "Fit"
-	case fitPlacement:
-		nextPlacement = "Fill"
-	}
-	if m.form.placement == manualPlacement {
-		footer := fmt.Sprintf("%s%s   Ctrl+P %s   Ctrl+S Save   Esc Cancel", pickerAction, navigation, nextPlacement)
-		if lipgloss.Width(footer) > width-4 && pickerAction != "" {
-			return pickerAction + m.formCompletionHint() + "   Ctrl+S Save   Esc Cancel"
-		}
-		return footer
-	}
-	overtimeAction := "Allow overtime"
-	compactOvertimeAction := "OT on"
-	if m.form.overtime {
-		overtimeAction = "Disable overtime"
-		compactOvertimeAction = "OT off"
-	}
-	lunchAction := "Use lunch time"
-	if m.form.noLunch {
-		lunchAction = "Reserve lunch"
-	}
-	saveAction := "Save"
-	if len(m.form.previewRecords) > 0 {
-		saveAction = "create " + pluralizeWorklogs(len(m.form.previewRecords))
-	}
-	footer := fmt.Sprintf("%s%s   Ctrl+P %s   Ctrl+O %s   Ctrl+L %s   Ctrl+S %s   Esc Cancel", pickerAction, navigation, nextPlacement, overtimeAction, lunchAction, saveAction)
-	if lipgloss.Width(footer) <= width-4 {
-		return footer
-	}
-	completion := ""
-	if hint := m.formCompletionHint(); hint != "" {
-		completion = hint + "  "
-	}
-	if m.form.focus == descriptionField {
-		completion += "Enter Save  "
-	}
-	compact := fmt.Sprintf("%s%sCtrl+P %s  Ctrl+O %s  Ctrl+L %s  Ctrl+S %s  Esc", pickerAction, completion, nextPlacement, compactOvertimeAction, lunchAction, saveAction)
-	if lipgloss.Width(compact) > width-4 && pickerAction != "" {
-		return pickerAction + m.formCompletionHint() + "   Ctrl+S Save   Esc Cancel"
-	}
-	return compact
-}
-
-func (m model) renderFormNavigationHint() string {
-	if hint := m.formCompletionHint(); hint != "" {
+	primary, secondary := m.idleHints()
+	switch {
+	case m.overlay == helpOverlay:
+		primary = []actionHint{{"↑/↓", "Select"}, {"Enter", "Run action"}, {"Esc", "Close"}}
+		secondary = []actionHint{{"Type", "Filter actions"}}
+	case m.overlay == detailsOverlay:
+		primary = []actionHint{{"↑/↓", "Scroll"}, {"PgUp/PgDn", "Page"}, {"Enter / Esc", "Close details"}}
+		secondary = nil
+	case m.confirmationOverlayOpen():
+		primary = []actionHint{{"y / Enter", m.confirmationAction()}, {"n / Esc", "Cancel"}}
+		secondary = nil
+	case m.move != nil:
+		primary = []actionHint{{"↑/↓", "Position"}, {"Ctrl+S", "Save"}, {"r", "Refresh positions"}, {"Esc", "Cancel"}}
+		secondary = nil
+	case m.issuePicker != nil:
+		primary = []actionHint{{"↑/↓", "Select"}, {"PgUp/PgDn", "Page"}, {"Enter", "Choose"}, {"Esc", "Close"}}
+		secondary = []actionHint{{"Ctrl+F", "Find / mode"}, {"Tab", "Pane"}}
+	case m.presetPicker != nil:
+		primary = []actionHint{{"↑/↓", "Select"}, {"Enter", "Choose"}, {"Esc", "Cancel"}}
+		secondary = []actionHint{{"Ctrl+F", "Find"}, {"Tab", "Complete"}}
+	case m.presetForm != nil:
+		primary = []actionHint{{"↑/↓ / Tab", "Fields"}, {"Ctrl+S", "Save"}, {"Esc", "Cancel"}}
+		secondary = nil
+	case m.planOperation != nil:
+		primary = []actionHint{{"Esc", "Cancel operation"}, {"Ctrl+C", "Interrupt"}}
+		secondary = nil
+	case m.planForm != nil:
+		primary = []actionHint{{"Enter", "Inspect"}, {"Esc", "Cancel"}, {"p", "Push"}, {"u", "Pull"}, {"d/w/c", "Window"}}
+		secondary = []actionHint{{"x", "Target"}, {"v", "Profile"}, {"Tab", "Dates"}}
+	case m.form != nil:
+		primary = []actionHint{{"↑/↓ / Tab", "Fields"}, {"Ctrl+S", "Save"}, {"Esc", "Cancel"}}
+		secondary = nil
 		if m.form.focus == descriptionField {
-			return hint + "   Enter Save   ↑/↓ Fields"
+			primary = append(primary, actionHint{"Enter", "Save"})
 		}
-		return hint + "   ↑/↓ Fields"
+		if hint := m.formCompletionHint(); hint != "" {
+			secondary = append(secondary, actionHint{"Tab", strings.TrimPrefix(hint, "Tab ")})
+		}
+		if m.form.focus == issueField && !m.form.editing {
+			secondary = append(secondary, actionHint{"Ctrl+K", "Issues"})
+		}
+		if !m.form.editing {
+			next := "Manual"
+			if m.form.placement == manualPlacement {
+				next = "Fit"
+			} else if m.form.placement == fitPlacement {
+				next = "Fill"
+			}
+			secondary = append(secondary, actionHint{"Ctrl+P", next})
+			if m.form.placement != manualPlacement {
+				overtime, lunch := "OT on", "Use lunch"
+				if m.form.overtime {
+					overtime = "OT off"
+				}
+				if m.form.noLunch {
+					lunch = "Reserve lunch"
+				}
+				secondary = append(secondary, actionHint{"Ctrl+O", overtime}, actionHint{"Ctrl+L", lunch})
+			}
+			if len(m.form.previewRecords) > 0 && m.form.previewError == "" && m.form.previewConflict == "" {
+				primary[1].label = "Create " + pluralizeWorklogs(len(m.form.previewRecords))
+			}
+		}
+	case m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.worklogView == dayWorklogView:
+		primary = []actionHint{{"Type", "Filter worklogs"}, {"↑/↓", "Select"}, {"Enter", "Browse results"}, {"Esc", "Clear filter"}}
+		secondary = nil
+	case m.focus == focusActivity:
+		primary = []actionHint{{"↑/↓", "Select"}, {"PgUp/PgDn", "Page"}, {"r", "Refresh"}, {"g", "Close activity"}, {"?", "Actions"}, {"q", "Quit"}}
+		secondary = append(secondary[:5], actionHint{"Home/End", "Edge"}, actionHint{"Tab", "Pane"})
+	case m.focus == focusRail:
+		primary = []actionHint{{"↑/↓", "Workspace"}, {"Enter / Tab", "Open"}, {"?", "Actions"}, {"q", "Quit"}}
 	}
-	if m.form != nil && m.form.focus == descriptionField {
-		return "Enter Save   ↑/↓ or Tab/Shift+Tab Fields"
+	first := m.renderHints(primary, width-2)
+	if m.confirmationOverlayOpen() {
+		_, color := m.overlayContent()
+		first = m.paint(primary[0].chord, color) + " " + primary[0].label + "  " + m.paint(primary[1].chord, m.colors.Secondary) + " " + primary[1].label
 	}
-	return "↑/↓ or Tab/Shift+Tab Fields"
+	if m.interactionState.kind() == interactionIdle && m.focus != focusActivity && len(primary) >= 2 {
+		tail := m.renderHints(primary[len(primary)-2:], width-2)
+		first = m.renderHints(primary[:len(primary)-2], width-4-lipgloss.Width(tail)) + "  " + tail
+	}
+	second := m.renderHints(secondary, width-2)
+	if m.interactionState.kind() == interactionIdle && m.activeTab == worklogsTab && m.worklogView == dayWorklogView && m.selectedWorklog() != nil {
+		indices := m.visibleWorklogIndices()
+		context := fmt.Sprintf("%d of %d", slices.Index(indices, m.worklogSelected)+1, len(indices))
+		if width-2-lipgloss.Width(first) >= lipgloss.Width(context)+4 {
+			first += strings.Repeat(" ", width-2-lipgloss.Width(first)-lipgloss.Width(context)) + m.muted(context)
+		}
+	}
+	if m.notice != "" {
+		color := m.colors.Information
+		switch m.noticeKind {
+		case noticeError:
+			color = m.colors.Destructive
+		case noticeWarning:
+			color = m.colors.Warning
+		case noticeSuccess:
+			color = m.colors.Success
+		}
+		second = m.paint(truncate(m.notice, width-2), color)
+	}
+	return m.rule(width) + "\n" + m.pane(first+"\n"+second, width, 2)
+}
+
+func (m model) renderHints(hints []actionHint, width int) string {
+	parts := []string{}
+	used := 0
+	for _, hint := range hints {
+		length := lipgloss.Width(hint.chord) + 1 + lipgloss.Width(hint.label)
+		if len(parts) > 0 {
+			length += 2
+		}
+		if used+length > width {
+			continue
+		}
+		parts = append(parts, m.paint(hint.chord, m.colors.Focus)+" "+hint.label)
+		used += length
+	}
+	return strings.Join(parts, "  ")
 }
 
 func (m model) formCompletionHint() string {
@@ -666,7 +498,7 @@ func (m model) box(content string, width, height int, focused bool) string {
 }
 
 func (m model) boxWithBorder(content string, width, height int, borderColor string) string {
-	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Width(max(1, width)).Height(max(1, height)).Padding(0, 1)
+	style := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Width(max(1, width)).Height(max(3, height)).MaxWidth(max(1, width)).MaxHeight(max(3, height)).Padding(0, 1)
 	if !m.deps.noColor && m.colorReady {
 		style = style.BorderForeground(lipgloss.Color(borderColor))
 	}
@@ -694,50 +526,31 @@ func (m model) railTitle(label string, active bool) string {
 	return label
 }
 
-func (m model) statusSummaryLine(label string, count int, color string) string {
-	line := fmt.Sprintf("%-10s%d", label, count)
-	if count == 0 {
-		return m.muted(line)
-	}
-	return m.paint(line, color)
-}
-
-func (m model) styleFooterHints(value string) string {
-	return m.styleFooterHintsWith(value, nil)
-}
-
-func (m model) styleFooterHintsWith(value string, overrides map[string]string) string {
-	if m.deps.noColor {
-		return value
-	}
-	var styled strings.Builder
-	for index := 0; index < len(value); {
-		if value[index] == ' ' || value[index] == '\t' {
-			styled.WriteByte(value[index])
-			index++
-			continue
-		}
-		end := index
-		for end < len(value) && value[end] != ' ' && value[end] != '\t' {
-			end++
-		}
-		token := value[index:end]
-		if _, ok := footerKeyTokens[token]; ok {
-			color := m.colors.Focus
-			if override, ok := overrides[token]; ok {
-				color = override
-			}
-			styled.WriteString(m.paintBold(token, color))
-		} else {
-			styled.WriteString(token)
-		}
-		index = end
-	}
-	return styled.String()
-}
-
 func (m model) confirmationOverlayOpen() bool {
-	return m.overlay != noOverlay && m.overlay != helpOverlay
+	return m.overlay != noOverlay && m.overlay != helpOverlay && m.overlay != detailsOverlay
+}
+
+func (m model) confirmationAction() string {
+	switch m.overlay {
+	case deleteOverlay:
+		return "Confirm delete"
+	case deleteDayOverlay:
+		return "Move day to trash"
+	case restoreOverlay, restoreDayOverlay:
+		return "Restore"
+	case deletePresetOverlay:
+		return "Delete preset"
+	case forceOverlay:
+		return "Save despite conflict"
+	case reloadOverlay:
+		return "Reload and discard draft"
+	case reconcilePlanOverlay:
+		return "Inspect and save plan"
+	case applyPlanOverlay:
+		return "Apply plan"
+	default:
+		return "Retry plan scopes"
+	}
 }
 
 func (m model) muted(value string) string { return m.paint(value, m.colors.Muted) }
@@ -819,14 +632,7 @@ func truncate(value string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	if utf8.RuneCountInString(value) <= width {
-		return value
-	}
-	if width == 1 {
-		return "…"
-	}
-	runes := []rune(value)
-	return string(runes[:width-1]) + "…"
+	return ansi.Truncate(value, width, "…")
 }
 
 func emptyDash(value string) string {

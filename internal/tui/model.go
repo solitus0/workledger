@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"github.com/solitus0/workledger/internal/activity"
 	"github.com/solitus0/workledger/internal/config"
@@ -74,6 +76,7 @@ const (
 	applyPlanOverlay
 	retryFailedPlanOverlay
 	retryUncertainPlanOverlay
+	detailsOverlay
 )
 
 type noticeKind int
@@ -141,6 +144,7 @@ type worklogsScreen struct {
 	reloadAfterForm          bool
 	moveGen                  int
 	deleteSelection          []worklogs.LocalWorklog
+	worklogFilter            *worklogFilterState
 }
 
 type trashScreen struct {
@@ -170,14 +174,19 @@ type statusScreen struct {
 }
 
 type interactionState struct {
-	overlay       overlay
-	move          *moveState
-	form          *formState
-	planForm      *planFormState
-	planOperation *planOperationState
-	presetForm    *presetFormState
-	presetPicker  *presetPickerState
-	issuePicker   *issuePickerState
+	overlay        overlay
+	move           *moveState
+	form           *formState
+	planForm       *planFormState
+	planOperation  *planOperationState
+	presetForm     *presetFormState
+	presetPicker   *presetPickerState
+	issuePicker    *issuePickerState
+	actions        *actionsState
+	detailViewport viewport.Model
+	detailTitle    string
+	detailContent  string
+	detailWorklog  bool
 }
 
 type interactionKind int
@@ -486,12 +495,15 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.restyleFormInputs()
 		m.restylePresetInputs()
 		m.restyleIssuePickerInput()
+		m.restyleSearchInputs()
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resizeForm()
 		m.resizePresetInputs()
 		m.resizeIssuePickerInput()
+		m.resizeSearchInputs()
+		m.refreshDetailViewport()
 		return m, nil
 	case statusResultMsg:
 		if msg.generation != m.statusGen {
@@ -549,10 +561,12 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.issueTotalLoading = false
 		if msg.err != nil {
 			m.issueTotalErr = msg.err.Error()
+			m.refreshDetailViewport()
 			return m, nil
 		}
 		m.issueTotal = msg.totalSeconds
 		m.issueTotalErr = ""
+		m.refreshDetailViewport()
 		return m, nil
 	case formMetadataResultMsg:
 		if m.form == nil || msg.generation != m.formMetadataGen || msg.issueKey != strings.TrimSpace(m.form.inputs[issueInput].Value()) {
@@ -860,6 +874,12 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 
 	key, ok := msg.(tea.KeyPressMsg)
 	if !ok {
+		if m.overlay == helpOverlay {
+			return m.updateActions(msg)
+		}
+		if m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.worklogView == dayWorklogView && m.interactionState.kind() == interactionIdle {
+			return m.updateWorklogFilter(msg)
+		}
 		switch m.interactionState.kind() {
 		case interactionPresetPicker:
 			return m.updatePresetPicker(msg)
@@ -883,7 +903,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m, nil
 	}
 	switch m.interactionState.kind() {
-	case interactionHelp, interactionConfirmation:
+	case interactionHelp:
+		return m.updateActions(msg)
+	case interactionConfirmation:
 		return m.updateOverlay(keyName)
 	case interactionPresetPicker:
 		return m.updatePresetPicker(msg)
@@ -899,6 +921,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.updateMove(keyName)
 	case interactionWorklogForm:
 		return m.updateForm(msg)
+	}
+	if m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.worklogView == dayWorklogView {
+		return m.updateWorklogFilter(msg)
 	}
 	if keyName == "g" {
 		m.activityOpen = !m.activityOpen
@@ -931,15 +956,14 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.activateTab(trashTab)
 		return m, nil
 	}
-	if m.focus == focusActivity {
-		return m.updateActivity(keyName)
-	}
 	if keyName == "q" {
 		return m, tea.Quit
 	}
 	if keyName == "?" {
-		m.overlay = helpOverlay
-		return m, nil
+		return m, m.openActions()
+	}
+	if m.focus == focusActivity {
+		return m.updateActivity(keyName)
 	}
 	if keyName == "tab" || keyName == "shift+tab" {
 		if m.activityOpen {
@@ -1048,8 +1072,8 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			if compact {
 				rowHeight = 1
 			}
-			x, y := msg.X-layout.workspace.x-2, msg.Y-layout.workspace.y-5
-			cellWidth := min(14, (layout.workspace.width-4)/7)
+			x, y := msg.X-layout.workspace.x-1, msg.Y-layout.workspace.y-4
+			cellWidth := min(14, (layout.workspace.width-2)/7)
 			if x >= 0 && x < cellWidth*7 && y >= 0 && y < monthCalendarWeeks(m.selectedDate)*rowHeight {
 				start, _ := monthBounds(m.selectedDate)
 				offset := (int(start.Weekday()) + 6) % 7
@@ -1642,7 +1666,7 @@ func (m *model) resizeForm() {
 	if m.form == nil {
 		return
 	}
-	width := max(20, m.width-30-12)
+	width := max(12, m.formContentWidth()-13)
 	for index := range m.form.inputs {
 		m.form.inputs[index].SetWidth(width)
 	}
@@ -1784,6 +1808,9 @@ func (m model) selectedWorklog() *worklogs.LocalWorklog {
 	if m.worklogSelected < 0 || m.worklogSelected >= len(m.worklogs) {
 		return nil
 	}
+	if m.worklogFilter != nil && m.worklogView == dayWorklogView && !slices.Contains(m.visibleWorklogIndices(), m.worklogSelected) {
+		return nil
+	}
 	return &m.worklogs[m.worklogSelected]
 }
 
@@ -1795,13 +1822,21 @@ func (m model) selectedWorklogID() string {
 }
 
 func (m *model) restoreWorklogSelection(id string) {
+	visible := m.visibleWorklogIndices()
 	if id != "" {
-		for index := range m.worklogs {
+		for _, index := range visible {
 			if m.worklogs[index].ID == id {
 				m.worklogSelected = index
 				return
 			}
 		}
+	}
+	if m.worklogFilter != nil && m.worklogView == dayWorklogView {
+		m.worklogSelected = -1
+		if len(visible) > 0 {
+			m.worklogSelected = visible[0]
+		}
+		return
 	}
 	m.worklogSelected = clampIndex(m.worklogSelected, len(m.worklogs))
 }

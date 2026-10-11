@@ -130,7 +130,7 @@ func TestStatusSwitchesBetweenDiagnosticsAndReadOnlyConfig(t *testing.T) {
 	next, _ = m.Update(textKey("c"))
 	m = next.(model)
 	rendered := m.render()
-	for _, expected := range []string{"[Config]", "Effective configuration", "config_path", "/tmp/config.yaml", "Read-only effective configuration."} {
+	for _, expected := range []string{"[Config]", "Effective configuration", "config_path", "/tmp/config.yaml", "Read-only effective", "configuration."} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("config view missing %q: %q", expected, rendered)
 		}

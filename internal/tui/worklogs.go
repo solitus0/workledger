@@ -12,6 +12,14 @@ func (m model) updateWorklogs(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch key {
+	case "/":
+		if m.worklogView == dayWorklogView {
+			return m, m.openWorklogFilter()
+		}
+	case "esc":
+		if m.worklogFilter != nil {
+			return m, m.clearWorklogFilter()
+		}
 	case "d":
 		return m.switchWorklogView(dayWorklogView)
 	case "w":
@@ -55,10 +63,10 @@ func (m model) updateWorklogs(key string) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "up", "k":
-		m.worklogSelected = max(0, m.worklogSelected-1)
+		m.moveWorklogSelection(-1)
 		return m, m.startIssueTotalLoad()
 	case "down", "j":
-		m.worklogSelected = min(max(0, len(m.worklogs)-1), m.worklogSelected+1)
+		m.moveWorklogSelection(1)
 		return m, m.startIssueTotalLoad()
 	case "left", "h":
 		m.selectedDate = m.selectedDate.AddDate(0, 0, -1)
@@ -75,6 +83,10 @@ func (m model) updateWorklogs(key string) (tea.Model, tea.Cmd) {
 	case "e":
 		if selected := m.selectedWorklog(); selected != nil {
 			m.openEditForm(*selected)
+		}
+	case "enter":
+		if m.selectedWorklog() != nil {
+			m.openWorklogDetails()
 		}
 	}
 	return m, nil
@@ -121,6 +133,9 @@ func (m *model) selectContextDate(date time.Time) {
 func (m model) switchWorklogView(view worklogView) (tea.Model, tea.Cmd) {
 	previous := m.worklogView
 	m.worklogView = view
+	if view == dayWorklogView {
+		m.restoreWorklogSelection(m.selectedWorklogID())
+	}
 	if (previous == monthWorklogView) != (view == monthWorklogView) {
 		return m, m.startWorklogLoad()
 	}

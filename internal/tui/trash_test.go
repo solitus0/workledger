@@ -113,7 +113,7 @@ func TestDeleteAndRestoreShortcutsAppearOnlyInActionBar(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m.overlay = tt.overlay
-			modal := m.renderConfirmation(100, 24)
+			modal := m.renderWorkspace(100, 24)
 			if strings.Contains(modal, "y / Enter") || strings.Contains(modal, "n / Esc") {
 				t.Fatalf("modal repeats action-bar shortcuts: %q", modal)
 			}

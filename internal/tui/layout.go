@@ -12,6 +12,7 @@ func (r rectangle) contains(x, y int) bool {
 }
 
 type appLayout struct {
+	header    rectangle
 	body      rectangle
 	rail      rectangle
 	workspace rectangle
@@ -19,26 +20,33 @@ type appLayout struct {
 	footer    rectangle
 }
 
+const (
+	navigationWidth = 18
+	appHeaderHeight = 2
+	appFooterHeight = 3
+)
+
 func calculateLayout(width, height int, showActivity bool) appLayout {
-	const (
-		railWidth    = 30
-		panelGap     = 1
-		footerHeight = 3
-	)
-	bodyHeight := height - footerHeight
+	bodyHeight := max(1, height-appHeaderHeight-appFooterHeight)
 	workspaceHeight := bodyHeight
 	if showActivity {
 		workspaceHeight -= activityDrawerHeight
 	}
 	layout := appLayout{
-		body:      rectangle{width: width, height: bodyHeight},
-		rail:      rectangle{width: railWidth, height: bodyHeight},
-		workspace: rectangle{x: railWidth + panelGap, width: width - railWidth - panelGap, height: workspaceHeight},
-		footer:    rectangle{y: bodyHeight, width: width, height: footerHeight},
+		header:    rectangle{width: width, height: appHeaderHeight},
+		body:      rectangle{y: appHeaderHeight, width: width, height: bodyHeight},
+		rail:      rectangle{y: appHeaderHeight, width: navigationWidth, height: bodyHeight},
+		workspace: rectangle{x: navigationWidth + 1, y: appHeaderHeight, width: width - navigationWidth - 1, height: workspaceHeight},
+		footer:    rectangle{y: height - appFooterHeight, width: width, height: appFooterHeight},
 	}
 	if showActivity {
-		layout.activity = rectangle{x: layout.workspace.x, y: workspaceHeight, width: layout.workspace.width, height: activityDrawerHeight}
+		layout.activity = rectangle{x: layout.workspace.x, y: appHeaderHeight + workspaceHeight, width: layout.workspace.width, height: activityDrawerHeight}
 	}
 
 	return layout
+}
+
+func inspectorWidths(width int) (list, detail int) {
+	detail = max(28, width/3)
+	return width - detail - 1, detail
 }
