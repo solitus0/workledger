@@ -8,9 +8,31 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
-- Interactive `workledger tui` workflows for status, worklogs, plans, presets, and trash.
 - TUI Worklogs Month view with a Monday-first calendar, local booked totals, past-weekday quota gaps, overlap warnings, keyboard and mouse date selection, and selected-day previews and worklog creation.
-- Local issue-history picker in TUI Add through `Ctrl+K`, with paged issue-key prefix and worklog-description search and a scrollable description-history pane.
+- Local issue-history picker in TUI Add through `Ctrl+K`, with paged issue-key prefix, worklog-description, and title search, unused decorated issues, and a scrollable description-history pane.
+- TUI Day worklog moves through `M`, with original and proposed time previews, valid positions around other bookings and workday boundaries, lunch and overlap checks, and guarded saving through `Ctrl+S`.
+- Local issue titles and maximum estimate overrides through `workledger issue-metadata set` and atomic JSON patch batches through `issue-metadata apply`, including dry-run validation. Run `workledger init` to provision decoration storage; Jira refresh preserves local overrides.
+- Issue metadata catalog filtering through `--issue-prefix` and `--search`, including decorated issues without worklogs, and TUI issue titles and estimate usage based on all-time active local effort. Estimates remain informational and never limit worklog creation.
+- Searchable contextual TUI Actions through `?`, dispatching the same guarded keyboard actions and confirmations.
+- Case-insensitive local Day worklog filtering through `/` by issue key, title, or description, preserving day totals, timeline occupancy, and available windows.
+- Scrollable TUI details for worklogs, diagnostics, effective configuration, presets, trash records, and saved plan scopes, including full descriptions and saved desired entries.
+
+### Changed
+- **Breaking:** New worklog and preset writes now use whole-minute timing. Starts and durations round to the nearest minute before validation; automatic placement uses inward-rounded free slots and whole-minute fragments. Shift deltas round to minutes and reject zero results. Existing rows are not converted automatically, and saved plans with second-precision payloads must be reconciled again before apply or retry.
+- Pull reconcile now compares minute-normalized candidates while retaining observed remote timing in totals and trash; rounding-induced duplicates or overlaps block affected scopes.
+- The TUI now uses a compact navigation rail, shared title/date header, adjacent inspectors, and a two-row action bar. Day browsing and placement forms share a chronological segmented timeline with stable interval widths, solid selected-worklog fill, explicit lunch and overtime states, and available-window summaries.
+- Saved plan scope review now shows local and remote counts and durations at planning time, projected destination totals, and saved desired entries without remote requests; unavailable remote inspection is explicitly marked.
+- TUI Add and shell issue completion now include decorated and cached issues, rank used keys by their latest worklog creation time, and rank unused metadata keys afterward. An empty Add issue field offers the first catalog key for explicit acceptance.
+- Session worklog creation now requires evidence of work performed, generates descriptive entries from that evidence, and defaults unknown exact starts to `--fill --today`; unresolved issue selection may use one clear local title match after explicit duration is provided.
+
+### Fixed
+- Jira Cloud and Data Center worklog creation now verifies returned start time and duration against the request, stops the affected scope on disagreement, and reports requested and actual timing without automatic mutation replay.
+- Worklog context now slices occupancy at local calendar midnights across 23-hour and 25-hour daylight-saving dates, preventing omitted or double-counted time in daily and monthly totals.
+
+## [0.1.10] - 2026-09-10
+
+### Added
+- Interactive `workledger tui` workflows for status, worklogs, plans, presets, and trash.
 - Bounded diagnostic history through `workledger activity list` and the global TUI Activity drawer.
 - Recent local-ledger cleanup through `workledger worklogs delete --created-within <duration>`, with auditable dry-run output and recoverable trash archival.
 - Permanent filtered trash deletion and full-trash clearing through `workledger trash delete` and `workledger trash clear`, with mandatory preview or explicit confirmation.
@@ -19,15 +41,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - `--scope local|remote` filtering for trash list and search commands.
 
 ### Changed
-- TUI Add issue completion now ranks active local issue keys by their latest entry time and offers the most recently entered issue when the field is empty.
 - Saved-plan item execution now uses delivery attempts as its only persisted source of truth; `workledger init` migrates legacy terminal results and removes the duplicate item lifecycle columns in a clean schema cutover.
 - The TUI Activity drawer now shows only meaningful worklog, trash, preset, and plan actions, while activity outcomes no longer appear in the action bar.
 - TUI Worklogs now opens a blank worklog directly with `a` and reserves uppercase `A` for adding from a preset.
-- TUI rail clicks and numbered tab shortcuts now focus the activated workspace immediately, while the action bar is the sole source of key-to-action guidance across workspaces, confirmations, help, and the unnumbered destination rail.
+- TUI rail clicks and numbered tab shortcuts now focus the activated workspace immediately, while keyboard shortcut guidance is centralized in the action bar except for numbered destination labels in the rail.
 - Local worklog deletion now atomically archives restorable source identity and revision metadata instead of permanently discarding the row.
+- Preview-driven worklog updates and deletes now reject stale revisions; `workledger init` adds revisions to existing stores, and the TUI detects external ledger changes without overwriting open drafts.
+- Explicitly canceled plan apply/retry, status checks, and issue-metadata refreshes now return exit code `130`. Plan execution stops scheduling new target groups, leaves unscheduled scopes unattempted, and marks unconfirmed in-flight mutations uncertain while preserving confirmed successes.
 
 ### Fixed
-- Worklog context now slices occupancy at local calendar midnights across 23-hour and 25-hour daylight-saving dates, preventing omitted or double-counted time in daily and monthly totals.
 - Preset application now commits worklog creation and recency updates atomically and rejects stale TUI preset drafts without creating a worklog.
 - Applied pull plans created by older binaries no longer reappear as unapplied after migration because their terminal item results are preserved as delivery attempts.
 - `workledger init` now rebuilds explicit indexes when a single truncated final SQLite page affects indexes only, preserving table rows and verifying full database integrity; writability checks no longer open the database outside SQLite and risk releasing active POSIX locks.
