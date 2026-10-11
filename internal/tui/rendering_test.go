@@ -461,17 +461,16 @@ func TestDayTimelineExtendsAndMarksOvertime(t *testing.T) {
 	}}
 
 	timeline := m.renderDayTimeline(m.form.previewRecords, "")
-	_, bar, _ := timelineParts(t, timeline)
+	ruler, upper, bar, _ := timelineParts(t, timeline)
 	regularIndex := strings.Index(bar, "░")
-	boundaryIndex := strings.Index(bar, "│")
 	overtimeIndex := strings.Index(bar, "▒")
-	if ruler, _, _ := timelineParts(t, timeline); !strings.HasPrefix(ruler, "08:00 ") || !strings.HasSuffix(ruler, "20:00") {
+	if !strings.HasPrefix(ruler, "08:00 ") || !strings.HasSuffix(ruler, "20:00") {
 		t.Fatalf("overtime timeline did not extend through preview: %q", timeline)
 	}
-	if regularIndex < 0 || boundaryIndex <= regularIndex || overtimeIndex <= boundaryIndex {
-		t.Fatalf("overtime timeline order regular=%d boundary=%d overtime=%d: %q", regularIndex, boundaryIndex, overtimeIndex, timeline)
+	if regularIndex < 0 || overtimeIndex <= regularIndex || !strings.Contains(timelineWithoutDividers(bar), "░▒") || strings.Contains(ruler, "│") || strings.Contains(upper, "│") {
+		t.Fatalf("overtime timeline lost its continuous fill or plain ruler: %q", timeline)
 	}
-	if legend := m.renderTimelineLegend(m.form.previewRecords, ""); !strings.Contains(legend, "▒ overtime") || !strings.Contains(legend, "│ day end") {
+	if legend := m.renderTimelineLegend(m.form.previewRecords, ""); !strings.Contains(legend, "▒ overtime") || strings.Contains(legend, "│") {
 		t.Fatalf("overtime legend = %q", legend)
 	}
 
@@ -480,7 +479,7 @@ func TestDayTimelineExtendsAndMarksOvertime(t *testing.T) {
 	if width, height := lipgloss.Width(rendered), lipgloss.Height(rendered); width != minimumWidth || height != 34 {
 		t.Fatalf("narrow overtime add render = %dx%d, want %dx%d", width, height, minimumWidth, 34)
 	}
-	if !strings.Contains(rendered, "▒ overtime") || !strings.Contains(rendered, "│ day end") {
+	if !strings.Contains(rendered, "▒ overtime") || strings.Contains(rendered, "│ day end") {
 		t.Fatalf("narrow overtime render lost its legend:\n%s", rendered)
 	}
 
@@ -489,7 +488,7 @@ func TestDayTimelineExtendsAndMarksOvertime(t *testing.T) {
 	if width, height := lipgloss.Width(rendered), lipgloss.Height(rendered); width != minimumWidth || height != minimumHeight {
 		t.Fatalf("overtime add render = %dx%d, want %dx%d", width, height, minimumWidth, minimumHeight)
 	}
-	for _, expected := range []string{"│", "▒", "20:00"} {
+	for _, expected := range []string{"▒", "20:00"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("minimum overtime render missing %q", expected)
 		}
@@ -508,8 +507,8 @@ func TestDayTimelineDoesNotMarkPreviewEndingAtDayEndAsOvertime(t *testing.T) {
 	}}
 
 	timeline := m.renderDayTimeline(m.form.previewRecords, "")
-	ruler, bar, _ := timelineParts(t, timeline)
-	if !strings.HasSuffix(ruler, "17:00") || strings.Contains(bar, "│") || strings.Contains(bar, "▒") {
+	ruler, _, bar, _ := timelineParts(t, timeline)
+	if !strings.HasSuffix(ruler, "17:00") || !strings.HasSuffix(bar, "░") || strings.Contains(bar, "▒") || strings.Contains(m.renderTimelineLegend(m.form.previewRecords, ""), "overtime") {
 		t.Fatalf("day-end preview was marked as overtime: %q", timeline)
 	}
 }
@@ -580,9 +579,9 @@ func TestDayTimelinePersistedWorklogTakesPrecedenceOverLunch(t *testing.T) {
 			t.Fatalf("width %d legend does not match fully booked lunch timeline: %q", width, legend)
 		}
 
-		ruler, bar, lower := timelineParts(t, m.renderDayTimeline(nil, "selected"))
-		unselectedRuler, unselectedBar, _ := timelineParts(t, unselected)
-		if ruler != unselectedRuler || strings.ReplaceAll(bar, "▓", "█") != unselectedBar || strings.Count(bar, "▓") != strings.Count(lower, "▓") {
+		ruler, upper, bar, lower := timelineParts(t, m.renderDayTimeline(nil, "selected"))
+		unselectedRuler, unselectedUpper, unselectedBar, unselectedLower := timelineParts(t, unselected)
+		if ruler != unselectedRuler || strings.ReplaceAll(bar, "▓", "█") != unselectedBar || upper != unselectedUpper || lower != unselectedLower {
 			t.Fatalf("width %d selection does not cover the complete booked interval: %q", width, bar)
 		}
 
@@ -663,23 +662,22 @@ func TestDayTimelineShowsBookedTimeBeforeWorkdayStartAsOvertime(t *testing.T) {
 	}}
 
 	timeline := m.renderDayTimeline(nil, "")
-	ruler, bar, _ := timelineParts(t, timeline)
+	ruler, upper, bar, _ := timelineParts(t, timeline)
 	overtimeIndex := strings.Index(bar, "▒")
-	boundaryIndex := strings.Index(bar, "│")
 	regularIndex := strings.Index(bar, "█")
 	if !strings.HasPrefix(ruler, "07:00 ") || !strings.HasSuffix(ruler, "17:00") {
 		t.Fatalf("early-overtime timeline has wrong bounds: %q", timeline)
 	}
-	if overtimeIndex < 0 || boundaryIndex <= overtimeIndex || regularIndex <= boundaryIndex {
-		t.Fatalf("early-overtime timeline order overtime=%d boundary=%d regular=%d: %q", overtimeIndex, boundaryIndex, regularIndex, timeline)
+	if overtimeIndex < 0 || regularIndex <= overtimeIndex || !strings.Contains(timelineWithoutDividers(bar), "▒█") || strings.Contains(ruler, "│") || strings.Contains(upper, "│") {
+		t.Fatalf("early-overtime timeline lost its continuous fill or plain ruler: %q", timeline)
 	}
 	legend := m.renderTimelineLegend(nil, "")
-	if !strings.Contains(legend, "▒ overtime") || !strings.Contains(legend, "│ day start") {
+	if !strings.Contains(legend, "▒ overtime") || strings.Contains(legend, "│") {
 		t.Fatalf("early-overtime legend = %q", legend)
 	}
 }
 
-func timelineParts(t *testing.T, rendered string) (ruler, upper, lower string) {
+func timelineParts(t *testing.T, rendered string) (ruler, upper, band, lower string) {
 	t.Helper()
 	lines := strings.Split(stripANSI(rendered), "\n")
 	start := 0
@@ -687,17 +685,430 @@ func timelineParts(t *testing.T, rendered string) (ruler, upper, lower string) {
 	if framed {
 		start++
 	}
-	if len(lines) < start+3 {
+	if len(lines) < start+4 {
 		t.Fatalf("timeline lost its ruler or interval band: %q", rendered)
 	}
-	parts := []string{lines[start], lines[start+1], lines[start+2]}
+	parts := []string{lines[start], lines[start+1], lines[start+2], lines[start+3]}
 	if framed {
 		for index, part := range parts {
 			runes := []rune(part)
 			parts[index] = string(runes[2 : len(runes)-2])
 		}
 	}
-	return parts[0], parts[1], parts[2]
+	// Frame padding after the continuous upper edge is outside the time
+	// axis. Keep whitespace within the actual bar for free-time assertions.
+	barWidth := len([]rune(strings.TrimRight(parts[1], " ")))
+	for index, part := range parts {
+		parts[index] = string([]rune(part)[:barWidth])
+	}
+	return parts[0], parts[1], parts[2], parts[3]
+}
+
+// Internal quarter rules may separate adjacent state glyphs; spaces still
+// represent real free time and must remain in occupancy comparisons.
+func timelineWithoutDividers(band string) string {
+	return strings.NewReplacer("▏", "", "▕", "").Replace(band)
+}
+
+func TestTimelineQuarterCellsCountSelectedDurations(t *testing.T) {
+	for _, width := range []int{minimumWidth, 120} {
+		for _, minutes := range []int{15, 60, 90} {
+			ws, deps := testWorkspace(t)
+			m := newModel(context.Background(), deps, ws, nil)
+			m.width, m.height = width, minimumHeight
+			m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
+			m.worklogs = []worklogs.LocalWorklog{{ID: "selected", StartedAtUTC: m.selectedDate.Add(9 * time.Hour), DurationSeconds: minutes * 60}}
+			ruler, upper, band, lower := timelineParts(t, m.renderDayTimeline(nil, "selected"))
+			quarters := strings.FieldsFunc(band, func(r rune) bool { return r != '▓' })
+			if len(quarters) != minutes/15 {
+				t.Fatalf("width %d: %dm has %d selected cells, want %d: %q", width, minutes, len(quarters), minutes/15, band)
+			}
+			if strings.Contains(ruler, "│") || upper != strings.Repeat("▁", lipgloss.Width(band)) || lower != strings.Repeat("▔", lipgloss.Width(band)) {
+				t.Fatalf("quarter cells escaped the bar: ruler=%q upper=%q lower=%q", ruler, upper, lower)
+			}
+		}
+	}
+}
+
+func TestTimelineQuarterCellsShareAFullWidthGridAcrossStates(t *testing.T) {
+	for _, noColor := range []bool{true, false} {
+		for _, width := range []int{79, 99, 112, 143} {
+			ws, deps := testWorkspace(t)
+			deps.noColor = noColor
+			m := newModel(context.Background(), deps, ws, nil)
+			m.width, m.height = 180, 36
+			m.contextSettings = worklogs.ContextSettings{
+				DayStart: "08:00", DayEnd: "17:00", Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
+			}
+			m.worklogs = []worklogs.LocalWorklog{
+				{ID: "booked", StartedAtUTC: m.selectedDate.Add(8 * time.Hour), DurationSeconds: 3600},
+				{ID: "selected", StartedAtUTC: m.selectedDate.Add(9 * time.Hour), DurationSeconds: 3600},
+			}
+			preview := []worklogs.LocalWorklog{{StartedAtUTC: m.selectedDate.Add(11 * time.Hour), DurationSeconds: 3600}}
+			_, upper, band, lower := timelineParts(t, m.renderDayTimelineWidth(preview, "selected", width))
+			cells := []rune(band)
+			if len(cells) != width-4 || len([]rune(upper)) != len(cells) || len([]rune(lower)) != len(cells) {
+				t.Fatalf("width %d: shared grid does not fill the bar: %q", width, band)
+			}
+			boundaries := []int{0}
+			for column, symbol := range cells {
+				if column > 0 && symbol == '▏' {
+					boundaries = append(boundaries, column)
+				}
+			}
+			boundaries = append(boundaries, len(cells))
+			if len(boundaries) != 37 {
+				t.Fatalf("width %d: shared grid has %d quarters, want 36: %q", width, len(boundaries)-1, band)
+			}
+			for quarter := 0; quarter < 36; quarter++ {
+				quarterWidth := boundaries[quarter+1] - boundaries[quarter]
+				if quarterWidth < len(cells)/36 || quarterWidth > (len(cells)+35)/36 {
+					t.Fatalf("width %d: quarter %d has an inconsistent width of %d: %q", width, quarter, quarterWidth, band)
+				}
+			}
+			selectedSymbol := "▓"
+			if !noColor {
+				selectedSymbol = "█"
+			}
+			for _, state := range []struct {
+				name, symbols string
+				first, count  int
+			}{
+				{"booked", "█", 0, 4}, {"selected", selectedSymbol, 4, 4},
+				{"free", " ▕", 8, 4}, {"proposed", "░", 12, 4}, {"lunch", "╱", 16, 3},
+			} {
+				for quarter := state.first; quarter < state.first+state.count; quarter++ {
+					cell := string(cells[boundaries[quarter]:boundaries[quarter+1]])
+					if !strings.ContainsAny(cell, state.symbols) {
+						t.Fatalf("width %d: %s quarter lost its state on the shared grid: %q", width, state.name, cell)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestTimelineQuarterDividersKeepTheSegmentFill(t *testing.T) {
+	for _, light := range []bool{false, true} {
+		for _, selected := range []bool{false, true} {
+			ws, deps := testWorkspace(t)
+			deps.noColor = false
+			m := newModel(context.Background(), deps, ws, nil)
+			m.width, m.height = minimumWidth, minimumHeight
+			if light {
+				m.colors = deps.theme.Light
+			}
+			m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
+			m.worklogs = []worklogs.LocalWorklog{{ID: "booked", StartedAtUTC: m.selectedDate.Add(9 * time.Hour), DurationSeconds: 90 * 60}}
+			color, selectedID := m.colors.Information, ""
+			if selected {
+				color, selectedID = m.colors.Focus, "booked"
+			}
+			timeline := m.renderDayTimeline(nil, selectedID)
+			filledRule := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Reverse(true).Render("▏")
+			filledCell := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Background(lipgloss.Color(color)).Render("█")
+			if strings.Count(timeline, filledRule) < 5 || !strings.Contains(timeline, filledCell) {
+				t.Fatalf("six quarter cells lost their thin rules or background fill (light=%t selected=%t): %q", light, selected, timeline)
+			}
+		}
+	}
+}
+
+func TestTimelineOutlinedCellsShareFilledCellBounds(t *testing.T) {
+	for _, noColor := range []bool{true, false} {
+		ws, deps := testWorkspace(t)
+		deps.noColor = noColor
+		m := newModel(context.Background(), deps, ws, nil)
+		m.width, m.height = minimumWidth, minimumHeight
+		m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
+		m.worklogs = []worklogs.LocalWorklog{{StartedAtUTC: m.selectedDate.Add(9 * time.Hour), DurationSeconds: 3600}}
+		// The first eight columns cover free time from 08:00 to 09:00.
+		_, upper, band, lower := timelineParts(t, m.renderDayTimelineWidth(nil, "", 76))
+		cells := []rune(band)
+		if cells[0] != '▏' || cells[7] != '▕' || cells[16] != '▏' || cells[len(cells)-1] != '▕' || strings.Contains(band, "│") {
+			t.Fatalf("outlined sides are inset from their time-cell edges: %q", band)
+		}
+		if upper != strings.Repeat("▁", len(cells)) || lower != strings.Repeat("▔", len(cells)) {
+			t.Fatalf("outlined and filled cells do not share the same height: upper=%q lower=%q", upper, lower)
+		}
+	}
+}
+
+func TestTimelineQuarterGridDoesNotAddATinyCellAtBookingBoundary(t *testing.T) {
+	ws, deps := testWorkspace(t)
+	m := newModel(context.Background(), deps, ws, nil)
+	m.width, m.height = minimumWidth, minimumHeight
+	m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
+	m.worklogs = []worklogs.LocalWorklog{{StartedAtUTC: m.selectedDate.Add(14 * time.Hour), DurationSeconds: 90 * 60}}
+	// The booking ends exactly at a sampled midpoint. Its edge and the
+	// shared 15:30 rule must occupy the same column.
+	_, _, band, _ := timelineParts(t, m.renderDayTimelineWidth(nil, "", 79))
+	if firstFreeQuarter := string([]rune(band)[62:65]); firstFreeQuarter != "▏  " {
+		t.Fatalf("15:30 created an extra narrow cell before 15:45: %q in %q", firstFreeQuarter, band)
+	}
+}
+
+func TestTimelineQuarterCellsPreserveStatePatterns(t *testing.T) {
+	ws, deps := testWorkspace(t)
+	m := newModel(context.Background(), deps, ws, nil)
+	m.width, m.height = minimumWidth, minimumHeight
+	m.contextSettings = worklogs.ContextSettings{
+		DayStart: "08:00", DayEnd: "17:00", Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
+	}
+	m.worklogs = []worklogs.LocalWorklog{{StartedAtUTC: m.selectedDate.Add(8 * time.Hour), DurationSeconds: 3600}}
+	preview := []worklogs.LocalWorklog{{StartedAtUTC: m.selectedDate.Add(10 * time.Hour), DurationSeconds: 3600}}
+	// The 72-column bar has two terminal columns per local quarter hour.
+	_, _, band, _ := timelineParts(t, m.renderDayTimelineWidth(preview, "", 76))
+	for _, symbol := range []rune{'█', '░'} {
+		quarters := strings.FieldsFunc(band, func(r rune) bool { return r != symbol })
+		if len(quarters) != 4 {
+			t.Fatalf("one hour of %q has %d cells, want four: %q", symbol, len(quarters), band)
+		}
+	}
+	lunch := []rune(band)[32:38]
+	for quarter := 0; quarter < 3; quarter++ {
+		if !strings.Contains(string(lunch[quarter*2:quarter*2+2]), "╱") {
+			t.Fatalf("lunch quarter %d lost its hatch: %q", quarter+1, string(lunch))
+		}
+	}
+	if strings.Contains(m.renderDayTimelineWidth(preview, "", 76), "\x1b") {
+		t.Fatal("NO_COLOR quarter cells emitted ANSI styling")
+	}
+	m.openAddForm()
+	m.form.previewConflict = "overlap"
+	_, _, conflict, _ := timelineParts(t, m.renderDayTimelineWidth(m.worklogs, "", 76))
+	if quarters := strings.FieldsFunc(conflict, func(r rune) bool { return r != '!' }); len(quarters) != 4 {
+		t.Fatalf("conflict cells lost their visible state: %q", conflict)
+	}
+}
+
+func TestTimelineQuarterCellsPreservePartialIntervals(t *testing.T) {
+	ws, deps := testWorkspace(t)
+	m := newModel(context.Background(), deps, ws, nil)
+	m.width, m.height = 120, 36
+	m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
+	start := m.selectedDate.Add(8*time.Hour + 5*time.Minute)
+	m.worklogs = []worklogs.LocalWorklog{{ID: "partial", StartedAtUTC: start, DurationSeconds: 20 * 60}}
+	// At five minutes per terminal column, 08:05–08:25 occupies columns 1–4.
+	_, _, band, _ := timelineParts(t, m.renderDayTimelineWidth(nil, "partial", 112))
+	cells := []rune(band)
+	if cells[0] == '▓' || string(cells[1:5]) != "▓▓▏▓" || cells[5] == '▓' {
+		t.Fatalf("partial interval was rounded to a full quarter: %q", band)
+	}
+	if !m.worklogs[0].StartedAtUTC.Equal(start) || m.worklogs[0].DurationSeconds != 20*60 {
+		t.Fatal("rendering changed the worklog timestamps")
+	}
+}
+
+func TestTimelineQuarterColumnsUseLocalClockBoundaries(t *testing.T) {
+	for _, location := range []*time.Location{time.UTC, time.FixedZone("UTC+05:10", (5*60+10)*60)} {
+		start := time.Date(2026, 10, 9, 7, 52, 0, 0, location)
+		// One minute per column; the first/last cells are partial quarters.
+		columns := timelineQuarterColumns(newTimelineScale(start, start.Add(75*time.Minute), 75))
+		want := map[int]int{8: 15, 23: 15, 38: 15, 53: 15, 68: 7}
+		if len(columns) != len(want) {
+			t.Fatalf("%s: quarter columns = %v, want %v", location, columns, want)
+		}
+		for column, minutes := range want {
+			if columns[column] != minutes {
+				t.Fatalf("%s: boundary at minute %d has width %d, want %d", location, column, columns[column], minutes)
+			}
+		}
+	}
+}
+
+func TestTimelineFullWidthGridPreservesPartialAxisBounds(t *testing.T) {
+	start := time.Date(2026, 10, 9, 7, 52, 0, 0, time.UTC)
+	end := start.Add(75 * time.Minute)
+	scale := newTimelineScale(start, end, 27)
+	columns := timelineQuarterColumns(scale)
+	// Complete quarters occupy five or six columns, using the whole axis
+	// without rounding the actual eight-minute and seven-minute tails.
+	want := map[int]int{3: 5, 8: 6, 14: 5, 19: 5, 24: 3}
+	if scale.width != 27 || len(columns) != len(want) || !scale.start.Equal(start) || !scale.end.Equal(end) {
+		t.Fatalf("partial bounds changed the scale or timestamps: %+v, %v", scale, columns)
+	}
+	for column, width := range want {
+		if columns[column] != width {
+			t.Fatalf("quarter at column %d has width %d, want %d", column, columns[column], width)
+		}
+	}
+	if first, last := scale.midpoint(0), scale.midpoint(scale.width-1); first.Before(start) || !last.Before(end) {
+		t.Fatalf("partial cells sampled outside the actual axis: %s–%s", first, last)
+	}
+}
+
+func TestTimelineLunchQuarterCellsUseTheFullGridWidth(t *testing.T) {
+	for _, noColor := range []bool{true, false} {
+		for _, minutes := range []int{15, 30, 45} {
+			ws, deps := testWorkspace(t)
+			deps.noColor = noColor
+			m := newModel(context.Background(), deps, ws, nil)
+			m.width, m.height = minimumWidth, minimumHeight
+			m.contextSettings = worklogs.ContextSettings{
+				DayStart: "08:00", DayEnd: "17:00",
+				Lunch: &worklogs.ContextLunch{Start: "12:00", End: fmt.Sprintf("12:%02d", minutes)},
+			}
+			_, _, band, _ := timelineParts(t, m.renderDayTimelineWidth(nil, "", 76))
+			cells := []rune(band)
+			end := 32 + 2*(minutes/15)
+			if lunch := string(cells[32:end]); lunch != strings.Repeat("▏╱", minutes/15) || cells[end] != '▏' {
+				t.Fatalf("%dm lunch contains a smaller boxed cell or lost its enclosure: %q", minutes, band)
+			}
+		}
+	}
+}
+
+func TestTimelineLunchEndUsesFullHeightHatchingOnAnOvertimeAxis(t *testing.T) {
+	for _, noColor := range []bool{false, true} {
+		ws, deps := testWorkspace(t)
+		deps.noColor = noColor
+		m := newModel(context.Background(), deps, ws, nil)
+		m.width, m.height, m.worklogView = 260, 36, weekWorklogView
+		m.contextSettings = worklogs.ContextSettings{
+			DayStart: "08:00", DayEnd: "17:00", Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
+		}
+		m.worklogs = []worklogs.LocalWorklog{
+			{StartedAtUTC: m.selectedDate.Add(7 * time.Hour), DurationSeconds: 3600},
+			{StartedAtUTC: m.selectedDate.Add(13 * time.Hour), DurationSeconds: 4 * 3600},
+		}
+		// The 74-column bar leaves six lunch columns followed by one free
+		// column. The last lunch quarter must match the preceding quarters.
+		_, upper, band, lower := timelineParts(t, m.renderDayTimelineWidth(nil, "", 78))
+		cells := []rune(band)
+		if lunch := string(cells[37:43]); lunch != "▏╱▏╱▏╱" || cells[43] != '▏' || strings.Contains(band, "⊠") {
+			t.Fatalf("lunch end shrank or lost its thin enclosure (color=%t): %q", !noColor, band)
+		}
+		if upper != strings.Repeat("▁", 74) || lower != strings.Repeat("▔", 74) {
+			t.Fatalf("lunch no longer shares the bar's full height: upper=%q lower=%q", upper, lower)
+		}
+	}
+}
+
+func TestTimelineLunchEnclosurePreservesASingleAdjacentBooking(t *testing.T) {
+	ws, deps := testWorkspace(t)
+	m := newModel(context.Background(), deps, ws, nil)
+	m.width, m.height = 260, 36
+	m.contextSettings = worklogs.ContextSettings{
+		DayStart: "08:00", DayEnd: "17:00", Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
+	}
+	m.worklogs = []worklogs.LocalWorklog{
+		{StartedAtUTC: m.selectedDate.Add(7 * time.Hour), DurationSeconds: 3600},
+		{StartedAtUTC: m.selectedDate.Add(12*time.Hour + 45*time.Minute), DurationSeconds: 15 * 60},
+	}
+	_, _, band, _ := timelineParts(t, m.renderDayTimelineWidth(nil, "", 78))
+	cells := []rune(band)
+	// The border must stay inside lunch when borrowing the next column
+	// would erase the only visible column of an adjacent booking.
+	if string(cells[37:43]) != "▏╱▏╱╱▕" || cells[43] != '█' || strings.Contains(band, "⊠") {
+		t.Fatalf("lunch lost its hatch or consumed the adjacent booking: %q", band)
+	}
+}
+
+func TestTimelineOvertimeUsesFilledQuarterRules(t *testing.T) {
+	for _, light := range []bool{false, true} {
+		for _, preview := range []bool{false, true} {
+			ws, deps := testWorkspace(t)
+			deps.noColor = false
+			m := newModel(context.Background(), deps, ws, nil)
+			m.width, m.height, m.worklogView = 260, 36, weekWorklogView
+			if light {
+				m.colors = deps.theme.Light
+			}
+			m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
+			records := []worklogs.LocalWorklog{{StartedAtUTC: m.selectedDate.Add(7 * time.Hour), DurationSeconds: 10 * 3600}}
+			var previews []worklogs.LocalWorklog
+			if preview {
+				previews = records
+			} else {
+				m.worklogs = records
+			}
+			timeline := m.renderDayTimelineWidth(previews, "", 78)
+			filledRule := lipgloss.NewStyle().Foreground(lipgloss.Color(m.colors.Warning)).Reverse(true).Render("▏")
+			filledCell := lipgloss.NewStyle().Foreground(lipgloss.Color(m.colors.Warning)).Background(lipgloss.Color(m.colors.Warning)).Render("█")
+			_, _, band, _ := timelineParts(t, timeline)
+			if strings.Count(timeline, filledRule) != 3 || !strings.Contains(timeline, filledCell) || string([]rune(band)[:7]) != "██▏█▏█▏" {
+				t.Fatalf("overtime cells lost their fill or shared quarter grid (light=%t preview=%t, filled rules=%d): %q", light, preview, strings.Count(timeline, filledRule), band)
+			}
+		}
+	}
+}
+
+func TestTimelinePartialLunchKeepsItsPattern(t *testing.T) {
+	ws, deps := testWorkspace(t)
+	m := newModel(context.Background(), deps, ws, nil)
+	m.width, m.height = minimumWidth, minimumHeight
+	m.contextSettings = worklogs.ContextSettings{
+		DayStart: "08:00", DayEnd: "17:00", Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
+	}
+	m.worklogs = []worklogs.LocalWorklog{{StartedAtUTC: m.selectedDate.Add(12 * time.Hour), DurationSeconds: 35 * 60}}
+	_, _, band, _ := timelineParts(t, m.renderDayTimelineWidth(nil, "", 76))
+	// The ten-minute lunch remainder has one sampled column. Sharing its
+	// neighbor's border must not replace its only visible pattern.
+	if symbol := []rune(band)[37]; symbol != '╱' {
+		t.Fatalf("partial lunch lost its hatch to a border: %q", band)
+	}
+}
+
+func TestTimelineStatesShareOneVisibleBand(t *testing.T) {
+	for _, noColor := range []bool{true, false} {
+		for _, width := range []int{minimumWidth, 120} {
+			ws, deps := testWorkspace(t)
+			deps.noColor = noColor
+			m := newModel(context.Background(), deps, ws, nil)
+			m.width, m.height = width, minimumHeight
+			m.contextSettings = worklogs.ContextSettings{
+				DayStart: "08:00", DayEnd: "17:00",
+				Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
+			}
+			m.worklogs = []worklogs.LocalWorklog{
+				{ID: "selected", StartedAtUTC: m.selectedDate.Add(8 * time.Hour), DurationSeconds: 3600},
+				{ID: "booked", StartedAtUTC: m.selectedDate.Add(9 * time.Hour), DurationSeconds: 3600},
+			}
+			preview := []worklogs.LocalWorklog{{StartedAtUTC: m.selectedDate.Add(11 * time.Hour), DurationSeconds: 1800}}
+			timeline := m.renderDayTimeline(preview, "selected")
+			_, top, band, bottom := timelineParts(t, timeline)
+			columns := lipgloss.Width(band)
+			if top != strings.Repeat("▁", columns) || bottom != strings.Repeat("▔", columns) {
+				t.Fatalf("states do not share the same thin edges at width %d: %q", width, timeline)
+			}
+			for _, symbol := range []string{"█", "░", "╱"} {
+				if !strings.Contains(band, symbol) || strings.Contains(top+bottom, symbol) {
+					t.Fatalf("state %q escapes the common fill row: %q", symbol, timeline)
+				}
+			}
+			first, last := strings.Index(band, "╱"), strings.LastIndex(band, "╱")
+			if !strings.HasSuffix(band[:first], "▏") || !strings.HasPrefix(band[last+len("╱"):], "▏") {
+				t.Fatalf("lunch hatching has no enclosing sides: %q", band)
+			}
+			if noColor && strings.Contains(timeline, "\x1b") {
+				t.Fatal("NO_COLOR timeline emitted ANSI styling")
+			}
+		}
+	}
+}
+
+func TestTimelineKeepsTinyLunchRunsPatternedAndEnclosed(t *testing.T) {
+	for _, minutes := range []int{15, 30, 45} {
+		ws, deps := testWorkspace(t)
+		m := newModel(context.Background(), deps, ws, nil)
+		m.width, m.height = minimumWidth, minimumHeight
+		m.contextSettings = worklogs.ContextSettings{
+			DayStart: "08:00", DayEnd: "17:00",
+			Lunch: &worklogs.ContextLunch{Start: "12:00", End: m.selectedDate.Add(12*time.Hour + time.Duration(minutes)*time.Minute).Format("15:04")},
+		}
+		timeline, visibility := m.renderTimelineState(nil, "", 36)
+		_, upper, band, lower := timelineParts(t, timeline)
+		cells := []rune(band)
+		end := 16 + minutes/15
+		lunch := string(cells[16:end])
+		if !visibility.lunch || !strings.Contains(lunch, "╱") || strings.Contains(lunch, "⊠") || cells[end] != '▏' {
+			t.Fatalf("%dm lunch lost its pattern or border at narrow width: %q", minutes, lunch)
+		}
+		if upper != strings.Repeat("▁", 36) || lower != strings.Repeat("▔", 36) {
+			t.Fatalf("%dm lunch lost its full-height thin edges", minutes)
+		}
+	}
 }
 
 func TestWorklogListRendersPersistentCurrentTimeline(t *testing.T) {
@@ -715,7 +1126,7 @@ func TestWorklogListRendersPersistentCurrentTimeline(t *testing.T) {
 		Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
 	}
 	rendered := m.render()
-	for _, expected := range []string{"Thu 21 May 2026", "8h logged / 8h target", "target met", "[Day]  Week", "08:00", "▓ selected", "▒ overtime", "│ day end", "21:30", "Lunch 12:00–12:45"} {
+	for _, expected := range []string{"Thu 21 May 2026", "8h logged / 8h target", "target met", "[Day]  Week", "08:00", "▓ selected", "▒ overtime", "21:30", "Lunch 12:00–12:45"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("daily workspace missing %q:\n%s", expected, rendered)
 		}
@@ -724,8 +1135,8 @@ func TestWorklogListRendersPersistentCurrentTimeline(t *testing.T) {
 		t.Fatalf("daily workspace contains a redundant timeline label:\n%s", rendered)
 	}
 	timeline := m.renderDayTimeline(nil, "selected")
-	ruler, bar, _ := timelineParts(t, timeline)
-	unselectedRuler, unselectedBar, _ := timelineParts(t, m.renderDayTimeline(nil, ""))
+	ruler, _, bar, _ := timelineParts(t, timeline)
+	unselectedRuler, _, unselectedBar, _ := timelineParts(t, m.renderDayTimeline(nil, ""))
 	if ruler != unselectedRuler || strings.ReplaceAll(bar, "▓", "█") != unselectedBar {
 		t.Fatalf("selection changed chronology or occupancy: %q", timeline)
 	}
@@ -751,9 +1162,9 @@ func TestSelectedTimelinePreservesScaleForShortAndLongWorklogs(t *testing.T) {
 		m.width, m.height = minimumWidth, minimumHeight
 		m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
 		m.worklogs = []worklogs.LocalWorklog{{ID: "selected", StartedAtUTC: m.selectedDate.Add(10*time.Hour + 15*time.Minute), DurationSeconds: duration}}
-		beforeRuler, beforeBar, _ := timelineParts(t, m.renderDayTimeline(nil, ""))
-		ruler, bar, lower := timelineParts(t, m.renderDayTimeline(nil, "selected"))
-		if ruler != beforeRuler || lipgloss.Width(bar) != lipgloss.Width(beforeBar) || strings.Count(bar, "▓") < 1 || strings.Count(bar, "▓") != strings.Count(lower, "▓") {
+		beforeRuler, beforeUpper, beforeBar, beforeLower := timelineParts(t, m.renderDayTimeline(nil, ""))
+		ruler, upper, bar, lower := timelineParts(t, m.renderDayTimeline(nil, "selected"))
+		if ruler != beforeRuler || lipgloss.Width(bar) != lipgloss.Width(beforeBar) || strings.Count(bar, "▓") < 1 || upper != beforeUpper || lower != beforeLower {
 			t.Fatalf("%ds selection lost its interval or changed scale: %q", duration, bar)
 		}
 		if duration >= 900 && strings.ReplaceAll(bar, "▓", "█") != beforeBar {
@@ -772,8 +1183,8 @@ func TestDayTimelineSelectionStopsBeforeAdjacentWorklog(t *testing.T) {
 		{ID: "selected", StartedAtUTC: m.selectedDate.Add(8 * time.Hour), DurationSeconds: 2*3600 + 15*60},
 		{ID: "adjacent", StartedAtUTC: m.selectedDate.Add(10*time.Hour + 15*time.Minute), DurationSeconds: 15 * 60},
 	}
-	_, before, _ := timelineParts(t, m.renderDayTimeline(nil, ""))
-	_, selected, _ := timelineParts(t, m.renderDayTimeline(nil, "selected"))
+	_, _, before, _ := timelineParts(t, m.renderDayTimeline(nil, ""))
+	_, _, selected, _ := timelineParts(t, m.renderDayTimeline(nil, "selected"))
 	if strings.ReplaceAll(selected, "▓", "█") != before || strings.Count(selected, "█") == 0 || strings.Count(selected, "▓") == 0 {
 		t.Fatalf("selection does not distinguish the adjacent worklog: %q", selected)
 	}
@@ -788,11 +1199,89 @@ func TestDayTimelineUsesSolidFocusColorForCompleteSelection(t *testing.T) {
 	m.worklogs = []worklogs.LocalWorklog{{ID: "selected", StartedAtUTC: m.selectedDate.Add(8 * time.Hour), DurationSeconds: 2*3600 + 15*60}}
 	selected := m.renderDayTimeline(nil, "selected")
 	unselected := m.renderDayTimeline(nil, "")
-	if lipgloss.Width(selected) != lipgloss.Width(unselected) || !strings.Contains(selected, m.paint("▄", m.colors.Focus)) || !strings.Contains(selected, m.paint("▀", m.colors.Focus)) || strings.Contains(selected, m.paint("▄", m.colors.Information)) {
+	focusFill := lipgloss.NewStyle().Foreground(lipgloss.Color(m.colors.Focus)).Background(lipgloss.Color(m.colors.Focus)).Render("█")
+	bookedFill := lipgloss.NewStyle().Foreground(lipgloss.Color(m.colors.Information)).Background(lipgloss.Color(m.colors.Information)).Render("█")
+	if lipgloss.Width(selected) != lipgloss.Width(unselected) || !strings.Contains(selected, focusFill) || !strings.Contains(selected, m.paint("▔", m.colors.Focus)) || strings.Contains(selected, bookedFill) {
 		t.Fatalf("selection does not replace the complete booked fill with focus color: %q", selected)
 	}
 	if selector := m.renderWorklogViewSelector(); !strings.Contains(selector, "\x1b[7;") && !strings.Contains(selector, ";7;") {
 		t.Fatalf("active mode has no filled treatment: %q", selector)
+	}
+}
+
+func TestTimelineOvertimePreservesPlainRulerAndContinuousBandEdges(t *testing.T) {
+	for _, scenario := range []string{"booked", "proposed", "overtime", "selected", "adjacent selected"} {
+		for _, noColor := range []bool{false, true} {
+			for _, width := range []int{minimumWidth, 120} {
+				t.Run(fmt.Sprintf("%s/color=%t/width=%d", scenario, !noColor, width), func(t *testing.T) {
+					ws, deps := testWorkspace(t)
+					deps.noColor = noColor
+					m := newModel(context.Background(), deps, ws, nil)
+					m.width, m.height = width, minimumHeight
+					m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
+					records := []worklogs.LocalWorklog{{ID: "crossing", StartedAtUTC: m.selectedDate.Add(7 * time.Hour), DurationSeconds: 2 * 3600}}
+					var previews []worklogs.LocalWorklog
+					selectedID := ""
+					transition := "▒█"
+					firstClock, lastClock := "07:00", "17:00"
+					switch scenario {
+					case "proposed":
+						previews = records
+						transition = "▒░"
+					case "overtime":
+						records[0].StartedAtUTC = m.selectedDate.Add(16 * time.Hour)
+						m.worklogs = records
+						transition = "█▒"
+						firstClock, lastClock = "08:00", "18:00"
+					case "selected":
+						m.worklogs, selectedID = records, "crossing"
+						if noColor {
+							transition = "▚▓"
+						}
+					case "adjacent selected":
+						records[0].DurationSeconds = 3600
+						m.worklogs = append(records, worklogs.LocalWorklog{ID: "selected", StartedAtUTC: m.selectedDate.Add(8 * time.Hour), DurationSeconds: 3600})
+						selectedID = "selected"
+						if noColor {
+							transition = "▒▓"
+						}
+					default:
+						m.worklogs = records
+					}
+					if !noColor && scenario != "selected" {
+						transition = strings.ReplaceAll(transition, "▒", "█")
+					}
+					timeline := m.renderDayTimeline(previews, selectedID)
+					ruler, upper, band, lower := timelineParts(t, timeline)
+					if upper != strings.Repeat("▁", lipgloss.Width(band)) || lower != strings.Repeat("▔", lipgloss.Width(band)) {
+						t.Fatalf("overtime breaks the bar's edge: upper=%q lower=%q", upper, lower)
+					}
+					if strings.Contains(ruler, "│") || !strings.HasPrefix(ruler, firstClock) || !strings.HasSuffix(ruler, lastClock) {
+						t.Fatalf("ruler contains a divider or lost its clock labels: %q", ruler)
+					}
+					if legend := stripANSI(m.renderTimelineLegend(previews, selectedID)); strings.Contains(legend, "│") {
+						t.Fatalf("legend still contains a removed workday marker: %q", legend)
+					}
+					// A one-column colored quarter carries its booked fill in
+					// the inverse rule's background. Retain that occupancy
+					// when checking continuity across the workday boundary.
+					occupied := timeline
+					if !noColor {
+						for _, color := range []string{m.colors.Information, m.colors.Focus, m.colors.Warning} {
+							filledRule := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Reverse(true).Render("▏")
+							occupied = strings.ReplaceAll(occupied, filledRule, "█")
+						}
+					}
+					_, _, occupiedBand, _ := timelineParts(t, occupied)
+					if !strings.Contains(timelineWithoutDividers(occupiedBand), transition) {
+						t.Fatalf("workday boundary interrupts occupied fill %q: %q", transition, band)
+					}
+					if noColor && strings.Contains(timeline, "\x1b") {
+						t.Fatal("NO_COLOR timeline contains escape sequences")
+					}
+				})
+			}
+		}
 	}
 }
 
@@ -802,23 +1291,23 @@ func TestDayTimelineSelectionSpansRegularAndOvertimePortions(t *testing.T) {
 	m.width, m.height = 140, 38
 	m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
 	m.worklogs = []worklogs.LocalWorklog{{ID: "selected", StartedAtUTC: m.selectedDate.Add(16*time.Hour + 30*time.Minute), DurationSeconds: 2 * 3600}}
-	ruler, upper, lower := timelineParts(t, m.renderDayTimeline(nil, "selected"))
-	beforeRuler, before, _ := timelineParts(t, m.renderDayTimeline(nil, ""))
-	if ruler != beforeRuler || lipgloss.Width(upper) != lipgloss.Width(before) || lipgloss.Width(lower) != lipgloss.Width(upper) || !strings.Contains(upper, "▓│▓") || !strings.Contains(lower, "▒") || !strings.Contains(m.renderTimelineLegend(nil, "selected"), "▓ selected") {
-		t.Fatalf("selection lost its complete range, workday boundary, or overtime pattern: upper=%q lower=%q", upper, lower)
+	ruler, upper, bar, lower := timelineParts(t, m.renderDayTimeline(nil, "selected"))
+	beforeRuler, _, before, _ := timelineParts(t, m.renderDayTimeline(nil, ""))
+	if ruler != beforeRuler || lipgloss.Width(upper) != lipgloss.Width(before) || lipgloss.Width(lower) != lipgloss.Width(upper) || !strings.Contains(timelineWithoutDividers(bar), "▓▚") || strings.Contains(ruler, "│") || !strings.Contains(m.renderTimelineLegend(nil, "selected"), "▒/▚ overtime") || !strings.Contains(m.renderTimelineLegend(nil, "selected"), "▓ selected") {
+		t.Fatalf("selection lost its complete range, plain ruler, or overtime pattern: bar=%q lower=%q", bar, lower)
 	}
 }
 
-func TestBoundaryDoesNotEraseShortSelectedInterval(t *testing.T) {
+func TestTimelineKeepsShortSelectedOvertimeVisible(t *testing.T) {
 	for _, offset := range []time.Duration{8*time.Hour - time.Second, 17 * time.Hour} {
 		ws, deps := testWorkspace(t)
 		m := newModel(context.Background(), deps, ws, nil)
 		m.width, m.height = minimumWidth, minimumHeight
 		m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
 		m.worklogs = []worklogs.LocalWorklog{{ID: "short", StartedAtUTC: m.selectedDate.Add(offset), DurationSeconds: 1}}
-		_, upper, lower := timelineParts(t, m.renderDayTimeline(nil, "short"))
-		if !strings.Contains(upper, "▓") || !strings.Contains(lower, "▒") || !strings.Contains(upper, "│") {
-			t.Fatalf("boundary consumed short selection at %s: upper=%q lower=%q", offset, upper, lower)
+		ruler, _, bar, _ := timelineParts(t, m.renderDayTimeline(nil, "short"))
+		if !strings.Contains(bar, "▚") || strings.Contains(ruler, "│") {
+			t.Fatalf("timeline lost short selection or plain ruler at %s: bar=%q", offset, bar)
 		}
 	}
 }
@@ -854,7 +1343,7 @@ func TestPlacementControlsRemainVisibleWithActivityRetainedAtMinimumSize(t *test
 
 func TestTimelineRulerUsesLocalHoursAndAvoidsCollisions(t *testing.T) {
 	dayStart := time.Date(2026, 5, 21, 8, 0, 0, 0, time.UTC)
-	minimumRuler := timelineRuler(dayStart, dayStart, dayStart.Add(9*time.Hour), 75)
+	minimumRuler := timelineRuler(dayStart, newTimelineScale(dayStart, dayStart.Add(9*time.Hour), 75))
 	for hour := 8; hour <= 17; hour++ {
 		if !strings.Contains(minimumRuler, fmt.Sprintf("%02d:00", hour)) {
 			t.Fatalf("minimum ruler lost hour %d: %q", hour, minimumRuler)
@@ -863,21 +1352,65 @@ func TestTimelineRulerUsesLocalHoursAndAvoidsCollisions(t *testing.T) {
 	location := time.FixedZone("UTC+05:45", (5*60+45)*60)
 	start := time.Date(2026, 5, 21, 8, 15, 0, 0, location)
 	end := start.Add(9*time.Hour + 15*time.Minute)
-	wide := timelineRuler(start, start, end, 100)
+	wide := timelineRuler(start, newTimelineScale(start, end, 112))
 	for _, label := range []string{"08:15", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:30"} {
 		if !strings.Contains(wide, label) {
 			t.Fatalf("local hour missing %s: %q", label, wide)
 		}
 	}
 	for _, width := range []int{24, 75, 100} {
-		ruler := timelineRuler(start, start, end, width)
-		if lipgloss.Width(ruler) != width || !strings.HasPrefix(ruler, "08:15") || !strings.HasSuffix(ruler, "17:30") {
+		scale := newTimelineScale(start, end, width)
+		ruler := timelineRuler(start, scale)
+		if lipgloss.Width(ruler) != scale.width || scale.width > width || !strings.HasPrefix(ruler, "08:15") || !strings.HasSuffix(ruler, "17:30") {
 			t.Fatalf("width %d lost exact bounds: %q", width, ruler)
 		}
 		for _, label := range strings.Fields(ruler) {
 			if len(label) != 5 || label[2] != ':' {
 				t.Fatalf("width %d has colliding hour labels: %q", width, ruler)
 			}
+		}
+	}
+}
+
+func TestWeekTimelineFillsItsPaneWhenOvertimeExtendsTheDay(t *testing.T) {
+	for _, width := range []int{minimumWidth, 140, 260, 320} {
+		for _, interval := range []struct {
+			name, first, last string
+			start, minutes    int
+		}{
+			{"regular", "08:00", "17:00", 8, 9 * 60},
+			{"early overtime", "07:00", "17:00", 7, 10 * 60},
+			{"late overtime", "08:00", "18:15", 8, 10*60 + 15},
+		} {
+			t.Run(fmt.Sprintf("%s/width=%d", interval.name, width), func(t *testing.T) {
+				ws, deps := testWorkspace(t)
+				m := newModel(context.Background(), deps, ws, nil)
+				m.width, m.height, m.worklogView = width, 36, weekWorklogView
+				m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
+				m.worklogs = []worklogs.LocalWorklog{{
+					StartedAtUTC: m.selectedDate.Add(time.Duration(interval.start) * time.Hour), DurationSeconds: interval.minutes * 60,
+				}}
+				layout := calculateLayout(width, m.height, false)
+				_, detailWidth := inspectorWidths(layout.workspace.width)
+				contentWidth := detailWidth - 2
+				wantWidth := contentWidth
+				if contentWidth >= 60 {
+					wantWidth -= 4 // Thin frame and one padding column on each side.
+				}
+				detail := strings.Split(m.renderWeekDayDetail(contentWidth, layout.workspace.height-3), "\n")
+				ruler, upper, band, lower := timelineParts(t, strings.Join(detail[2:], "\n"))
+				for name, part := range map[string]string{"ruler": ruler, "upper": upper, "band": band, "lower": lower} {
+					if got := lipgloss.Width(part); got != wantWidth {
+						t.Fatalf("%s shrank to %d columns, want the full %d-column pane: %q", name, got, wantWidth, part)
+					}
+				}
+				if !strings.HasPrefix(ruler, interval.first) || !strings.HasSuffix(ruler, interval.last) {
+					t.Fatalf("full-width ruler lost its actual bounds: %q", ruler)
+				}
+				if interval.name != "regular" && !strings.Contains(band, "▒") {
+					t.Fatalf("full-width timeline lost overtime: %q", band)
+				}
+			})
 		}
 	}
 }
@@ -912,7 +1445,6 @@ func TestWeekViewRendersOverviewAndSelectedDayAtMinimumViewport(t *testing.T) {
 		"Thursday, 2026-05-21",
 		"07:00",
 		"▒ overtime",
-		"│ day start",
 		"d/w/m View",
 	} {
 		if !strings.Contains(rendered, expected) {
@@ -1026,8 +1558,8 @@ func TestViewUsesSemanticColorWhenEnabled(t *testing.T) {
 	m.form.previewRecords = []worklogs.LocalWorklog{{
 		StartedAtUTC: time.Date(2026, 5, 21, 16, 0, 0, 0, time.UTC), DurationSeconds: 2 * 3600,
 	}}
-	if legend = m.renderTimelineLegend(m.form.previewRecords, ""); !strings.Contains(legend, m.paint("▒", m.colors.Warning)) || !strings.Contains(legend, m.paint("│", m.colors.Secondary)) {
-		t.Fatalf("overtime legend missing semantic swatches: %q", legend)
+	if legend = m.renderTimelineLegend(m.form.previewRecords, ""); !strings.Contains(legend, m.paint("█", m.colors.Warning)) || strings.Contains(stripANSI(legend), "│") {
+		t.Fatalf("overtime legend lost its warning swatch or retained a removed marker: %q", legend)
 	}
 }
 

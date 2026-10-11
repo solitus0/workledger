@@ -139,6 +139,15 @@ func (m model) renderWorklogInspector(width, height int) string {
 			}
 		}
 	}
+	if len(lines) > height {
+		// Keep estimate warnings visible when Activity reduces the height.
+		index := slices.Index(lines, "Local issue total")
+		lines[index] += " " + lines[index+1]
+		if lipgloss.Width(lines[index]) > width {
+			lines[index] = "Total " + lines[index+1]
+		}
+		lines = slices.Delete(lines, index+1, index+2)
+	}
 	local := item.StartedAtUTC.In(m.workspace.cfg.Location)
 	end := local.Add(time.Duration(item.DurationSeconds) * time.Second)
 	if height >= len(lines)+4 {
