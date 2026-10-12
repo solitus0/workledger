@@ -147,6 +147,11 @@ func (m model) renderWorklogInspector(width, height int) string {
 			lines[index] = "Total " + lines[index+1]
 		}
 		lines = slices.Delete(lines, index+1, index+2)
+		if len(lines) > height {
+			// Keep issue identity and estimate warnings ahead of the section
+			// heading when Activity reduces the inspector height.
+			lines = lines[1:]
+		}
 	}
 	local := item.StartedAtUTC.In(m.workspace.cfg.Location)
 	end := local.Add(time.Duration(item.DurationSeconds) * time.Second)
@@ -273,7 +278,16 @@ func (m model) renderWorklogViewSelector() string {
 }
 
 func (m model) renderWeekDayDetail(width, height int) string {
-	lines := []string{m.selectedDate.Format("Monday, 2006-01-02"), "", m.renderDayTimelineWidth(nil, "", width), ""}
+	timeline := m.muted("Workday unavailable")
+	if plan, ok := m.buildTimelinePlan(nil, "", width); ok {
+		// The hourly exception belongs only to this weekly day preview.
+		// Forms opened from Week continue using the normal quarter-hour grid.
+		if plan.visibility.overtime {
+			plan.divisions = timelineCellColumns(plan.scale, time.Hour)
+		}
+		timeline = m.renderTimelinePlan(plan, width)
+	}
+	lines := []string{m.selectedDate.Format("Monday, 2006-01-02"), "", timeline, ""}
 	lines = append(lines, wrapIssueDescription(m.renderTimelineLegendWidth(nil, "", width), width)...)
 	lines = append(lines, m.renderAvailableWindows(width, max(4, height-len(lines))))
 	return strings.Join(lines, "\n")

@@ -49,10 +49,10 @@ func TestTimelineEarlyAndLateWorkBelowQuotaRemainsRegular(t *testing.T) {
 		m.worklogs = []worklogs.LocalWorklog{{ID: "short-day", StartedAtUTC: m.selectedDate.Add(time.Duration(start) * time.Hour), DurationSeconds: 3600}}
 		_, visibility := m.renderTimelineState(nil, "short-day", 140)
 		_, _, band, _ := timelineParts(t, m.renderDayTimelineWidth(nil, "short-day", 140))
-		if visibility.overtime || visibility.selectedOvertime || strings.ContainsAny(band, "▒▚") || strings.Contains(m.renderTimelineLegend(nil, "short-day"), "overtime") {
+		if visibility.overtime || strings.Contains(band, "▒") || strings.Contains(m.renderTimelineLegend(nil, "short-day"), "overtime") {
 			t.Fatalf("%02d:00 below-quota work is classified as OT: %q", start, band)
 		}
-		if !strings.Contains(band, "▓") {
+		if !strings.Contains(timelineAnnotation(t, m.renderDayTimelineWidth(nil, "short-day", 140)), "┌") {
 			t.Fatalf("regular early/late selection lost its highlight: %q", band)
 		}
 	}
@@ -95,7 +95,7 @@ func TestTimelineIncludesCarryInAndClipsProjectedCarryOut(t *testing.T) {
 	m.worklogs = []worklogs.LocalWorklog{today}
 	m.dayContext = worklogs.ContextDay{Date: m.selectedDate.Format("2006-01-02"), Worklogs: m.worklogs, TimelineWorklogs: []worklogs.LocalWorklog{carry, today}, BookedSeconds: 9 * 3600}
 	ruler, _, band, _ := timelineParts(t, m.renderDayTimelineWidth(nil, "today", 140))
-	if !strings.HasPrefix(ruler, "00:00") || !strings.Contains(timelineWithoutDividers(band), "▓▚") || !strings.Contains(m.renderTimelineLegend(nil, "today"), "▒/▚ overtime") {
+	if !strings.HasPrefix(ruler, "00:00") || !strings.Contains(timelineWithoutDividers(band), "█▒") || !strings.Contains(m.renderTimelineLegend(nil, "today"), "▒ overtime") {
 		t.Fatalf("carried-over hours were omitted from the quota or selected-day axis: %q", band)
 	}
 	m.openAddForm()
@@ -139,7 +139,7 @@ func TestTimelinePaintsLastTwoHoursAfterEarlyStartAndWorkedLunch(t *testing.T) {
 	if strings.Contains(string(cells[:480]), "▒") || !strings.Contains(string(cells[480:]), "▒") || strings.Contains(band, "╱") {
 		t.Fatalf("OT is not on the final two logged hours or worked lunch is excluded: %q", band)
 	}
-	if strings.Count(band, "▏") != 9 {
-		t.Fatalf("actual OT did not activate the shared hourly grid: %q", band)
+	if strings.Count(band, "▏") != 39 {
+		t.Fatalf("actual OT did not retain the quarter-hour grid: %q", band)
 	}
 }
