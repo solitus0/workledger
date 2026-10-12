@@ -1787,7 +1787,7 @@ func overtimePlacementAvailable(err error) bool {
 
 func automaticPlacementMessage(err error) string {
 	if overtimePlacementAvailable(err) {
-		return "No regular slot is available; overtime placement can succeed."
+		return "No eligible placement is available; allowing later starts can succeed."
 	}
 	if strings.Contains(err.Error(), "no free slot available") {
 		return "No free slot is available on the selected day."

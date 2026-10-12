@@ -554,7 +554,10 @@ func (m model) renderProjectedDayBalance() string {
 	}
 	projected := m.dayBookedSeconds()
 	for _, record := range m.form.previewRecords {
-		projected += record.DurationSeconds
+		start, end := timelineDayInterval(record, beginningOfDay(m.selectedDate, m.workspace.cfg.Location))
+		if start.Before(end) {
+			projected += int(end.Sub(start) / time.Second)
+		}
 	}
 	remaining := m.dailyQuotaSeconds() - projected
 	result := formatDuration(projected) + " total"

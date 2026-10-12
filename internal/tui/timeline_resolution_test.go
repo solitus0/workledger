@@ -99,7 +99,7 @@ func TestTimelineResolutionFollowsPersistedAndProposedOvertime(t *testing.T) {
 		wantRules   int
 		first, last string
 	}{
-		{"within bounds despite exceeding quota", 8 * time.Hour, 9 * time.Hour, false, 35, "08:00", "17:00"},
+		{"within bounds exceeding quota", 8 * time.Hour, 9 * time.Hour, false, 8, "08:00", "17:00"},
 		{"persisted early overtime", 7 * time.Hour, 10 * time.Hour, false, 9, "07:00", "17:00"},
 		{"persisted late overtime", 8 * time.Hour, 10*time.Hour + 15*time.Minute, false, 10, "08:00", "18:15"},
 		{"proposed early overtime", 7 * time.Hour, 10 * time.Hour, true, 9, "07:00", "17:00"},
@@ -151,7 +151,7 @@ func TestTimelineHourlyGridPreservesSubhourSelectionLunchAndProposal(t *testing.
 	ws, deps := testWorkspace(t)
 	m := newModel(t.Context(), deps, ws, nil)
 	m.width, m.height = 600, 36
-	m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00", Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"}}
+	m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00", DailyMinimumQuotaSeconds: 28 * 60, Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"}}
 	m.worklogs = []worklogs.LocalWorklog{
 		{ID: "early", StartedAtUTC: m.selectedDate.Add(7*time.Hour + 52*time.Minute), DurationSeconds: 8 * 60},
 		{ID: "selected", StartedAtUTC: m.selectedDate.Add(9*time.Hour + 10*time.Minute), DurationSeconds: 20 * 60},

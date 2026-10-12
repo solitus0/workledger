@@ -21,8 +21,10 @@ func (m model) renderDayTimelineWidth(previewRecords []worklogs.LocalWorklog, se
 }
 
 type timelineVisibility struct {
-	lunch bool
-	free  bool
+	lunch            bool
+	free             bool
+	overtime         bool
+	selectedOvertime bool
 }
 
 func (m model) renderDayTimelineState(previewRecords []worklogs.LocalWorklog, selectedID string) (string, timelineVisibility) {
@@ -39,10 +41,17 @@ func (m model) renderTimelineState(previewRecords []worklogs.LocalWorklog, selec
 	if startErr != nil || endErr != nil || !workdayStart.Before(workdayEnd) {
 		return m.muted("Workday unavailable"), visibility
 	}
+	bookings := m.timelineWorklogs()
+	records := appendTimelineRecords(bookings, previewRecords)
+	day := beginningOfDay(m.selectedDate, m.workspace.cfg.Location)
+	overtimeStart, hasOvertime := timelineOvertimeStart(records, day, time.Duration(m.dailyQuotaSeconds())*time.Second)
+	visibility.overtime = hasOvertime
 	timelineStart, timelineEnd := workdayStart, workdayEnd
-	for _, record := range appendTimelineRecords(m.worklogs, previewRecords) {
-		start := record.StartedAtUTC.In(m.workspace.cfg.Location)
-		end := start.Add(time.Duration(record.DurationSeconds) * time.Second)
+	for _, record := range records {
+		start, end := timelineDayInterval(record, day)
+		if !start.Before(end) {
+			continue
+		}
 		if start.Before(timelineStart) {
 			timelineStart = start
 		}
@@ -58,6 +67,7 @@ func (m model) renderTimelineState(previewRecords []worklogs.LocalWorklog, selec
 	scale := newTimelineScale(timelineStart, timelineEnd, availableWidth)
 	barWidth := scale.width
 	selectedStart, selectedEnd, hasSelection := m.selectedTimelineInterval(selectedID, timelineStart, timelineEnd)
+	visibility.selectedOvertime = hasOvertime && hasSelection && selectedEnd.After(overtimeStart)
 	type cell struct {
 		symbol   string
 		color    string
@@ -68,9 +78,9 @@ func (m model) renderTimelineState(previewRecords []worklogs.LocalWorklog, selec
 	for index := range cells {
 		local := scale.midpoint(index)
 		symbol, color := "free", m.colors.Border
-		persisted := worklogAt(m.worklogs, local)
+		persisted := worklogAt(bookings, local)
 		if persisted != nil {
-			if local.Before(workdayStart) || !local.Before(workdayEnd) {
+			if hasOvertime && !local.Before(overtimeStart) {
 				symbol, color = "▒", m.colors.Warning
 			} else {
 				symbol, color = "█", m.colors.Information
@@ -84,10 +94,10 @@ func (m model) renderTimelineState(previewRecords []worklogs.LocalWorklog, selec
 		if preview := worklogAt(previewRecords, local); preview != nil {
 			if persisted != nil && m.form != nil && m.form.previewConflict != "" {
 				symbol, color = "!", m.colors.Destructive
-			} else if !local.Before(workdayStart) && local.Before(workdayEnd) {
-				symbol, color = "░", m.colors.Proposed
-			} else {
+			} else if hasOvertime && !local.Before(overtimeStart) {
 				symbol, color = "▒", m.colors.Warning
+			} else {
+				symbol, color = "░", m.colors.Proposed
 			}
 		}
 		selected := hasSelection && !local.Before(selectedStart) && local.Before(selectedEnd)
@@ -99,13 +109,13 @@ func (m model) renderTimelineState(previewRecords []worklogs.LocalWorklog, selec
 	if hasSelection && selectedCells == 0 {
 		index := min(barWidth-1, max(0, scale.column(selectedStart.Add(selectedEnd.Sub(selectedStart)/2))))
 		symbol := "█"
-		if !selectedEnd.After(workdayStart) || !selectedStart.Before(workdayEnd) {
+		if visibility.selectedOvertime {
 			symbol = "▒"
 		}
 		cells[index] = cell{symbol: symbol, color: m.colors.Focus, selected: true}
 	}
 	cellDuration := timelineQuarter
-	if timelineStart.Before(workdayStart) || timelineEnd.After(workdayEnd) {
+	if hasOvertime {
 		cellDuration = time.Hour
 	}
 	divisions := timelineCellColumns(scale, cellDuration)
@@ -332,31 +342,17 @@ func (m model) renderTimelineLegendWidth(previewRecords []worklogs.LocalWorklog,
 			items = append(items, timelineLegendItem{symbol: "!", color: m.colors.Destructive, label: "conflict"})
 		}
 	}
-	startText, endText := m.workdayBounds()
-	workdayStart, startErr := m.clockOnSelectedDay(startText)
-	workdayEnd, err := m.clockOnSelectedDay(endText)
-	if startErr != nil || err != nil {
-		return m.renderLegendItems(m.appendBaseTimelineLegend(items, visibility))
-	}
-	hasOvertime, hasSelectedOvertime := false, false
-	for _, record := range appendTimelineRecords(m.worklogs, previewRecords) {
-		start := record.StartedAtUTC.In(m.workspace.cfg.Location)
-		end := start.Add(time.Duration(record.DurationSeconds) * time.Second)
-		overtime := start.Before(workdayStart) || end.After(workdayEnd)
-		hasOvertime = hasOvertime || overtime
-		hasSelectedOvertime = hasSelectedOvertime || selectedID != "" && record.ID == selectedID && overtime
-	}
-	if hasOvertime {
+	if visibility.overtime {
 		symbol := "▒"
-		if !m.deps.noColor && m.colorReady && !hasSelectedOvertime {
+		if !m.deps.noColor && m.colorReady && !visibility.selectedOvertime {
 			symbol = "█"
-		} else if hasSelectedOvertime && (m.deps.noColor || !m.colorReady) {
+		} else if visibility.selectedOvertime && (m.deps.noColor || !m.colorReady) {
 			symbol = "▒/▚"
 		}
 		items = append(items, timelineLegendItem{symbol: symbol, color: m.colors.Warning, label: "overtime"})
 	}
 	items = m.appendBaseTimelineLegend(items, visibility)
-	if hasOvertime {
+	if visibility.overtime {
 		m.compactTimelineLegend(items, calculateLayout(m.width, m.height, false).workspace.width-2)
 	}
 	return m.renderLegendItems(items)

@@ -94,8 +94,10 @@ type ContextCollision struct {
 }
 
 type ContextDay struct {
-	Date              string
-	Worklogs          []LocalWorklog
+	Date     string
+	Worklogs []LocalWorklog
+	// Complete occupancy for visual consumers, including work carried into this day.
+	TimelineWorklogs  []LocalWorklog
 	BookedSeconds     int
 	UntilQuotaSeconds int
 	FreeSlots         []ContextFreeSlot
@@ -279,6 +281,7 @@ func (s *Service) Context(ctx context.Context, cfg config.EffectiveConfig, input
 		dayStart := time.Date(selectedDate.Year(), selectedDate.Month(), selectedDate.Day(), 0, 0, 0, 0, cfg.Location)
 		dayEnd := dayStart.AddDate(0, 0, 1)
 		worklogsForDay := make([]LocalWorklog, 0)
+		timelineWorklogs := make([]LocalWorklog, 0)
 		slicesForDay := make([]localInterval, 0)
 		bookedSeconds := 0
 
@@ -295,6 +298,7 @@ func (s *Service) Context(ctx context.Context, cfg config.EffectiveConfig, input
 			if !startLocal.Before(endLocal) {
 				continue
 			}
+			timelineWorklogs = append(timelineWorklogs, item)
 
 			slicesForDay = append(slicesForDay, localInterval{
 				Start: startLocal,
@@ -312,6 +316,7 @@ func (s *Service) Context(ctx context.Context, cfg config.EffectiveConfig, input
 		day := ContextDay{
 			Date:              selectedDate.Format("2006-01-02"),
 			Worklogs:          worklogsForDay,
+			TimelineWorklogs:  timelineWorklogs,
 			BookedSeconds:     bookedSeconds,
 			UntilQuotaSeconds: untilQuotaSeconds,
 			FreeSlots:         freeSlots,

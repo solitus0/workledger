@@ -177,7 +177,7 @@ func TestAutomaticPlacementShortcutsToggleOptionsAndRecalculate(t *testing.T) {
 	if rendered := m.render(); strings.Contains(rendered, "Options") {
 		t.Fatalf("automatic options are duplicated in the detail view:\n%s", rendered)
 	}
-	if footer := m.renderFooter(m.width); !strings.Contains(footer, "Ctrl+P Manual") || !strings.Contains(footer, "Ctrl+O OT on") || !strings.Contains(footer, "Ctrl+L Use lunch") {
+	if footer := m.renderFooter(m.width); !strings.Contains(footer, "Ctrl+P Manual") || !strings.Contains(footer, "Ctrl+O Late starts on") || !strings.Contains(footer, "Ctrl+L Use lunch") {
 		t.Fatalf("automatic option actions are missing from the footer: %s", footer)
 	}
 
@@ -190,7 +190,7 @@ func TestAutomaticPlacementShortcutsToggleOptionsAndRecalculate(t *testing.T) {
 	if input := service.previewInputs[len(service.previewInputs)-1]; !input.Overtime || input.NoLunch {
 		t.Fatalf("overtime preview input = %#v", input)
 	}
-	if footer := m.renderFooter(m.width); !strings.Contains(footer, "Ctrl+O OT off") || !strings.Contains(footer, "Ctrl+L Use lunch") {
+	if footer := m.renderFooter(m.width); !strings.Contains(footer, "Ctrl+O Late starts off") || !strings.Contains(footer, "Ctrl+L Use lunch") {
 		t.Fatalf("overtime footer action did not follow state: %s", footer)
 	}
 
@@ -207,11 +207,11 @@ func TestAutomaticPlacementShortcutsToggleOptionsAndRecalculate(t *testing.T) {
 	if strings.Contains(rendered, "Options") || strings.Contains(rendered, "╱ lunch") {
 		t.Fatalf("enabled automatic options are duplicated or not reflected in the legend:\n%s", rendered)
 	}
-	if footer := m.renderFooter(m.width); !strings.Contains(footer, "Ctrl+O OT off") || !strings.Contains(footer, "Ctrl+L Reserve lunch") {
+	if footer := m.renderFooter(m.width); !strings.Contains(footer, "Ctrl+O Late starts off") || !strings.Contains(footer, "Ctrl+L Reserve lunch") {
 		t.Fatalf("enabled footer actions did not follow state: %s", footer)
 	}
 	compactFooter := m.renderFooter(minimumWidth)
-	if lipgloss.Width(compactFooter) != minimumWidth || !strings.Contains(compactFooter, "Ctrl+P Manual") || !strings.Contains(compactFooter, "Ctrl+O OT off") || !strings.Contains(compactFooter, "Ctrl+L Reserve lunch") {
+	if lipgloss.Width(compactFooter) != minimumWidth || !strings.Contains(compactFooter, "Ctrl+P Manual") || !strings.Contains(compactFooter, "Ctrl+O Late starts off") || !strings.Contains(compactFooter, "Ctrl+L Reserve lunch") {
 		t.Fatalf("compact footer does not preserve state-dependent actions: %s", compactFooter)
 	}
 
@@ -398,7 +398,7 @@ func TestAutomaticAddFormFitsMinimumViewport(t *testing.T) {
 	if width, height := lipgloss.Width(rendered), lipgloss.Height(rendered); width != minimumWidth || height != minimumHeight {
 		t.Fatalf("automatic add render = %dx%d, want %dx%d", width, height, minimumWidth, minimumHeight)
 	}
-	for _, expected := range []string{"Worklog details", "› Issue", "│ Duration", "│ Description", "─ Placement", "[Fill]", "─ Calculated", "Ctrl+P Manual", "Ctrl+O OT on", "Ctrl+L Use lunch", "09:30–11:00", "Ctrl+S Create 1 worklog"} {
+	for _, expected := range []string{"Worklog details", "› Issue", "│ Duration", "│ Description", "─ Placement", "[Fill]", "─ Calculated", "Ctrl+P Manual", "Ctrl+O Late starts on", "Ctrl+L Use lunch", "09:30–11:00", "Ctrl+S Create 1 worklog"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("automatic add render missing %q", expected)
 		}
@@ -455,6 +455,7 @@ func TestDayTimelineExtendsAndMarksOvertime(t *testing.T) {
 		DayStart: "08:00", DayEnd: "17:00", DailyMinimumQuotaSeconds: 28800,
 		Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
 	}
+	m.worklogs = []worklogs.LocalWorklog{{StartedAtUTC: m.selectedDate.Add(8 * time.Hour), DurationSeconds: 4 * 3600}}
 	m.openAddForm()
 	m.form.previewRecords = []worklogs.LocalWorklog{{
 		IssueKey: "WL-200", StartedAtUTC: time.Date(2026, 5, 21, 13, 0, 0, 0, time.UTC), DurationSeconds: 7 * 3600,
@@ -651,7 +652,7 @@ func TestDayTimelineKeepsLunchVisibleAtPersistedWorklogBoundaries(t *testing.T) 
 	}
 }
 
-func TestDayTimelineShowsBookedTimeBeforeWorkdayStartAsOvertime(t *testing.T) {
+func TestDayTimelineShowsBookedTimeBeforeWorkdayStartAsRegularBelowQuota(t *testing.T) {
 	ws, deps := testWorkspace(t)
 	m := newModel(context.Background(), deps, ws, nil)
 	m.width, m.height = 140, 38
@@ -668,11 +669,11 @@ func TestDayTimelineShowsBookedTimeBeforeWorkdayStartAsOvertime(t *testing.T) {
 	if !strings.HasPrefix(ruler, "07:00 ") || !strings.HasSuffix(ruler, "17:00") {
 		t.Fatalf("early-overtime timeline has wrong bounds: %q", timeline)
 	}
-	if overtimeIndex < 0 || regularIndex <= overtimeIndex || !strings.Contains(timelineWithoutDividers(bar), "▒█") || strings.Contains(ruler, "│") || strings.Contains(upper, "│") {
+	if overtimeIndex >= 0 || regularIndex < 0 || !strings.Contains(timelineWithoutDividers(bar), "██") || strings.Contains(ruler, "│") || strings.Contains(upper, "│") {
 		t.Fatalf("early-overtime timeline lost its continuous fill or plain ruler: %q", timeline)
 	}
 	legend := m.renderTimelineLegend(nil, "")
-	if !strings.Contains(legend, "▒ overtime") || strings.Contains(legend, "│") {
+	if strings.Contains(legend, "overtime") || strings.Contains(legend, "│") {
 		t.Fatalf("early-overtime legend = %q", legend)
 	}
 }
@@ -966,7 +967,7 @@ func TestTimelineLunchEndUsesFullHeightHatchingOnAnOvertimeAxis(t *testing.T) {
 		m := newModel(context.Background(), deps, ws, nil)
 		m.width, m.height, m.worklogView = 260, 36, weekWorklogView
 		m.contextSettings = worklogs.ContextSettings{
-			DayStart: "08:00", DayEnd: "17:00", Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
+			DayStart: "08:00", DayEnd: "17:00", DailyMinimumQuotaSeconds: 4 * 3600, Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
 		}
 		m.worklogs = []worklogs.LocalWorklog{
 			{StartedAtUTC: m.selectedDate.Add(7 * time.Hour), DurationSeconds: 3600},
@@ -990,7 +991,7 @@ func TestTimelineLunchEnclosurePreservesASingleAdjacentBooking(t *testing.T) {
 	m := newModel(context.Background(), deps, ws, nil)
 	m.width, m.height = 260, 36
 	m.contextSettings = worklogs.ContextSettings{
-		DayStart: "08:00", DayEnd: "17:00", Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
+		DayStart: "08:00", DayEnd: "17:00", DailyMinimumQuotaSeconds: 3600, Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
 	}
 	m.worklogs = []worklogs.LocalWorklog{
 		{StartedAtUTC: m.selectedDate.Add(7 * time.Hour), DurationSeconds: 3600},
@@ -1000,7 +1001,7 @@ func TestTimelineLunchEnclosurePreservesASingleAdjacentBooking(t *testing.T) {
 	cells := []rune(band)
 	// The border must stay inside lunch when borrowing the next column
 	// would erase the only visible column of an adjacent booking.
-	if string(cells[37:43]) != "▏╱╱╱╱▕" || cells[43] != '█' || strings.Contains(band, "⊠") {
+	if string(cells[37:43]) != "▏╱╱╱╱▕" || cells[43] != '▒' || strings.Contains(band, "⊠") {
 		t.Fatalf("lunch lost its hatch or consumed the adjacent booking: %q", band)
 	}
 }
@@ -1027,7 +1028,7 @@ func TestTimelineOvertimeUsesFilledHourlyRules(t *testing.T) {
 			filledRule := lipgloss.NewStyle().Foreground(lipgloss.Color(m.colors.Warning)).Reverse(true).Render("▏")
 			filledCell := lipgloss.NewStyle().Foreground(lipgloss.Color(m.colors.Warning)).Background(lipgloss.Color(m.colors.Warning)).Render("█")
 			_, _, band, _ := timelineParts(t, timeline)
-			if strings.Count(timeline, filledRule) != 0 || !strings.Contains(timeline, filledCell) || string([]rune(band)[:7]) != "███████" {
+			if strings.Count(timeline, filledRule) != 2 || !strings.Contains(timeline, filledCell) || string([]rune(band)[59:]) != "▏███████▏██████" {
 				t.Fatalf("overtime cells lost their fill or shared hourly grid (light=%t preview=%t, filled rules=%d): %q", light, preview, strings.Count(timeline, filledRule), band)
 			}
 		}
@@ -1126,7 +1127,7 @@ func TestWorklogListRendersPersistentCurrentTimeline(t *testing.T) {
 		Lunch: &worklogs.ContextLunch{Start: "12:00", End: "12:45"},
 	}
 	rendered := m.render()
-	for _, expected := range []string{"Thu 21 May 2026", "8h logged / 8h target", "target met", "[Day]  Week", "08:00", "▓ selected", "▒ overtime", "21:30", "Lunch 12:00–12:45"} {
+	for _, expected := range []string{"Thu 21 May 2026", "8h logged / 8h target", "target met", "[Day]  Week", "08:00", "▓ selected", "21:30", "Lunch 12:00–12:45"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("daily workspace missing %q:\n%s", expected, rendered)
 		}
@@ -1218,16 +1219,16 @@ func TestTimelineOvertimePreservesPlainRulerAndContinuousBandEdges(t *testing.T)
 					deps.noColor = noColor
 					m := newModel(context.Background(), deps, ws, nil)
 					m.width, m.height = width, minimumHeight
-					m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
+					m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00", DailyMinimumQuotaSeconds: 3600}
 					records := []worklogs.LocalWorklog{{ID: "crossing", StartedAtUTC: m.selectedDate.Add(7 * time.Hour), DurationSeconds: 2 * 3600}}
 					var previews []worklogs.LocalWorklog
 					selectedID := ""
-					transition := "▒█"
+					transition := "█▒"
 					firstClock, lastClock := "07:00", "17:00"
 					switch scenario {
 					case "proposed":
 						previews = records
-						transition = "▒░"
+						transition = "░▒"
 					case "overtime":
 						records[0].StartedAtUTC = m.selectedDate.Add(16 * time.Hour)
 						m.worklogs = records
@@ -1236,14 +1237,14 @@ func TestTimelineOvertimePreservesPlainRulerAndContinuousBandEdges(t *testing.T)
 					case "selected":
 						m.worklogs, selectedID = records, "crossing"
 						if noColor {
-							transition = "▚▓"
+							transition = "▓▚"
 						}
 					case "adjacent selected":
 						records[0].DurationSeconds = 3600
 						m.worklogs = append(records, worklogs.LocalWorklog{ID: "selected", StartedAtUTC: m.selectedDate.Add(8 * time.Hour), DurationSeconds: 3600})
 						selectedID = "selected"
 						if noColor {
-							transition = "▒▓"
+							transition = "█▚"
 						}
 					default:
 						m.worklogs = records
@@ -1289,7 +1290,7 @@ func TestDayTimelineSelectionSpansRegularAndOvertimePortions(t *testing.T) {
 	ws, deps := testWorkspace(t)
 	m := newModel(context.Background(), deps, ws, nil)
 	m.width, m.height = 140, 38
-	m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
+	m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00", DailyMinimumQuotaSeconds: 3600}
 	m.worklogs = []worklogs.LocalWorklog{{ID: "selected", StartedAtUTC: m.selectedDate.Add(16*time.Hour + 30*time.Minute), DurationSeconds: 2 * 3600}}
 	ruler, upper, bar, lower := timelineParts(t, m.renderDayTimeline(nil, "selected"))
 	beforeRuler, _, before, _ := timelineParts(t, m.renderDayTimeline(nil, ""))
@@ -1303,8 +1304,8 @@ func TestTimelineKeepsShortSelectedOvertimeVisible(t *testing.T) {
 		ws, deps := testWorkspace(t)
 		m := newModel(context.Background(), deps, ws, nil)
 		m.width, m.height = minimumWidth, minimumHeight
-		m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00"}
-		m.worklogs = []worklogs.LocalWorklog{{ID: "short", StartedAtUTC: m.selectedDate.Add(offset), DurationSeconds: 1}}
+		m.contextSettings = worklogs.ContextSettings{DayStart: "08:00", DayEnd: "17:00", DailyMinimumQuotaSeconds: 3600}
+		m.worklogs = []worklogs.LocalWorklog{{StartedAtUTC: m.selectedDate, DurationSeconds: 3600}, {ID: "short", StartedAtUTC: m.selectedDate.Add(offset), DurationSeconds: 1}}
 		ruler, _, bar, _ := timelineParts(t, m.renderDayTimeline(nil, "short"))
 		if !strings.Contains(bar, "▚") || strings.Contains(ruler, "│") {
 			t.Fatalf("timeline lost short selection or plain ruler at %s: bar=%q", offset, bar)
@@ -1444,7 +1445,6 @@ func TestWeekViewRendersOverviewAndSelectedDayAtMinimumViewport(t *testing.T) {
 		"-6h 00m",
 		"Thursday, 2026-05-21",
 		"07:00",
-		"▒ overtime",
 		"d/w/m View",
 	} {
 		if !strings.Contains(rendered, expected) {
@@ -1555,6 +1555,7 @@ func TestViewUsesSemanticColorWhenEnabled(t *testing.T) {
 	if legend = m.renderTimelineLegend(m.form.previewRecords, ""); !strings.Contains(legend, m.paint("░", m.colors.Proposed)) || !strings.Contains(legend, "proposed") {
 		t.Fatalf("preview legend missing new-work swatch: %q", legend)
 	}
+	m.contextSettings.DailyMinimumQuotaSeconds = 3600
 	m.form.previewRecords = []worklogs.LocalWorklog{{
 		StartedAtUTC: time.Date(2026, 5, 21, 16, 0, 0, 0, time.UTC), DurationSeconds: 2 * 3600,
 	}}

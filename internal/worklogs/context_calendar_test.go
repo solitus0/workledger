@@ -61,4 +61,7 @@ func TestContextMonthTotalClipsCarryInAndCarryOut(t *testing.T) {
 	if len(result.Days[0].Worklogs) != 0 || len(result.Days[30].Worklogs) != 1 {
 		t.Fatal("boundary occupancy changed start-date worklog membership")
 	}
+	if len(result.Days[0].TimelineWorklogs) != 1 || len(result.Days[30].TimelineWorklogs) != 1 || !result.Days[0].TimelineWorklogs[0].StartedAtUTC.Before(*result.Filters.From) {
+		t.Fatal("timeline context omitted carried-over work")
+	}
 }

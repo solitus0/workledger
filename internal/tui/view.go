@@ -374,9 +374,9 @@ func (m model) renderFooter(width int) string {
 			}
 			secondary = append(secondary, actionHint{"Ctrl+P", next})
 			if m.form.placement != manualPlacement {
-				overtime, lunch := "OT on", "Use lunch"
+				overtime, lunch := "Late starts on", "Use lunch"
 				if m.form.overtime {
-					overtime = "OT off"
+					overtime = "Late starts off"
 				}
 				if m.form.noLunch {
 					lunch = "Reserve lunch"
