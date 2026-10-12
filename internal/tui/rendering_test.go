@@ -904,7 +904,7 @@ func TestTimelineQuarterColumnsUseLocalClockBoundaries(t *testing.T) {
 	for _, location := range []*time.Location{time.UTC, time.FixedZone("UTC+05:10", (5*60+10)*60)} {
 		start := time.Date(2026, 10, 9, 7, 52, 0, 0, location)
 		// One minute per column; the first/last cells are partial quarters.
-		columns := timelineQuarterColumns(newTimelineScale(start, start.Add(75*time.Minute), 75))
+		columns := timelineCellColumns(newTimelineScale(start, start.Add(75*time.Minute), 75), timelineQuarter)
 		want := map[int]int{8: 15, 23: 15, 38: 15, 53: 15, 68: 7}
 		if len(columns) != len(want) {
 			t.Fatalf("%s: quarter columns = %v, want %v", location, columns, want)
@@ -921,7 +921,7 @@ func TestTimelineFullWidthGridPreservesPartialAxisBounds(t *testing.T) {
 	start := time.Date(2026, 10, 9, 7, 52, 0, 0, time.UTC)
 	end := start.Add(75 * time.Minute)
 	scale := newTimelineScale(start, end, 27)
-	columns := timelineQuarterColumns(scale)
+	columns := timelineCellColumns(scale, timelineQuarter)
 	// Complete quarters occupy five or six columns, using the whole axis
 	// without rounding the actual eight-minute and seven-minute tails.
 	want := map[int]int{3: 5, 8: 6, 14: 5, 19: 5, 24: 3}
@@ -973,10 +973,10 @@ func TestTimelineLunchEndUsesFullHeightHatchingOnAnOvertimeAxis(t *testing.T) {
 			{StartedAtUTC: m.selectedDate.Add(13 * time.Hour), DurationSeconds: 4 * 3600},
 		}
 		// The 74-column bar leaves six lunch columns followed by one free
-		// column. The last lunch quarter must match the preceding quarters.
+		// column. The partial lunch hour must retain its full-height hatch.
 		_, upper, band, lower := timelineParts(t, m.renderDayTimelineWidth(nil, "", 78))
 		cells := []rune(band)
-		if lunch := string(cells[37:43]); lunch != "▏╱▏╱▏╱" || cells[43] != '▏' || strings.Contains(band, "⊠") {
+		if lunch := string(cells[37:43]); lunch != "▏╱╱╱╱╱" || cells[43] != '▏' || strings.Contains(band, "⊠") {
 			t.Fatalf("lunch end shrank or lost its thin enclosure (color=%t): %q", !noColor, band)
 		}
 		if upper != strings.Repeat("▁", 74) || lower != strings.Repeat("▔", 74) {
@@ -1000,12 +1000,12 @@ func TestTimelineLunchEnclosurePreservesASingleAdjacentBooking(t *testing.T) {
 	cells := []rune(band)
 	// The border must stay inside lunch when borrowing the next column
 	// would erase the only visible column of an adjacent booking.
-	if string(cells[37:43]) != "▏╱▏╱╱▕" || cells[43] != '█' || strings.Contains(band, "⊠") {
+	if string(cells[37:43]) != "▏╱╱╱╱▕" || cells[43] != '█' || strings.Contains(band, "⊠") {
 		t.Fatalf("lunch lost its hatch or consumed the adjacent booking: %q", band)
 	}
 }
 
-func TestTimelineOvertimeUsesFilledQuarterRules(t *testing.T) {
+func TestTimelineOvertimeUsesFilledHourlyRules(t *testing.T) {
 	for _, light := range []bool{false, true} {
 		for _, preview := range []bool{false, true} {
 			ws, deps := testWorkspace(t)
@@ -1027,8 +1027,8 @@ func TestTimelineOvertimeUsesFilledQuarterRules(t *testing.T) {
 			filledRule := lipgloss.NewStyle().Foreground(lipgloss.Color(m.colors.Warning)).Reverse(true).Render("▏")
 			filledCell := lipgloss.NewStyle().Foreground(lipgloss.Color(m.colors.Warning)).Background(lipgloss.Color(m.colors.Warning)).Render("█")
 			_, _, band, _ := timelineParts(t, timeline)
-			if strings.Count(timeline, filledRule) != 3 || !strings.Contains(timeline, filledCell) || string([]rune(band)[:7]) != "██▏█▏█▏" {
-				t.Fatalf("overtime cells lost their fill or shared quarter grid (light=%t preview=%t, filled rules=%d): %q", light, preview, strings.Count(timeline, filledRule), band)
+			if strings.Count(timeline, filledRule) != 0 || !strings.Contains(timeline, filledCell) || string([]rune(band)[:7]) != "███████" {
+				t.Fatalf("overtime cells lost their fill or shared hourly grid (light=%t preview=%t, filled rules=%d): %q", light, preview, strings.Count(timeline, filledRule), band)
 			}
 		}
 	}

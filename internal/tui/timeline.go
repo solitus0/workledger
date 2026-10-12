@@ -104,7 +104,11 @@ func (m model) renderTimelineState(previewRecords []worklogs.LocalWorklog, selec
 		}
 		cells[index] = cell{symbol: symbol, color: m.colors.Focus, selected: true}
 	}
-	quarters := timelineQuarterColumns(scale)
+	cellDuration := timelineQuarter
+	if timelineStart.Before(workdayStart) || timelineEnd.After(workdayEnd) {
+		cellDuration = time.Hour
+	}
+	divisions := timelineCellColumns(scale, cellDuration)
 	// A single fill row, bounded by eighth-cell strokes, gives every state the
 	// same visible height without requiring half-height hatch or shade glyphs.
 	upper, band, lower := make([]string, barWidth), make([]string, barWidth), make([]string, barWidth)
@@ -123,7 +127,7 @@ func (m model) renderTimelineState(previewRecords []worklogs.LocalWorklog, selec
 				symbol = "□"
 			case ends:
 				symbol = "▕"
-			case starts || quarters[index] > 0:
+			case starts || divisions[index] > 0:
 				symbol = "▏"
 			}
 		case "╱":
@@ -162,16 +166,16 @@ func (m model) renderTimelineState(previewRecords []worklogs.LocalWorklog, selec
 		}
 		upper[index] = m.paint("▁", color)
 		band[index] = m.renderTimelineCell(symbol, cell.color, cell.selected)
-		if quarterWidth := quarters[index]; quarterWidth > 0 && cell.symbol != "free" && symbol != "▏" && symbol != "▕" {
+		if cellWidth := divisions[index]; cellWidth > 0 && cell.symbol != "free" && symbol != "▏" && symbol != "▕" {
 			if !m.deps.noColor && m.colorReady && symbol == "█" {
 				// Inverse fill gives the thin rule the terminal's background
 				// color, keeping it distinct in both themes without a cell gap.
 				band[index] = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Reverse(true).Render("▏")
-			} else if quarterWidth >= 2 && index+1 < barWidth && cells[index+1].symbol == cell.symbol && cells[index+1].selected == cell.selected {
+			} else if cellWidth >= 2 && index+1 < barWidth && cells[index+1].symbol == cell.symbol && cells[index+1].selected == cell.selected {
 				// Leave room for the state's pattern, especially for short
 				// proposals, conflicts, lunch, and non-color selections.
 				// Keep the full-height hatch when a closing side would
-				// otherwise consume the last two-column lunch quarter.
+				// otherwise consume the last two-column lunch cell.
 				if cell.symbol != "╱" || index+1 != lunchEnd-1 || lunchSharesBorder {
 					band[index] = m.renderTimelineCell("▏", cell.color, cell.selected)
 				}
@@ -250,16 +254,17 @@ func timelineHourAfter(value time.Time) time.Time {
 	return time.Date(value.Year(), value.Month(), value.Day(), value.Hour(), 0, 0, 0, value.Location()).Add(time.Hour)
 }
 
-// Quarter-hour divisions use local clock boundaries, including when the axis
-// begins inside a quarter. Their widths remain proportional to actual time.
-func timelineQuarterColumns(scale timelineScale) map[int]int {
+// Divisions use local clock boundaries, including when the axis begins inside
+// a cell. Their widths remain proportional to actual time.
+func timelineCellColumns(scale timelineScale, interval time.Duration) map[int]int {
 	columns := map[int]int{}
 	start, end := scale.start, scale.end
-	tick := time.Date(start.Year(), start.Month(), start.Day(), start.Hour(), start.Minute()/15*15, 0, 0, start.Location()).Add(timelineQuarter)
-	for ; tick.Before(end); tick = tick.Add(timelineQuarter) {
+	minutes := int(interval / time.Minute)
+	tick := time.Date(start.Year(), start.Month(), start.Day(), start.Hour(), start.Minute()/minutes*minutes, 0, 0, start.Location()).Add(interval)
+	for ; tick.Before(end); tick = tick.Add(interval) {
 		column := scale.column(tick)
 		nextColumn := scale.width
-		if next := tick.Add(timelineQuarter); next.Before(end) {
+		if next := tick.Add(interval); next.Before(end) {
 			nextColumn = min(scale.width, scale.column(next))
 		}
 		if column > 0 && column < scale.width {

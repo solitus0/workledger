@@ -213,7 +213,7 @@ func (m model) renderPlacementInspector(width, height int) string {
 		boundary, err := m.clockOnSelectedDay(endText)
 		if err == nil {
 			for _, record := range m.form.previewRecords {
-				if record.StartedAtUTC.Add(time.Duration(record.DurationSeconds) * time.Second).After(boundary) {
+				if record.StartedAtUTC.Before(boundary) && record.StartedAtUTC.Add(time.Duration(record.DurationSeconds)*time.Second).After(boundary) {
 					lines = append(lines, "")
 					lines = append(lines, wrapIssueDescription("Starts before "+endText+"; may finish later.", width)...)
 					break
