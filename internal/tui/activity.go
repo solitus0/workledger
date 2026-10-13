@@ -23,6 +23,8 @@ const (
 
 var visibleActivityOperations = map[string]struct{}{
 	"plan.apply":           {},
+	"issues.set":           {},
+	"issues.apply":         {},
 	"plan.reconcile":       {},
 	"plan.retry":           {},
 	"plan.retry-failed":    {},

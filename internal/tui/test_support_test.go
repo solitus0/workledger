@@ -107,6 +107,19 @@ type fakePresets struct {
 	err           error
 }
 
+type fakeIssues struct {
+	items []worklogs.IssueMetadata
+	err   error
+}
+
+func (f *fakeIssues) SearchIssues(context.Context, string, string, string) ([]worklogs.IssueMetadata, error) {
+	return append([]worklogs.IssueMetadata(nil), f.items...), f.err
+}
+
+func (f *fakeIssues) ApplyIssueMetadata(context.Context, []worklogs.IssueMetadataPatch, bool) error {
+	return f.err
+}
+
 func (f *fakePresets) List(context.Context, string, int) ([]presets.Preset, error) {
 	return append([]presets.Preset(nil), f.items...), f.err
 }
@@ -349,6 +362,7 @@ func testWorkspace(t *testing.T) (*workspace, dependencies) {
 		mutations:       &fakeWorklogMutations{state: state},
 		trash:           &fakeTrashService{state: state},
 		presets:         &fakePresets{},
+		issues:          &fakeIssues{},
 		plans:           &fakePlans{},
 		tracker:         &fakeTracker{},
 		activityTracker: &fakeTracker{},

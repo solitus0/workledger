@@ -8,11 +8,16 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
+- Immutable local issue creation timestamps and Created at sorting, applied newest first by default in the TUI; `workledger init` backfills older catalogs from their earliest surviving local timestamps.
+- Logged time in TUI issue rows and epic summaries, Logged sorting, and expanded issue details with paged, scrollable all-time local worklog history.
+- TUI issue multi-selection through Space, visual range selection through `v`/`V`, and filtered select-all through Ctrl+A, with an atomic local epic assignment picker through `b`; Issues/Epics switching now uses `t`.
 - TUI Worklogs Month view with a Monday-first calendar, local booked totals, past-weekday quota gaps, overlap warnings, keyboard and mouse date selection, and selected-day previews and worklog creation.
 - Local issue-history picker in TUI Add through `Ctrl+K`, with paged issue-key prefix, worklog-description, and title search, unused decorated issues, and a scrollable description-history pane.
 - TUI Day worklog moves through `M`, with original and proposed time previews, valid positions around other bookings and workday boundaries, lunch and overlap checks, and guarded saving through `Ctrl+S`.
-- Local issue titles and maximum estimate overrides through `workledger issue-metadata set` and atomic JSON patch batches through `issue-metadata apply`, including dry-run validation. Run `workledger init` to provision decoration storage; Jira refresh preserves local overrides.
-- Issue metadata catalog filtering through `--issue-prefix` and `--search`, including decorated issues without worklogs, and TUI issue titles and estimate usage based on all-time active local effort. Estimates remain informational and never limit worklog creation.
+- Local issue catalog through `workledger issues set` and atomic JSON patch batches through `issues apply`, with optional titles, maximum estimates, and named epic groups. Worklog writes create missing local issues automatically; Jira refresh preserves optional local metadata.
+- Issues catalog filtering through `--issue-prefix`, `--search`, and `--epic`, plus `issues epics` budgets with estimate coverage, lifetime active logged totals, known remaining time, and separate overruns. Estimates remain informational and never limit worklog creation.
+- Sixth TUI Issues destination with Issues and Epics views, group drilldown, local search, issue creation, and optional metadata editing.
+- Issues and Epics sort menus with selection retained across sorting and refresh, plus viewport-aware Page Up/Page Down and Home/End navigation through filtered lists.
 - Searchable contextual TUI Actions through `?`, dispatching the same guarded keyboard actions and confirmations.
 - Case-insensitive local Day worklog filtering through `/` by issue key, title, or description, preserving day totals, timeline occupancy, and available windows.
 - Scrollable TUI details for worklogs, diagnostics, effective configuration, presets, trash records, and saved plan scopes, including full descriptions and saved desired entries.
@@ -20,7 +25,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Changed
 - **Breaking:** New worklog and preset writes now use whole-minute timing. Starts and durations round to the nearest minute before validation; automatic placement uses inward-rounded free slots and whole-minute fragments. Shift deltas round to minutes and reject zero results. Existing rows are not converted automatically, and saved plans with second-precision payloads must be reconciled again before apply or retry.
 - Pull reconcile now compares minute-normalized candidates while retaining observed remote timing in totals and trash; rounding-induced duplicates or overlaps block affected scopes.
-- The TUI now uses a compact navigation rail, shared title/date header, adjacent inspectors, and a two-row action bar. Day browsing and placement forms share a chronological segmented timeline with stable interval widths, solid selected-worklog fill, explicit lunch and overtime states, and available-window summaries.
+- The TUI now uses a compact navigation rail, shared title/date header, adjacent inspectors, and a single-row action bar without repeated destination shortcuts. Day browsing and placement forms share a chronological segmented timeline with stable interval widths, solid selected-worklog fill, explicit lunch and overtime states, and available-window summaries.
 - Saved plan scope review now shows local and remote counts and durations at planning time, projected destination totals, and saved desired entries without remote requests; unavailable remote inspection is explicitly marked.
 - TUI Add and shell issue completion now include decorated and cached issues, rank used keys by their latest worklog creation time, and rank unused metadata keys afterward. An empty Add issue field offers the first catalog key for explicit acceptance.
 - Session worklog creation now requires evidence of work performed, generates descriptive entries from that evidence, and defaults unknown exact starts to `--fill --today`; unresolved issue selection may use one clear local title match after explicit duration is provided.

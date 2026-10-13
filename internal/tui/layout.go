@@ -23,7 +23,7 @@ type appLayout struct {
 const (
 	navigationWidth = 18
 	appHeaderHeight = 2
-	appFooterHeight = 3
+	appFooterHeight = 2
 )
 
 func calculateLayout(width, height int, showActivity bool) appLayout {

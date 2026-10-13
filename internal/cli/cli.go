@@ -302,7 +302,7 @@ func (a *app) newRootCommand() *cobra.Command {
 	root.AddCommand(a.newRoutingCommand())
 	root.AddCommand(a.newRouteCommand())
 	root.AddCommand(a.newClockifyCommand())
-	root.AddCommand(a.newIssueMetadataCommand())
+	root.AddCommand(a.newIssuesCommand())
 	root.AddCommand(a.newPlanCommand())
 	root.AddCommand(a.newCompletionCommand())
 	root.AddCommand(a.newActivityCommand())
@@ -1528,20 +1528,22 @@ func totalsStatusForJiraCloudError(err error) string {
 	return "unexpected_error"
 }
 
-func (a *app) newIssueMetadataCommand() *cobra.Command {
+func (a *app) newIssuesCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "issue-metadata",
-		Short: "Manage issue metadata",
+		Use:   "issues",
+		Short: "Manage local issues and epic groups",
 		RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
-	cmd.AddCommand(a.newIssueMetadataListCommand())
-	cmd.AddCommand(a.newIssueMetadataSetCommand())
-	cmd.AddCommand(a.newIssueMetadataApplyCommand())
-	cmd.AddCommand(a.newIssueMetadataRefreshCommand())
+	cmd.AddCommand(a.newIssuesListCommand())
+	cmd.AddCommand(a.newIssuesSetCommand())
+	cmd.AddCommand(a.newIssuesApplyCommand())
+	cmd.AddCommand(a.newIssuesRefreshCommand())
+	cmd.AddCommand(a.newIssuesEpicsCommand())
 	return cmd
 }
 
-func (a *app) newIssueMetadataListCommand() *cobra.Command {
+func (a *app) newIssuesListCommand() *cobra.Command {
+	var epic string
 	var issue string
 	var issuePrefix string
 	var search string
@@ -1565,10 +1567,11 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:     "list",
-		Short:   "List local issue metadata",
-		Example: "  workledger issue-metadata list --issue PROJ-123\n  workledger issue-metadata list --from 2026-05-14 --to 2026-05-16",
+		Short:   "List local issues and lifetime estimate budgets",
+		Example: "  workledger issues list --issue PROJ-123\n  workledger issues list --from 2026-05-14 --to 2026-05-16",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
+			search, epic = strings.TrimSpace(search), strings.TrimSpace(epic)
 			effective, service, cleanup, err := a.loadService(mode, false, "")
 			if err != nil {
 				return err
@@ -1621,7 +1624,7 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 				filters.IssueKey = &issue
 				item, err := service.ShowIssueMetadata(cmd.Context(), issue)
 				if err != nil {
-					return a.handleIssueMetadataError(mode, err)
+					return a.handleIssuesError(mode, err)
 				}
 				items = []worklogs.IssueMetadata{item}
 			} else if !hasSelector(raw) {
@@ -1629,7 +1632,7 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 				if issuePrefix != "" {
 					filters.IssuePrefix = &issuePrefix
 				}
-				items, err = service.SearchIssueMetadata(cmd.Context(), issuePrefix, search)
+				items, err = service.SearchIssues(cmd.Context(), issuePrefix, search, epic)
 				if err != nil {
 					return a.handleWorklogError(mode, effective, err)
 				}
@@ -1643,26 +1646,28 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 					return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
 				}
 				filters = effectiveFilters
+				sortIssueRows(items)
 			}
 
-			if search != "" {
+			if search != "" || epic != "" {
 				filtered := make([]worklogs.IssueMetadata, 0, len(items))
 				for _, item := range items {
-					if strings.Contains(strings.ToLower(item.Title), strings.ToLower(search)) {
+					if issueMatchesSearch(item, search) && (epic == "" || item.Epic == epic) {
 						filtered = append(filtered, item)
 					}
 				}
 				items = filtered
 			}
 			if mode == "json" {
-				return a.renderIssueMetadataListJSON(raw, filters, items, effective.Location, search)
+				return a.renderIssuesListJSON(raw, filters, items, effective.Location, search, epic)
 			}
-			return renderTable(a.stdout, []string{"ISSUE", "TITLE", "MAX_ESTIMATE_SECONDS", "ESTIMATE_SOURCE", "SOURCE_ADAPTER", "SOURCE_INSTANCE", "REFRESHED_AT"}, issueMetadataRows(items))
+			return a.renderIssuesTable(items)
 		},
 	}
 
+	cmd.Flags().StringVar(&epic, "epic", "", "Filter by exact local epic name")
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter to one issue")
-	cmd.Flags().StringVar(&search, "search", "", "Filter by case-insensitive title substring")
+	cmd.Flags().StringVar(&search, "search", "", "Filter by case-insensitive issue key, title, or epic substring")
 	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
@@ -1686,7 +1691,7 @@ func (a *app) newIssueMetadataListCommand() *cobra.Command {
 	return cmd
 }
 
-func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
+func (a *app) newIssuesRefreshCommand() *cobra.Command {
 	var adapter string
 	var field string
 	var instance string
@@ -1713,10 +1718,10 @@ func (a *app) newIssueMetadataRefreshCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "refresh",
 		Short:   "Refresh local issue metadata from an adapter",
-		Example: "  workledger issue-metadata refresh --adapter jira-cloud --field max-estimate --today\n  workledger issue-metadata refresh --adapter jira-data-center --field max-estimate --from 2026-05-14 --to 2026-05-16",
+		Example: "  workledger issues refresh --adapter jira-cloud --field max-estimate --today\n  workledger issues refresh --adapter jira-data-center --field max-estimate --from 2026-05-14 --to 2026-05-16",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode, true, "issue-metadata refresh")
+			effective, service, cleanup, err := a.loadService(mode, true, "issues refresh")
 			if err != nil {
 				return err
 			}
@@ -3178,10 +3183,10 @@ func (a *app) handleWorklogError(mode string, cfg config.EffectiveConfig, err er
 	}
 }
 
-func (a *app) handleIssueMetadataError(mode string, err error) error {
+func (a *app) handleIssuesError(mode string, err error) error {
 	switch {
 	case errors.Is(err, worklogs.ErrIssueMetadataNotFound):
-		return a.fail(mode, 3, "not_found", "issue metadata not found", nil)
+		return a.fail(mode, 3, "not_found", "issue not found", nil)
 	case errors.Is(err, worklogs.ErrValidation):
 		var validationErr worklogs.ValidationError
 		if errors.As(err, &validationErr) {
@@ -3454,16 +3459,18 @@ func totalsDaysJSON(days []totals.DayResult) []map[string]any {
 	return items
 }
 
-func (a *app) renderIssueMetadataListJSON(raw worklogs.ListFilters, effective worklogs.EffectiveFilters, items []worklogs.IssueMetadata, location *time.Location, search string) error {
+func (a *app) renderIssuesListJSON(raw worklogs.ListFilters, effective worklogs.EffectiveFilters, items []worklogs.IssueMetadata, location *time.Location, search, epic string) error {
 	payload := map[string]any{
 		"filters": selectorFiltersJSON(raw, effective, location),
 	}
 
 	records := make([]map[string]any, 0, len(items))
 	for _, item := range items {
-		records = append(records, issueMetadataRecordJSON(item))
+		records = append(records, issueRecordJSON(item))
 	}
 	payload["filters"].(map[string]any)["search"] = emptyToNil(search)
+	payload["filters"].(map[string]any)["epic"] = emptyToNil(epic)
+	payload["summary"] = issueSummaryJSON(worklogs.SummarizeIssues(items))
 	payload["items"] = records
 	payload["total"] = len(records)
 	return a.writeJSON(payload)
@@ -4122,7 +4129,7 @@ func filterRecord(record map[string]any, fields []string) map[string]any {
 	return filtered
 }
 
-func issueMetadataRecordJSON(item worklogs.IssueMetadata) map[string]any {
+func issueRecordJSON(item worklogs.IssueMetadata) map[string]any {
 	var refreshed, updated any
 	if !item.RefreshedAt.IsZero() {
 		refreshed = item.RefreshedAt.UTC().Format(time.RFC3339)
@@ -4133,6 +4140,10 @@ func issueMetadataRecordJSON(item worklogs.IssueMetadata) map[string]any {
 	return map[string]any{
 		"issue_key":                   item.IssueKey,
 		"title":                       emptyToNil(item.Title),
+		"epic":                        emptyToNil(item.Epic),
+		"logged_seconds":              item.LoggedSeconds,
+		"remaining_seconds":           int64PtrToAny(item.RemainingSeconds),
+		"overrun_seconds":             item.OverrunSeconds,
 		"max_estimate_seconds":        int64PtrToAny(item.MaxEstimateSeconds),
 		"manual_max_estimate_seconds": int64PtrToAny(item.ManualMaxEstimateSeconds),
 		"cached_max_estimate_seconds": int64PtrToAny(item.CachedMaxEstimateSeconds),
@@ -4339,21 +4350,13 @@ func issueMetadataRefreshRows(items []map[string]any) [][]string {
 	return rows
 }
 
-func issueMetadataRows(items []worklogs.IssueMetadata) [][]string {
+func issueRows(items []worklogs.IssueMetadata) [][]string {
 	rows := make([][]string, 0, len(items))
 	for _, item := range items {
-		value := ""
-		if item.MaxEstimateSeconds != nil {
-			value = fmt.Sprint(*item.MaxEstimateSeconds)
-		}
 		rows = append(rows, []string{
-			item.IssueKey,
-			item.Title,
-			value,
-			item.EstimateSource,
-			item.SourceAdapterFamily,
-			item.SourceAdapterInst,
-			formatOptionalMetadataTime(item.RefreshedAt),
+			item.IssueKey, item.Title, displayOrDash(item.Epic),
+			optionalIssueDuration(item.MaxEstimateSeconds), humanDuration(int(item.LoggedSeconds)),
+			optionalIssueDuration(item.RemainingSeconds), humanDuration(int(item.OverrunSeconds)), item.EstimateSource,
 		})
 	}
 	return rows
@@ -4378,11 +4381,4 @@ func contextRows(result worklogs.ContextResult) [][]string {
 		})
 	}
 	return rows
-}
-
-func formatOptionalMetadataTime(value time.Time) string {
-	if value.IsZero() {
-		return ""
-	}
-	return value.UTC().Format(time.RFC3339)
 }

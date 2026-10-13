@@ -15,7 +15,7 @@ func (m model) commandActions() []commandAction {
 		for _, action := range []commandAction{{"up", "↑", "Select previous activity"}, {"down", "↓", "Select next activity"}, {"pgup", "PgUp", "Previous page"}, {"pgdown", "PgDn", "Next page"}, {"home", "Home", "Newest activity"}, {"end", "End", "Oldest activity"}, {"r", "r", "Refresh activity"}, {"g", "g", "Close activity"}, {"q", "q", "Quit"}} {
 			actions = append(actions, action)
 		}
-		for index, name := range []string{"Status", "Worklogs", "Plans", "Presets", "Trash"} {
+		for index, name := range tabLabels {
 			if index == 0 || m.workspace != nil {
 				add(fmt.Sprint(index+1), fmt.Sprint(index+1), "Open "+name)
 			}
@@ -58,6 +58,49 @@ func (m model) commandActions() []commandAction {
 			add("enter", "Enter", "Preset details")
 			add("e", "e", "Edit preset")
 			add("D", "D", "Delete preset")
+		}
+	} else if m.activeTab == issuesTab && m.workspace != nil {
+		add("s", "s", "Sort current list")
+		add("pgup", "PgUp", "Previous page")
+		add("pgdown", "PgDn", "Next page")
+		add("home", "Home", "First matching item")
+		add("end", "End", "Last matching item")
+		add("t", "t", "Toggle Issues or Epics view")
+		if m.issueView == epicListView {
+			add("/", "/", "Find epics")
+			if m.selectedEpic() != nil {
+				add("enter", "Enter", "Open epic issues")
+			}
+			if m.epicSearch != nil {
+				add("esc", "Esc", "Clear epic filter")
+			}
+		} else {
+			if !m.issuesLoading && m.issuesErr == "" {
+				add("a", "a", "Add issue")
+			}
+			add("/", "/", "Find issues")
+			if m.selectedIssue() != nil {
+				add("space", "Space", "Toggle issue selection and advance")
+				add("v", "v", "Start or finish range selection")
+				add("V", "V", "Start or finish range unselection")
+				add("ctrl+a", "Ctrl+A", "Select all matching issues")
+			}
+			if len(m.issueMarks) > 0 && !m.issuesLoading && m.issuesErr == "" {
+				add("b", "b", "Assign epic to selected issues")
+			}
+			if m.selectedIssue() != nil {
+				add("enter", "Enter", "Issue details")
+				if !m.issuesLoading && m.issuesErr == "" {
+					add("e", "e", "Edit issue metadata")
+				}
+			}
+			if m.issueRange != nil {
+				add("esc", "Esc", "Finish range selection")
+			} else if len(m.issueMarks) > 0 {
+				add("esc", "Esc", "Clear issue selection")
+			} else if m.issueSearch != nil || m.issueEpic != nil {
+				add("esc", "Esc", "Clear filter or return to epics")
+			}
 		}
 	} else if m.activeTab == plansTab && m.workspace != nil {
 		if m.plan != nil {
@@ -106,7 +149,7 @@ func (m model) commandActions() []commandAction {
 	}
 	add("r", "r", "Refresh current view")
 	add("g", "g", "Toggle activity")
-	for index, name := range []string{"Status", "Worklogs", "Plans", "Presets", "Trash"} {
+	for index, name := range tabLabels {
 		if index == 0 || m.workspace != nil {
 			add(fmt.Sprint(index+1), fmt.Sprint(index+1), "Open "+name)
 		}
@@ -117,7 +160,7 @@ func (m model) commandActions() []commandAction {
 
 type actionHint struct{ chord, label string }
 
-func (m model) idleHints() (primary, secondary []actionHint) {
+func (m model) idleHints() (primary []actionHint) {
 	primary = []actionHint{{"↑/↓", "Select"}}
 	keys := []string{}
 	switch m.activeTab {
@@ -125,6 +168,9 @@ func (m model) idleHints() (primary, secondary []actionHint) {
 		keys = []string{"s", "c", "enter", "r"}
 	case presetsTab:
 		keys = []string{"a", "e", "D", "enter", "r"}
+	case issuesTab:
+		primary[0] = actionHint{"↑/↓ PgUp/Dn", "Select"}
+		keys = []string{"space", "v", "b", "s", "/", "t", "esc", "a", "e", "enter", "r"}
 	case trashTab:
 		keys = []string{"R", "s", "enter", "r"}
 	case plansTab:
@@ -152,6 +198,23 @@ func (m model) idleHints() (primary, secondary []actionHint) {
 	if m.activeTab == worklogsTab {
 		labels["A"] = "Preset"
 	}
+	if m.activeTab == issuesTab {
+		labels["s"] = "Sort"
+		labels["t"] = "Epics"
+		labels["space"], labels["v"], labels["b"] = "Mark", "Range", "Assign epic"
+		if m.issueRange != nil {
+			labels["v"], labels["esc"] = "Finish range", "Finish range"
+		} else if len(m.issueMarks) > 0 {
+			labels["esc"] = "Clear marks"
+		}
+		if m.issuesErr != "" {
+			labels["r"] = "Retry"
+			keys = append([]string{"r"}, keys...)
+		}
+		if m.issueView == epicListView {
+			labels["t"], labels["enter"] = "Issues", "Members"
+		}
+	}
 	for _, key := range keys {
 		for _, action := range m.commandActions() {
 			if action.key == key {
@@ -160,21 +223,15 @@ func (m model) idleHints() (primary, secondary []actionHint) {
 			}
 		}
 	}
-	primary = append(primary, actionHint{"?", "Actions"}, actionHint{"q", "Quit"})
-	secondary = []actionHint{{"1", "Status"}, {"2", "Worklogs"}, {"3", "Plans"}, {"4", "Presets"}, {"5", "Trash"}}
 	if m.activeTab == worklogsTab {
-		secondary = append(secondary, actionHint{"d/w/m", "View"})
+		primary = append(primary, actionHint{"d/w/m", "View"})
 		if m.worklogView == monthWorklogView {
 			primary = append([]actionHint{{"hjkl", "Day"}, {"PgUp/Dn", "Month"}}, primary[1:]...)
 		}
 	}
 	if m.activeTab == trashTab || (m.activeTab == plansTab && m.plan == nil) {
-		secondary = append(secondary, actionHint{"d/w", "View"})
+		primary = append(primary, actionHint{"d/w", "View"})
 	}
-	activity := "Activity"
-	if m.activityOpen {
-		activity = "Close activity"
-	}
-	secondary = append(secondary, actionHint{"g", activity})
+	primary = append(primary, actionHint{"?", "Actions"}, actionHint{"q", "Quit"})
 	return
 }

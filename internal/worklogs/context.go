@@ -19,9 +19,14 @@ const (
 type IssueMetadata struct {
 	IssueKey                 string
 	Title                    string
+	Epic                     string
+	LoggedSeconds            int64
+	RemainingSeconds         *int64
+	OverrunSeconds           int64
 	ManualMaxEstimateSeconds *int64
 	CachedMaxEstimateSeconds *int64
 	EstimateSource           string
+	CreatedAt                time.Time
 	UpdatedAt                time.Time
 	MaxEstimateSeconds       *int64
 	SourceAdapterFamily      string

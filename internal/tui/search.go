@@ -123,6 +123,10 @@ func (m model) updateActions(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func actionKey(value string) tea.KeyPressMsg {
 	switch value {
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
+	case "ctrl+a":
+		return tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}
 	case "enter":
 		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "up":
@@ -256,5 +260,5 @@ func (m model) renderActions(width, height int) string {
 }
 
 func (m model) activeTabLabel() string {
-	return [...]string{"Status", "Worklogs", "Plans", "Presets", "Trash"}[m.activeTab]
+	return tabLabels[m.activeTab]
 }

@@ -57,6 +57,11 @@ type presetService interface {
 	ApplyDraft(context.Context, config.EffectiveConfig, string, int64, worklogs.AddInput) (worklogs.AddResult, error)
 }
 
+type issueService interface {
+	SearchIssues(context.Context, string, string, string) ([]worklogs.IssueMetadata, error)
+	ApplyIssueMetadata(context.Context, []worklogs.IssueMetadataPatch, bool) error
+}
+
 type activityService interface {
 	Start(context.Context, activity.StartInput) (activity.Entry, error)
 	Finish(context.Context, string, activity.FinishInput) (activity.Entry, error)
@@ -82,6 +87,7 @@ type workspace struct {
 	mutations       worklogMutations
 	trash           trashService
 	presets         presetService
+	issues          issueService
 	activities      activityService
 	plans           planService
 	tracker         changeTracker
@@ -145,6 +151,7 @@ func openWorkspace(ctx context.Context) (*workspace, error) {
 		mutations:       worklogService,
 		trash:           worklogService,
 		presets:         presets.NewService(store),
+		issues:          worklogService,
 		activities:      activity.NewService(store),
 		plans:           reconcile.NewService(store),
 		tracker:         tracker,

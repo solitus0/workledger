@@ -89,7 +89,7 @@ func TestRefreshRemoteFailureDoesNotPartiallyPersist(t *testing.T) {
 		t.Fatal("expected remote error")
 	}
 	stored, lookupErr := worklogs.NewService(store).ListIssueMetadata(context.Background(), []string{"APP-1", "APP-2"})
-	if lookupErr != nil || len(stored) != 0 {
+	if lookupErr != nil || len(stored) != 2 || stored[0].CachedMaxEstimateSeconds != nil || stored[1].CachedMaxEstimateSeconds != nil || !stored[0].RefreshedAt.IsZero() || !stored[1].RefreshedAt.IsZero() {
 		t.Fatalf("metadata should remain unchanged: %#v err=%v", stored, lookupErr)
 	}
 }
@@ -116,7 +116,7 @@ func TestRefreshCancellationDoesNotPartiallyPersist(t *testing.T) {
 		t.Fatalf("Refresh error = %v, want context.Canceled", err)
 	}
 	stored, lookupErr := worklogs.NewService(store).ListIssueMetadata(context.Background(), []string{"APP-1", "APP-2"})
-	if lookupErr != nil || len(stored) != 0 {
+	if lookupErr != nil || len(stored) != 2 || stored[0].CachedMaxEstimateSeconds != nil || stored[1].CachedMaxEstimateSeconds != nil || !stored[0].RefreshedAt.IsZero() || !stored[1].RefreshedAt.IsZero() {
 		t.Fatalf("metadata should remain unchanged: %#v err=%v", stored, lookupErr)
 	}
 }

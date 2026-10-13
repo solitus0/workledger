@@ -143,6 +143,33 @@ func TestActionsSearchDispatchesThroughExistingConfirmation(t *testing.T) {
 	}
 }
 
+func TestActionsOpenAndCloseFromEveryDestination(t *testing.T) {
+	for _, destination := range []struct{ key, label string }{
+		{"1", "Status"}, {"2", "Worklogs"}, {"3", "Plans"},
+		{"4", "Presets"}, {"5", "Trash"}, {"6", "Issues"},
+	} {
+		t.Run(destination.label, func(t *testing.T) {
+			ws, deps := testWorkspace(t)
+			m := newModel(t.Context(), deps, ws, nil)
+			m.width, m.height = minimumWidth, minimumHeight
+			next, _ := m.Update(textKey(destination.key))
+			m = next.(model)
+			selectedTab := m.activeTab
+			next, _ = m.Update(textKey("?"))
+			m = next.(model)
+			if m.overlay != helpOverlay || !strings.Contains(stripANSI(m.View().Content), "Actions · "+destination.label) {
+				t.Fatal("Actions did not render for the selected destination")
+			}
+			assertRedesignBounds(t, m, "Actions on "+destination.label)
+			next, _ = m.Update(specialKey(tea.KeyEsc))
+			m = next.(model)
+			if m.overlay != noOverlay || m.actions != nil || m.activeTab != selectedTab {
+				t.Fatal("closing Actions changed the selected destination")
+			}
+		})
+	}
+}
+
 func TestWorklogDetailsScrollAndReturnToSelection(t *testing.T) {
 	ws, deps := testWorkspace(t)
 	m := newModel(context.Background(), deps, ws, nil)
@@ -247,7 +274,7 @@ func TestRedesignFitsEveryDestinationAndInteraction(t *testing.T) {
 			base.presets = []presets.Preset{{ID: "preset", Name: "Daily standup", IssueKey: "WL-1", StartTime: "10:30", DurationSeconds: 900, Description: "Standup"}}
 			base.plans = []reconcile.ListEntry{{ID: "plan", Direction: "push", ExecutionState: "partially_applied", CreatedAt: deps.now()}}
 			for _, drawer := range []bool{false, true} {
-				for _, destination := range []tab{statusTab, worklogsTab, plansTab, presetsTab, trashTab} {
+				for _, destination := range []tab{statusTab, worklogsTab, plansTab, presetsTab, trashTab, issuesTab} {
 					m := base
 					m.activeTab, m.activityOpen = destination, drawer
 					assertRedesignBounds(t, m, fmt.Sprintf("destination %d drawer=%t", destination, drawer))

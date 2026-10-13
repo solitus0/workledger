@@ -36,7 +36,18 @@ const (
 	plansTab
 	presetsTab
 	trashTab
+	issuesTab
+	tabCount
 )
+
+var tabLabels = [tabCount]string{
+	statusTab:   "Status",
+	worklogsTab: "Worklogs",
+	plansTab:    "Plans",
+	presetsTab:  "Presets",
+	trashTab:    "Trash",
+	issuesTab:   "Issues",
+}
 
 type worklogView int
 
@@ -77,6 +88,8 @@ const (
 	retryFailedPlanOverlay
 	retryUncertainPlanOverlay
 	detailsOverlay
+	issueSortOverlay
+	epicAssignmentOverlay
 )
 
 type noticeKind int
@@ -180,8 +193,11 @@ type interactionState struct {
 	planForm       *planFormState
 	planOperation  *planOperationState
 	presetForm     *presetFormState
+	issueForm      *issueFormState
+	epicAssignment *epicAssignmentState
 	presetPicker   *presetPickerState
 	issuePicker    *issuePickerState
+	issueHistory   *issueHistoryState
 	actions        *actionsState
 	detailViewport viewport.Model
 	detailTitle    string
@@ -198,6 +214,7 @@ const (
 	interactionWorklogForm
 	interactionMove
 	interactionPresetForm
+	interactionIssueForm
 	interactionPresetPicker
 	interactionIssuePicker
 	interactionPlanForm
@@ -222,6 +239,9 @@ func (state interactionState) kind() interactionKind {
 	}
 	if state.presetForm != nil {
 		return interactionPresetForm
+	}
+	if state.issueForm != nil {
+		return interactionIssueForm
 	}
 	if state.planForm != nil {
 		return interactionPlanForm
@@ -271,6 +291,7 @@ type model struct {
 	statusScreen
 	interactionState
 	presetsScreen
+	issuesScreen
 	activityDrawer
 	plansScreen
 }
@@ -388,8 +409,9 @@ const (
 	refreshPresets
 	refreshPlans
 	refreshActivity
+	refreshIssues
 	refreshDateData  = refreshWorklogs | refreshTrash | refreshPlans
-	refreshWorkspace = refreshDateData | refreshPresets | refreshActivity
+	refreshWorkspace = refreshDateData | refreshPresets | refreshActivity | refreshIssues
 )
 
 type mutationResultMsg struct {
@@ -449,6 +471,7 @@ func newModel(ctx context.Context, deps dependencies, ws *workspace, workspaceEr
 		worklogsScreen: worklogsScreen{worklogLoading: ws != nil, worklogGen: 1},
 		trashScreen:    trashScreen{trashScope: "", trashLoading: ws != nil, trashGen: 1},
 		presetsScreen:  presetsScreen{presetLoading: ws != nil, presetGen: 1},
+		issuesScreen:   issuesScreen{issuesLoading: ws != nil, issuesGen: 1, issueSelected: -1, issueSort: sortCreatedAt},
 		activityDrawer: activityDrawer{activityLoading: ws != nil, activityGen: 1},
 		plansScreen:    plansScreen{planLoading: ws != nil, planGen: 1, planListView: planWeekListView},
 	}
@@ -467,7 +490,7 @@ func (m model) Init() tea.Cmd {
 		cmds = append(cmds, tea.RequestBackgroundColor)
 	}
 	if m.workspace != nil {
-		cmds = append(cmds, m.worklogCmd(m.worklogGen, m.selectedDate), m.trashCmd(m.trashGen, m.selectedDate), m.presetCmd(m.presetGen), m.planListCmd(m.planGen), m.activityListCmd(m.activityGen))
+		cmds = append(cmds, m.worklogCmd(m.worklogGen, m.selectedDate), m.trashCmd(m.trashGen, m.selectedDate), m.presetCmd(m.presetGen), m.issueListCmd(m.issuesGen), m.planListCmd(m.planGen), m.activityListCmd(m.activityGen))
 	} else if m.workspaceLoading {
 		cmds = append(cmds, m.workspaceCmd(m.workspaceGen))
 	}
@@ -494,13 +517,16 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.colorReady = true
 		m.restyleFormInputs()
 		m.restylePresetInputs()
+		m.restyleIssueInputs()
 		m.restyleIssuePickerInput()
 		m.restyleSearchInputs()
+		m.refreshIssueHistoryMetadata()
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resizeForm()
 		m.resizePresetInputs()
+		m.resizeIssueInputs()
 		m.resizeIssuePickerInput()
 		m.resizeSearchInputs()
 		m.refreshDetailViewport()
@@ -609,6 +635,8 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.applyIssuePickerResult(msg)
 	case issueDescriptionsResultMsg:
 		return m.applyIssueDescriptionsResult(msg)
+	case issueHistoryResultMsg:
+		return m.applyIssueHistoryResult(msg)
 	case descriptionSuggestionsResultMsg:
 		if m.form == nil || msg.generation != m.descriptionSuggestionGen ||
 			!strings.EqualFold(strings.TrimSpace(m.form.inputs[issueInput].Value()), msg.issueKey) {
@@ -718,7 +746,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		}
 		m.setNotice(kind, fmt.Sprintf("plan operation complete: applied %d, failed %d, skipped %d", msg.apply.AppliedCount, msg.apply.FailedCount, msg.apply.SkippedCount))
 		m.planGen++
-		return m, tea.Batch(m.planLoadCmd(m.planGen, msg.planID), m.startWorklogLoad(), m.startTrashLoad())
+		return m, tea.Batch(m.planLoadCmd(m.planGen, msg.planID), m.startWorklogLoad(), m.startTrashLoad(), m.startIssueLoad())
 	case workspaceResultMsg:
 		if msg.generation != m.workspaceGen {
 			if msg.workspace != nil && msg.workspace.close != nil {
@@ -754,6 +782,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			cmds = append(cmds, m.startActivityLoad())
 		}
 		if msg.changed {
+			if m.issueHistory != nil {
+				cmds = append(cmds, m.reloadIssueHistory())
+			}
 			if m.planOperation != nil {
 				return m, tea.Batch(cmds...)
 			}
@@ -761,6 +792,14 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 				if !m.move.saving {
 					cmds = append(cmds, m.loadMove(m.move.preview.Source.Revision))
 				}
+			} else if m.epicAssignment != nil {
+				m.epicAssignment.stale = true
+				m.epicAssignment.err = "Issues changed externally; cancel and reopen before applying."
+				cmds = append(cmds, m.startIssueLoad())
+			} else if m.issueForm != nil {
+				m.issueForm.stale = true
+				m.issueFormError = "issues changed externally; cancel and reopen before saving"
+				cmds = append(cmds, m.startIssueLoad())
 			} else if m.presetForm != nil {
 				m.presetForm.stale = true
 				m.setNotice(noticeWarning, "presets changed externally; reload before saving")
@@ -803,6 +842,12 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleMutationResult(msg)
 	case presetMutationResultMsg:
 		return m.handlePresetMutationResult(msg)
+	case issueListResultMsg:
+		return m.handleIssueListResult(msg)
+	case issueMutationResultMsg:
+		return m.handleIssueMutationResult(msg)
+	case epicAssignmentResultMsg:
+		return m.handleEpicAssignmentResult(msg)
 	case activityListResultMsg:
 		if msg.generation != m.activityGen {
 			return m, nil
@@ -874,6 +919,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 
 	key, ok := msg.(tea.KeyPressMsg)
 	if !ok {
+		if m.overlay == epicAssignmentOverlay {
+			return m.updateEpicAssignment(msg)
+		}
 		if m.overlay == helpOverlay {
 			return m.updateActions(msg)
 		}
@@ -906,6 +954,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case interactionHelp:
 		return m.updateActions(msg)
 	case interactionConfirmation:
+		if m.overlay == epicAssignmentOverlay {
+			return m.updateEpicAssignment(msg)
+		}
 		return m.updateOverlay(keyName)
 	case interactionPresetPicker:
 		return m.updatePresetPicker(msg)
@@ -913,6 +964,8 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.updateIssuePicker(msg)
 	case interactionPresetForm:
 		return m.updatePresetForm(msg)
+	case interactionIssueForm:
+		return m.updateIssueForm(msg)
 	case interactionPlanForm:
 		return m.updatePlanForm(msg)
 	case interactionPlanOperation:
@@ -924,6 +977,12 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	}
 	if m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.worklogView == dayWorklogView {
 		return m.updateWorklogFilter(msg)
+	}
+	if m.issueSearch != nil && m.issueSearch.editing && m.activeTab == issuesTab && m.issueView == issueListView {
+		return m.updateIssueSearch(msg)
+	}
+	if m.epicSearch != nil && m.epicSearch.editing && m.activeTab == issuesTab && m.issueView == epicListView {
+		return m.updateEpicSearch(msg)
 	}
 	if keyName == "g" {
 		m.activityOpen = !m.activityOpen
@@ -954,6 +1013,10 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	}
 	if keyName == "5" && m.workspace != nil {
 		m.activateTab(trashTab)
+		return m, nil
+	}
+	if keyName == "6" && m.workspace != nil {
+		m.activateTab(issuesTab)
 		return m, nil
 	}
 	if keyName == "q" {
@@ -998,10 +1061,12 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	if m.focus == focusRail {
 		switch keyName {
 		case "up", "k":
+			m.issueRange = nil
 			m.activeTab = max(statusTab, m.activeTab-1)
 		case "down", "j":
+			m.issueRange = nil
 			if m.workspace != nil {
-				m.activeTab = min(trashTab, m.activeTab+1)
+				m.activeTab = min(issuesTab, m.activeTab+1)
 			}
 		case "enter", " ":
 			m.focus = focusWorkspace
@@ -1017,6 +1082,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	if m.activeTab == presetsTab {
 		return m.updatePresets(keyName)
 	}
+	if m.activeTab == issuesTab {
+		return m.updateIssues(keyName)
+	}
 	if m.activeTab == plansTab {
 		return m.updatePlans(keyName)
 	}
@@ -1024,6 +1092,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 }
 
 func (m *model) activateTab(destination tab) {
+	if destination != m.activeTab {
+		m.issueRange = nil
+	}
 	m.activeTab = destination
 	m.focus = focusWorkspace
 }
@@ -1061,6 +1132,8 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 			m.activateTab(presetsTab)
 		case railCards[4].contains(msg.X, msg.Y) && m.workspace != nil:
 			m.activateTab(trashTab)
+		case railCards[5].contains(msg.X, msg.Y) && m.workspace != nil:
+			m.activateTab(issuesTab)
 		}
 		return m, nil
 	}
@@ -1155,6 +1228,9 @@ func (m *model) refreshCmd(scope refreshScope) tea.Cmd {
 	}
 	if scope&refreshActivity != 0 {
 		cmds = append(cmds, m.startActivityLoad())
+	}
+	if scope&refreshIssues != 0 {
+		cmds = append(cmds, m.startIssueLoad())
 	}
 	return tea.Batch(cmds...)
 }
@@ -1269,9 +1345,9 @@ func (m model) consumeTrackerCmd(refresh refreshScope) tea.Cmd {
 func refreshForMutation(kind string) refreshScope {
 	switch kind {
 	case "restore", "restore-day", "delete", "delete-day":
-		return refreshWorklogs | refreshTrash
+		return refreshWorklogs | refreshTrash | refreshIssues
 	case "add", "edit", "move":
-		return refreshWorklogs
+		return refreshWorklogs | refreshIssues
 	default:
 		return refreshWorkspace
 	}

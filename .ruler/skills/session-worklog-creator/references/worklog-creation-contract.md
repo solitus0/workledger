@@ -15,7 +15,7 @@ Required gate order:
 0. **Work evidence.** Before commands or requests for missing fields, verify that the session contains evidence of work performed. An empty thread or one containing only a worklog request, duration, issue key, branch name, or proposed task produces no worklogs. Explain that no work evidence is available; do not ask for a description. Actual analysis, review, investigation, implementation, validation, and unsuccessful attempts qualify without requiring a completed implementation.
 1. **Duration.** If the invocation/request lacks explicit duration, stop before commands and ask for duration only.
 2. **No duration inference.** Never derive duration from elapsed time, timestamps, tool history, commit count, branch age, calendar gaps, or `workledger` context.
-3. **Issue key.** Explicit user selection wins. Otherwise use an unambiguous key in current-session evidence, then run `git branch --show-current` once if unresolved. If neither identifies one key, inspect local `workledger issue-metadata list --output json`, optionally filtering with an evidence-supported `--search` title substring or `--issue-prefix`. Choose only one clearly matching title supported by the session's work evidence; ask for the issue key for broad, ambiguous, conflicting, absent, or unavailable matches. Issue estimates, remaining budget, and recency never establish attribution or duration.
+3. **Issue key.** Explicit user selection wins. Otherwise use an unambiguous key in current-session evidence, then run `git branch --show-current` once if unresolved. If neither identifies one key, inspect local `workledger issues list --output json`, optionally filtering with an evidence-supported `--search` title substring or `--issue-prefix`. Choose only one clearly matching title supported by the session's work evidence; ask for the issue key for broad, ambiguous, conflicting, absent, or unavailable matches. Issue estimates, remaining budget, and recency never establish attribution or duration.
 4. **Optional user input.** Started time, date/window, log count, split, and description need not be supplied by the user. Never ask for a description, even when supplied text is unusable; generate or repair it from session evidence.
 5. **Default placement.** If no start or date/window is supplied, create one worklog with `--fill --today`. If a date/window is supplied without a start, use `--fill DATE_WINDOW`.
 6. **Default count.** If no log count, multiple issues, per-entry durations, split, or payload-shaped evidence is supplied, create one log.
@@ -29,7 +29,7 @@ Allowed command families only:
 
 ```text
 git branch --show-current
-workledger issue-metadata list [--search TITLE_TEXT] [--issue-prefix PREFIX] --output json
+workledger issues list [--search TITLE_TEXT] [--issue-prefix PREFIX] --output json
 
 workledger worklogs add --issue KEY (--fill DATE_WINDOW | --fit DATE_WINDOW) [--overtime] --duration DURATION --description "..." --dry --output json
 workledger worklogs add --issue KEY (--fill DATE_WINDOW | --fit DATE_WINDOW) [--overtime] --duration DURATION --description "..." --output json

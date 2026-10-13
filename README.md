@@ -80,30 +80,46 @@ After configuring remote adapters, make the first reconciliation action a pull. 
 
 Workledger also includes an interactive terminal UI, available through `workledger tui`. In its Day view, select a worklog and press `M` to preview a move. Use the up/down arrows to choose a valid position before or after another booking or at a workday boundary, `Ctrl+S` to save, and `Esc` to cancel. Moves preserve duration and other bookings and avoid configured lunch; `r` refreshes the source and available positions.
 
-## Issue titles and estimates
+## Issues and epics
 
-Decorate an issue locally, including before its first worklog:
-
-```sh
-workledger issue-metadata set --issue SBAH-2 --title "Product data lifecycle" --max-estimate 16h
-workledger issue-metadata list --search "lifecycle" --output json
-workledger issue-metadata set --issue SBAH-2 --clear-max-estimate
-```
-
-Title and maximum estimate are independently optional. Manual estimates override cached Jira estimates; clearing the manual estimate reveals Jira's value again. Jira refresh preserves local decorations. Estimates accept positive whole-second Go durations and remain informational: they never limit worklog creation or supply the duration an agent logs.
-
-Apply multiple decorations using a JSON array of `{issue_key, title, max_estimate_seconds}` patches. Omitted fields stay unchanged; `null` clears a local field. The whole batch is validated before atomic persistence, and `--dry` writes no decorations. The [ten-issue example](docs/examples/issue-metadata.json) uses `16h` as the maximum for both `8–16h` estimates:
+Issues are a local catalog with optional titles, maximum estimates, and epic groups. Saving a worklog for a new key automatically creates its local issue. No metadata is required, and no remote issue is created.
 
 ```sh
-workledger issue-metadata apply --file docs/examples/issue-metadata.json --dry --output json
-workledger issue-metadata apply --file docs/examples/issue-metadata.json
+workledger issues set --issue SBAH-1
+workledger issues set --issue SBAH-2 --title "Product data lifecycle" --max-estimate 16h --epic "Product documents"
+workledger issues list --issue-prefix SBAH
+workledger issues list --epic "Product documents"
+workledger issues epics --issue-prefix SBAH
+workledger issues set --issue SBAH-2 --clear-epic
 ```
 
-You can also provide the array through `--stdin`. Bare `issue-metadata list` includes all decorated and cached issues; date filters restrict it to issues with active local worklogs in that window. Keys stay usable without metadata.
+Each issue belongs to at most one named local epic. Groups need no separate creation and do not change Jira hierarchy. `issues list --search` matches issue keys, titles, and epic names; `issues epics --search` matches group names.
 
-The TUI issue picker includes unused decorated issues and titles. `Ctrl+F` opens prefix search and then cycles description and title search; choosing an issue fills the draft. Selected-worklog detail shows all-time active local estimate usage, for example `62.5% (10h / 16h)` or `125.0% (20h / 16h) · 4h over estimate`. This measures logged effort, not completion; trash and additional remote rows are excluded. The local total is only as complete as the history available locally.
+Tables show readable estimate, logged, remaining, and overrun durations. Budgets use all active local worklogs across all dates; date selectors choose issues without reducing their lifetime logged totals. Trash and additional remote rows are excluded. The local total is only as complete as the history available locally.
 
-Agents may use local titles to resolve a missing issue key only when the session's work evidence clearly matches one title. Explicit user selection takes priority, followed by an unambiguous session or branch key; ambiguous matches require clarification.
+Remaining time is the sum of each estimated issue's unused budget, clamped at zero; overruns are shown separately. Missing estimates appear as `unknown`. Partial rollups show known remaining time and the number of unestimated issues, so an unknown budget never appears exhausted. These measures describe logged effort, not completion.
+
+Manual estimates override cached Jira estimates; `--clear-max-estimate` reveals Jira's value again. `issues refresh` preserves local title, estimate, and epic fields. Estimates accept positive whole-second Go durations and remain informational: they never limit worklog creation or supply the duration an agent logs.
+
+Apply multiple issues using a JSON array of `{issue_key, title, max_estimate_seconds, epic}` patches. Only `issue_key` is required; omitted fields stay unchanged, and `null` clears a local field. Clearing every optional field keeps the issue. The entire batch is validated before atomic persistence, and `--dry` writes no issues. The [ten-issue example](docs/examples/issues.json) groups the supplied SBAH scope and uses `16h` as the maximum for both `8–16h` estimates:
+
+```sh
+workledger issues apply --file docs/examples/issues.json --dry --output json
+workledger issues apply --file docs/examples/issues.json
+workledger issues epics --issue-prefix SBAH
+```
+
+You can also provide the array through `--stdin`. Use `--output json` for exact seconds, summary counts, estimate source, and cache provenance. `workledger init` provisions issue storage while preserving existing metadata and worklogs.
+
+In `workledger tui`, press `6` for Issues. Use `t` to switch to Epics, Enter to open a group's members or an issue's details, `/` to search, `a` to add, and `e` to edit. Save with `Ctrl+S` or cancel with Esc. The existing issue picker includes unused issues and titles. Selected-worklog detail continues to show all-time estimate usage, such as `62.5% (10h / 16h)` or `125.0% (20h / 16h) · 4h over estimate`.
+
+Expanded issue details include all active local worklogs across every date, with local start times, durations, and full descriptions. Use Tab or left/right to focus metadata or history, arrows and PgUp/PgDn to scroll, Home/End to reach the first/last entries, and `r` to refresh or retry. History loads in pages as you browse. Esc returns to the same issue and marked batch.
+
+To assign a batch to an epic, mark issues with Space (toggle and advance), or press `v` and move to select a range; press `v` again to finish the range. `V` unselects a range, and `Ctrl+A` selects all matching issues. Press `b`, choose an existing local epic or type a new name, then Enter to apply. Choose **No epic** explicitly to remove assignments. Marks survive sorting and filtering, and the count includes selections outside the current view. Esc finishes a range, clears marks, then clears a filter or returns to Epics. Cancelling or a failed save keeps the batch.
+
+In Issues or Epics, press `s` to choose a sort, Enter to apply, or Esc to cancel. Issues show logged time alongside remaining time and offer created at (newest first), natural key, remaining, overrun, title, and logged order; Epics show logged totals and offer name, remaining, overrun, and logged order. Issues default to Created at descending; choices last for the session and preserve selection across refresh and group drilldown. Creation means when an issue first entered the local catalog, and metadata edits or epic assignments do not change it. Run `workledger init` once to migrate an older catalog; existing creation dates use the earliest surviving local timestamp and are approximate. Missing estimates and titles sort last; logged time remains available for unestimated issues. `PgUp`/`PgDn` jump one visible page with one item of overlap, accounting for search, Activity, and wrapped epic rows; `Home`/`End` jump to the first/last matching item while browsing. In a search field those keys move the text cursor, and expanded details retain their own scrolling.
+
+Agents may use local titles to resolve a missing issue key only when session evidence clearly matches one title. Explicit user selection takes priority, followed by an unambiguous session or branch key; ambiguous matches require clarification. Estimates and remaining budget never determine attribution or duration.
 
 ## Daily workflow
 

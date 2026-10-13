@@ -81,7 +81,7 @@ func TestIdleActionBarOmitsTabFocus(t *testing.T) {
 	m := newModel(context.Background(), deps, ws, nil)
 	m.width, m.height = 120, 32
 
-	for _, destination := range []tab{statusTab, worklogsTab, plansTab, presetsTab, trashTab} {
+	for _, destination := range []tab{statusTab, worklogsTab, plansTab, presetsTab, trashTab, issuesTab} {
 		m.activeTab = destination
 		if footer := m.renderFooter(m.width); strings.Contains(footer, "Tab Focus") {
 			t.Fatalf("tab %d action bar contains Tab Focus: %q", destination, footer)
@@ -275,6 +275,7 @@ func TestOnlyNavigationRailAndActionBarDefineNavigationShortcuts(t *testing.T) {
 	surfaces := map[string]string{
 		"worklogs":          m.renderWorklogWorkspace(89, 33),
 		"presets":           m.renderPresetWorkspace(89, 33),
+		"issues":            m.renderIssuesWorkspace(89, 33),
 		"plans":             m.renderPlanListWorkspace(89, 33),
 		"undersized screen": func() string { m.width, m.height = 80, 20; return m.render() }(),
 	}
@@ -300,7 +301,7 @@ func TestOnlyNavigationRailAndActionBarDefineNavigationShortcuts(t *testing.T) {
 
 	for name, surface := range surfaces {
 		for _, shortcut := range []string{
-			"1 Status", "2 Worklogs", "3 Plans", "4 Presets", "5 Trash",
+			"1 Status", "2 Worklogs", "3 Plans", "4 Presets", "5 Trash", "6 Issues",
 			"Press a", "Press n", "press Enter", "q quit", "y / Enter", "n / Esc", "Esc Cancel",
 			"Tab/Shift+Tab", "j/k row", "a add", "R restore",
 		} {
@@ -311,7 +312,7 @@ func TestOnlyNavigationRailAndActionBarDefineNavigationShortcuts(t *testing.T) {
 	}
 
 	rail := m.renderRail(33)
-	for _, shortcut := range []string{"1 Status", "2 Worklogs", "3 Plans", "4 Presets", "5 Trash"} {
+	for _, shortcut := range []string{"1 Status", "2 Worklogs", "3 Plans", "4 Presets", "5 Trash", "6 Issues"} {
 		if strings.Count(rail, shortcut) != 1 {
 			t.Fatalf("destination rail should define navigation shortcut %q once:\n%s", shortcut, rail)
 		}

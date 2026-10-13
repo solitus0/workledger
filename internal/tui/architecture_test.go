@@ -20,7 +20,7 @@ func TestLayoutOwnsRenderAndMouseGeometry(t *testing.T) {
 	m := newModel(t.Context(), deps, ws, nil)
 	m.width, m.height = 120, 40
 	_, cards := m.renderRailLayout(layout.rail.height)
-	wantTabs := [...]tab{statusTab, worklogsTab, plansTab, presetsTab, trashTab}
+	wantTabs := [...]tab{statusTab, worklogsTab, plansTab, presetsTab, trashTab, issuesTab}
 	for index, card := range cards {
 		next, _ := m.updateMouse(mouseClick(card.x+1, card.y+card.height/2, tea.MouseLeft))
 		if got := next.(model).activeTab; got != wantTabs[index] {
@@ -30,13 +30,13 @@ func TestLayoutOwnsRenderAndMouseGeometry(t *testing.T) {
 }
 
 func TestMutationRefreshEffectsStayCapabilityScoped(t *testing.T) {
-	if got := refreshForMutation("add"); got != refreshWorklogs {
+	if got := refreshForMutation("add"); got != refreshWorklogs|refreshIssues {
 		t.Fatalf("add refresh = %v", got)
 	}
-	if got := refreshForMutation("delete"); got != refreshWorklogs|refreshTrash {
+	if got := refreshForMutation("delete"); got != refreshWorklogs|refreshTrash|refreshIssues {
 		t.Fatalf("delete refresh = %v", got)
 	}
-	if got := refreshForMutation("add") | refreshPresets; got != refreshWorklogs|refreshPresets {
+	if got := refreshForMutation("add") | refreshPresets; got != refreshWorklogs|refreshPresets|refreshIssues {
 		t.Fatalf("preset-backed add refresh = %v", got)
 	}
 }
@@ -66,24 +66,25 @@ func TestUnknownTrackedResultFailsClosed(t *testing.T) {
 func TestRefreshScopesOnlyStartRequestedCapabilities(t *testing.T) {
 	ws, deps := testWorkspace(t)
 	ws.activities = &fakeActivities{}
-	assertChanged := func(scope refreshScope, worklogs, trash, presets, plans, activities bool) {
+	assertChanged := func(scope refreshScope, worklogs, trash, presets, plans, activities, issues bool) {
 		t.Helper()
 		m := newModel(t.Context(), deps, ws, nil)
-		beforeWorklogs, beforeTrash, beforePresets, beforePlans, beforeActivities := m.worklogGen, m.trashGen, m.presetGen, m.planGen, m.activityGen
+		beforeWorklogs, beforeTrash, beforePresets, beforePlans, beforeActivities, beforeIssues := m.worklogGen, m.trashGen, m.presetGen, m.planGen, m.activityGen, m.issuesGen
 		if cmd := m.refreshCmd(scope); cmd == nil {
 			t.Fatalf("refresh %v returned no command", scope)
 		}
 		if (m.worklogGen != beforeWorklogs) != worklogs || (m.trashGen != beforeTrash) != trash ||
 			(m.presetGen != beforePresets) != presets || (m.planGen != beforePlans) != plans ||
-			(m.activityGen != beforeActivities) != activities {
-			t.Fatalf("refresh %v changed generations worklogs=%t trash=%t presets=%t plans=%t activities=%t", scope,
+			(m.activityGen != beforeActivities) != activities || (m.issuesGen != beforeIssues) != issues {
+			t.Fatalf("refresh %v changed generations worklogs=%t trash=%t presets=%t plans=%t activities=%t issues=%t", scope,
 				m.worklogGen != beforeWorklogs, m.trashGen != beforeTrash, m.presetGen != beforePresets,
-				m.planGen != beforePlans, m.activityGen != beforeActivities)
+				m.planGen != beforePlans, m.activityGen != beforeActivities, m.issuesGen != beforeIssues)
 		}
 	}
 
-	assertChanged(refreshWorklogs, true, false, false, false, false)
-	assertChanged(refreshDateData, true, true, false, true, false)
-	assertChanged(refreshActivity, false, false, false, false, true)
-	assertChanged(refreshWorkspace, true, true, true, true, true)
+	assertChanged(refreshWorklogs, true, false, false, false, false, false)
+	assertChanged(refreshDateData, true, true, false, true, false, false)
+	assertChanged(refreshActivity, false, false, false, false, true, false)
+	assertChanged(refreshIssues, false, false, false, false, false, true)
+	assertChanged(refreshWorkspace, true, true, true, true, true, true)
 }

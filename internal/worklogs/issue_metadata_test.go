@@ -67,7 +67,7 @@ func TestMetadataBatchValidationAndTransactionalRollback(t *testing.T) {
 	ctx := context.Background()
 	invalid := []string{
 		`null`, `[]`, `{}`, `[null]`, `[{"issue_key":"app-1","title":"Title"}]`,
-		`[{"issue_key":"APP-1","title":""}]`, `[{"issue_key":"APP-1","title":"line\nbreak"}]`,
+		`[{"issue_key":"APP-1","title":""}]`, `[{"issue_key":"APP-1","title":"line\nbreak"}]`, `[{"issue_key":"APP-1","title":"line\u2028break"}]`,
 		`[{"issue_key":"APP-1","max_estimate_seconds":0}]`, `[{"issue_key":"APP-1","max_estimate_seconds":1.5}]`,
 		`[{"issue_key":"APP-1","max_estimate_seconds":-1}]`, `[{"issue_key":"APP-1","estimate":1}]`,
 		`[{"issue_key":"APP-1","title":"First"},{"issue_key":"APP-1","title":"Second"}]`,
@@ -85,13 +85,13 @@ func TestMetadataBatchValidationAndTransactionalRollback(t *testing.T) {
 	if !patches[1].TitleSet || patches[1].Title != nil || patches[1].MaxEstimateSet {
 		t.Fatalf("null/omitted lost: %#v", patches[1])
 	}
-	if _, err := store.DB().Exec(`CREATE TRIGGER reject_second BEFORE INSERT ON issue_decorations WHEN NEW.issue_key = 'APP-2' BEGIN SELECT RAISE(ABORT, 'test failure'); END`); err != nil {
+	if _, err := store.DB().Exec(`CREATE TRIGGER reject_second BEFORE INSERT ON issues WHEN NEW.issue_key = 'APP-2' BEGIN SELECT RAISE(ABORT, 'test failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.ApplyIssueMetadata(ctx, patches, false); err == nil {
 		t.Fatal("expected second-row failure")
 	}
-	items, err := service.SearchIssueMetadata(ctx, "", "")
+	items, err := service.SearchIssues(ctx, "", "", "")
 	if err != nil || len(items) != 0 {
 		t.Fatalf("partial batch persisted: %#v %v", items, err)
 	}
@@ -142,14 +142,14 @@ func TestDecoratedIssueDiscoveryDeduplicationPagingAndTitles(t *testing.T) {
 	if err != nil || len(keys) != 62 || keys[0] != "APP-2" {
 		t.Fatalf("completion: %#v %v", keys, err)
 	}
-	catalog, err := service.SearchIssueMetadata(ctx, "APP", "DOCUMENT")
+	catalog, err := service.SearchIssues(ctx, "APP", "DOCUMENT", "")
 	if err != nil || len(catalog) != 62 {
 		t.Fatalf("catalog: %d %v", len(catalog), err)
 	}
 	if err := service.ApplyIssueMetadata(ctx, []IssueMetadataPatch{{IssueKey: "APP-3", TitleSet: true}}, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.ShowIssueMetadata(ctx, "APP-3"); !errors.Is(err, ErrIssueMetadataNotFound) {
-		t.Fatalf("cleared-only row remains: %v", err)
+	if item, err := service.ShowIssueMetadata(ctx, "APP-3"); err != nil || item.Title != "" {
+		t.Fatalf("cleared issue identity lost: %#v %v", item, err)
 	}
 }

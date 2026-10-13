@@ -79,8 +79,8 @@ func TestFixedFlagCompletionUsesPrefixAndOmitsRepeatedAdapters(t *testing.T) {
 		{name: "output", args: []string{"--output", "j"}, want: []string{"json"}, doNotWant: []string{"table"}},
 		{name: "progress", args: []string{"plan", "apply", "--progress", "p"}, want: []string{"plain"}, doNotWant: []string{"auto", "bar", "off"}},
 		{name: "retry scope", args: []string{"plan", "retry", "--only", "f"}, want: []string{"failed"}, doNotWant: []string{"uncertain"}},
-		{name: "metadata field", args: []string{"issue-metadata", "refresh", "--field", "m"}, want: []string{"max-estimate"}},
-		{name: "metadata adapter", args: []string{"issue-metadata", "refresh", "--adapter", "jira-"}, want: []string{"jira-cloud", "jira-data-center"}, doNotWant: []string{"clockify"}},
+		{name: "metadata field", args: []string{"issues", "refresh", "--field", "m"}, want: []string{"max-estimate"}},
+		{name: "metadata adapter", args: []string{"issues", "refresh", "--adapter", "jira-"}, want: []string{"jira-cloud", "jira-data-center"}, doNotWant: []string{"clockify"}},
 		{name: "repeated adapter", args: []string{"plan", "reconcile", "--adapter", "jira-cloud", "--adapter", ""}, want: []string{"clockify", "jira-data-center"}, doNotWant: []string{"jira-cloud"}},
 	}
 

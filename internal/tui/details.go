@@ -17,6 +17,7 @@ func (m *model) openDetails(title, content string) {
 	if sections := strings.SplitN(content, "\n\n", 2); len(sections) == 2 && ansi.Strip(sections[0]) == title {
 		content = sections[1]
 	}
+	m.issueHistory = nil
 	m.overlay = detailsOverlay
 	m.detailTitle, m.detailContent, m.detailWorklog = title, content, false
 	m.detailViewport = viewport.New()
@@ -24,6 +25,10 @@ func (m *model) openDetails(title, content string) {
 }
 
 func (m *model) refreshDetailViewport() {
+	if m.issueHistory != nil {
+		m.resizeIssueHistory()
+		return
+	}
 	if m.overlay != detailsOverlay {
 		return
 	}

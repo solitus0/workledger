@@ -69,6 +69,9 @@ func (a *app) configureCompletions(root *cobra.Command) {
 	))
 
 	visitCommands(root, func(cmd *cobra.Command) {
+		if cmd.LocalNonPersistentFlags().Lookup("epic") != nil {
+			mustRegisterFlagCompletion(cmd, "epic", a.completeEpicNames)
+		}
 		if cmd.LocalNonPersistentFlags().Lookup("issue") != nil {
 			mustRegisterFlagCompletion(cmd, "issue", a.completeIssueKeys)
 		}
@@ -116,7 +119,7 @@ func (a *app) configureCompletions(root *cobra.Command) {
 			cmd.ValidArgsFunction = a.completePresetNames
 		case "workledger route explain":
 			cmd.ValidArgsFunction = a.completeIssueKeyArgs
-		case "workledger issue-metadata refresh":
+		case "workledger issues refresh":
 			mustRegisterFlagCompletion(cmd, "adapter", fixedCompletion(
 				completionCandidate{value: "jira-cloud", description: "Jira Cloud"},
 				completionCandidate{value: "jira-data-center", description: "Jira Data Center"},
@@ -384,7 +387,7 @@ func supportedAdapterFamilies(cmd *cobra.Command) map[string]struct{} {
 		return values
 	}
 	switch cmd.CommandPath() {
-	case "workledger issue-metadata refresh":
+	case "workledger issues refresh":
 		allowed["jira-cloud"] = struct{}{}
 		allowed["jira-data-center"] = struct{}{}
 	default:
@@ -509,4 +512,24 @@ func completionStore() (config.EffectiveConfig, *sqlitestore.Store, func(), bool
 		return config.EffectiveConfig{}, nil, nil, false
 	}
 	return effective, store, func() { _ = store.Close() }, true
+}
+
+func (a *app) completeEpicNames(cmd *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	_, service, cleanup, ok := completionWorklogService()
+	if !ok {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	defer cleanup()
+	items, err := service.SearchIssues(cmd.Context(), "", "", "")
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	candidates := make([]completionCandidate, 0)
+	for _, group := range worklogs.GroupIssueEpics(items) {
+		if group.Epic != "" {
+			candidates = append(candidates, completionCandidate{value: group.Epic, description: fmt.Sprintf("%d local issues", group.IssueCount)})
+		}
+	}
+	values := renderCompletionCandidates(candidates, toComplete, nil)
+	return values[:min(len(values), completionCandidateLimit)], cobra.ShellCompDirectiveNoFileComp
 }

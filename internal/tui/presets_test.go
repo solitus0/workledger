@@ -126,6 +126,7 @@ func TestWeekAddShortcutsAndEmptyPresetNotice(t *testing.T) {
 	if cmd != nil || m.form != nil || m.presetPicker != nil || m.notice != "no presets available; create one in Presets" {
 		t.Fatalf("empty uppercase preset add = form:%v picker:%v notice:%q cmd:%v", m.form != nil, m.presetPicker != nil, m.notice, cmd)
 	}
+	m.clearNotice()
 	if footer := m.renderFooter(m.width); !strings.Contains(footer, "a Add") || !strings.Contains(footer, "A Preset") {
 		t.Fatalf("worklogs footer does not expose both add shortcuts: %q", footer)
 	}

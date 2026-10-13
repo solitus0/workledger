@@ -4281,7 +4281,7 @@ func TestIssueMetadataRefreshJiraDataCenterFiltersToSelectedInstancePrefixes(t *
 		t.Fatalf("second add failed: code=%d stdout=%s stderr=%s", second.code, second.stdout, second.stderr)
 	}
 
-	refresh := runCLI(t, "issue-metadata", "refresh", "--adapter", "jira-data-center", "--instance", "main", "--field", "max-estimate", "--current-month", "--output", "json")
+	refresh := runCLI(t, "issues", "refresh", "--adapter", "jira-data-center", "--instance", "main", "--field", "max-estimate", "--current-month", "--output", "json")
 	if refresh.code != 0 {
 		t.Fatalf("refresh failed: code=%d stdout=%s stderr=%s", refresh.code, refresh.stdout, refresh.stderr)
 	}
@@ -4336,7 +4336,10 @@ func TestIssueMetadataRefreshJiraCloudFiltersToSelectedInstancePrefixes(t *testi
 		}
 	}
 
-	refresh := runCLI(t, "issue-metadata", "refresh", "--adapter", "jira-cloud", "--instance", "product", "--field", "max-estimate", "--current-month", "--output", "json")
+	if set := runCLI(t, "issues", "set", "--issue", "AAPP-123", "--title", "Local lifecycle title", "--max-estimate", "3h", "--epic", "Product documents"); set.code != 0 {
+		t.Fatal(set)
+	}
+	refresh := runCLI(t, "issues", "refresh", "--adapter", "jira-cloud", "--instance", "product", "--field", "max-estimate", "--current-month", "--output", "json")
 	if refresh.code != 0 {
 		t.Fatalf("refresh failed: code=%d stdout=%s stderr=%s", refresh.code, refresh.stdout, refresh.stderr)
 	}
@@ -4359,6 +4362,14 @@ func TestIssueMetadataRefreshJiraCloudFiltersToSelectedInstancePrefixes(t *testi
 	}
 	if got["AAPP-456"] != nil {
 		t.Fatalf("expected null estimate, got %s", refresh.stdout)
+	}
+	listed := runCLI(t, "issues", "list", "--issue", "AAPP-123", "--output", "json")
+	if listed.code != 0 {
+		t.Fatal(listed)
+	}
+	item := decodeJSONMap(t, []byte(listed.stdout))["items"].([]any)[0].(map[string]any)
+	if item["title"] != "Local lifecycle title" || item["epic"] != "Product documents" || item["max_estimate_seconds"] != float64(10800) || item["cached_max_estimate_seconds"] != float64(7200) {
+		t.Fatalf("refresh replaced local metadata: %s", listed.stdout)
 	}
 
 }
@@ -4850,15 +4861,15 @@ func TestPlanReconcileRejectsJiraCloudSnakeCaseAndUnsupportedCommandsStayDetermi
 		t.Fatalf("expected two jira-cloud connectivity rows, got %s", status.stdout)
 	}
 
-	missingInstance := runCLI(t, "issue-metadata", "refresh", "--adapter", "jira-cloud", "--field", "max-estimate", "--today", "--output", "json")
+	missingInstance := runCLI(t, "issues", "refresh", "--adapter", "jira-cloud", "--field", "max-estimate", "--today", "--output", "json")
 	if missingInstance.code != 2 {
-		t.Fatalf("expected jira-cloud issue-metadata missing-instance validation, got code=%d stdout=%s stderr=%s", missingInstance.code, missingInstance.stdout, missingInstance.stderr)
+		t.Fatalf("expected jira-cloud issues missing-instance validation, got code=%d stdout=%s stderr=%s", missingInstance.code, missingInstance.stdout, missingInstance.stderr)
 	}
 	if !strings.Contains(missingInstance.stdout, "--instance is required when more than one jira_cloud instance is configured") && !strings.Contains(missingInstance.stderr, "--instance is required when more than one jira_cloud instance is configured") {
 		t.Fatalf("unexpected missing-instance message stdout=%s stderr=%s", missingInstance.stdout, missingInstance.stderr)
 	}
 
-	unknownInstance := runCLI(t, "issue-metadata", "refresh", "--adapter", "jira-cloud", "--instance", "missing", "--field", "max-estimate", "--today", "--output", "json")
+	unknownInstance := runCLI(t, "issues", "refresh", "--adapter", "jira-cloud", "--instance", "missing", "--field", "max-estimate", "--today", "--output", "json")
 	if unknownInstance.code != 2 {
 		t.Fatalf("expected unknown jira-cloud instance validation, got code=%d stdout=%s stderr=%s", unknownInstance.code, unknownInstance.stdout, unknownInstance.stderr)
 	}
@@ -4867,12 +4878,12 @@ func TestPlanReconcileRejectsJiraCloudSnakeCaseAndUnsupportedCommandsStayDetermi
 		t.Fatalf("unexpected unknown-instance message stdout=%s stderr=%s", unknownInstance.stdout, unknownInstance.stderr)
 	}
 
-	unsupported := runCLI(t, "issue-metadata", "refresh", "--adapter", "clockify", "--field", "max-estimate", "--today", "--output", "json")
+	unsupported := runCLI(t, "issues", "refresh", "--adapter", "clockify", "--field", "max-estimate", "--today", "--output", "json")
 	if unsupported.code != 2 {
 		t.Fatalf("expected unsupported adapter validation, got code=%d stdout=%s stderr=%s", unsupported.code, unsupported.stdout, unsupported.stderr)
 	}
 	if !strings.Contains(unsupported.stdout, "supported adapters are jira-cloud and jira-data-center") && !strings.Contains(unsupported.stderr, "supported adapters are jira-cloud and jira-data-center") {
-		t.Fatalf("unexpected issue-metadata adapter message stdout=%s stderr=%s", unsupported.stdout, unsupported.stderr)
+		t.Fatalf("unexpected issues adapter message stdout=%s stderr=%s", unsupported.stdout, unsupported.stderr)
 	}
 }
 
@@ -6655,9 +6666,9 @@ func TestWorklogOutputsExcludeMaxEstimateAndIssueMetadataOwnsIt(t *testing.T) {
 		t.Fatalf("expected no MAX_ESTIMATE column, stdout=%s", table.stdout)
 	}
 
-	metadataList := runCLI(t, "issue-metadata", "list", "--issue", "ABC-123", "--output", "json")
+	metadataList := runCLI(t, "issues", "list", "--issue", "ABC-123", "--output", "json")
 	if metadataList.code != 0 {
-		t.Fatalf("issue-metadata list failed: code=%d stdout=%s stderr=%s", metadataList.code, metadataList.stdout, metadataList.stderr)
+		t.Fatalf("issues list failed: code=%d stdout=%s stderr=%s", metadataList.code, metadataList.stdout, metadataList.stderr)
 	}
 	listPayload := decodeJSONMap(t, []byte(metadataList.stdout))
 	items := listPayload["items"].([]any)

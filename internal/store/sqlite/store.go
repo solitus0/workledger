@@ -109,10 +109,12 @@ var schemaStatements = []string{
 		adapter_family TEXT NULL,
 		adapter_instance TEXT NULL
 	)`,
-	`CREATE TABLE IF NOT EXISTS issue_decorations (
+	`CREATE TABLE IF NOT EXISTS issues (
         issue_key TEXT PRIMARY KEY,
         title TEXT NULL,
+        epic TEXT NULL,
         max_estimate_seconds INTEGER NULL CHECK(max_estimate_seconds IS NULL OR (typeof(max_estimate_seconds) = 'integer' AND max_estimate_seconds > 0)),
+		created_at TEXT NULL,
         updated_at TEXT NOT NULL
     )`,
 	`CREATE TABLE IF NOT EXISTS issue_metadata (
@@ -254,12 +256,21 @@ var schemaStatements = []string{
 	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_insert AFTER INSERT ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_update AFTER UPDATE ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_delete AFTER DELETE ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_issue_insert AFTER INSERT ON worklogs BEGIN
+		INSERT INTO issues(issue_key, created_at, updated_at) VALUES(NEW.issue_key, NEW.created_at, NEW.created_at) ON CONFLICT(issue_key) DO NOTHING;
+	END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_issue_update AFTER UPDATE OF issue_key ON worklogs BEGIN
+		INSERT INTO issues(issue_key, created_at, updated_at) VALUES(NEW.issue_key, NEW.updated_at, NEW.updated_at) ON CONFLICT(issue_key) DO NOTHING;
+	END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_metadata_issue_insert AFTER INSERT ON issue_metadata BEGIN
+		INSERT INTO issues(issue_key, created_at, updated_at) VALUES(NEW.issue_key, NEW.refreshed_at, NEW.refreshed_at) ON CONFLICT(issue_key) DO NOTHING;
+	END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_trash_activity_insert AFTER INSERT ON trashed_worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_trash_activity_update AFTER UPDATE ON trashed_worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_trash_activity_delete AFTER DELETE ON trashed_worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
-	`CREATE TRIGGER IF NOT EXISTS trg_decorations_insert AFTER INSERT ON issue_decorations BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
-	`CREATE TRIGGER IF NOT EXISTS trg_decorations_update AFTER UPDATE ON issue_decorations BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
-	`CREATE TRIGGER IF NOT EXISTS trg_decorations_delete AFTER DELETE ON issue_decorations BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_issues_insert AFTER INSERT ON issues BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_issues_update AFTER UPDATE ON issues BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
+	`CREATE TRIGGER IF NOT EXISTS trg_issues_delete AFTER DELETE ON issues BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_metadata_activity_insert AFTER INSERT ON issue_metadata BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_metadata_activity_update AFTER UPDATE ON issue_metadata BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_metadata_activity_delete AFTER DELETE ON issue_metadata BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
@@ -756,7 +767,35 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		_ = tx.Rollback()
 		return err
 	}
+	// Explicit initialization replaces the local decoration table while retaining
+	// the user's supplied titles and estimates in the durable issue catalog.
+	var decorationsExist bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'issue_decorations')`).Scan(&decorationsExist); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if decorationsExist {
+		for _, statement := range []string{
+			`DROP TRIGGER IF EXISTS trg_decorations_insert`,
+			`DROP TRIGGER IF EXISTS trg_decorations_update`,
+			`DROP TRIGGER IF EXISTS trg_decorations_delete`,
+			`ALTER TABLE issue_decorations RENAME TO issues`,
+		} {
+			if _, err := tx.ExecContext(ctx, statement); err != nil {
+				_ = tx.Rollback()
+				return err
+			}
+		}
+	}
 
+	// Initialization replaces identity guards so every creation path records its
+	// timestamp, including stores created before issues had a creation column.
+	for _, name := range []string{"trg_worklogs_issue_insert", "trg_worklogs_issue_update", "trg_metadata_issue_insert"} {
+		if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS `+name); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
 	for _, statement := range schemaStatements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			_ = tx.Rollback()
@@ -771,6 +810,8 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 	}{
 		{table: "saved_plans", column: "adapter_families_json", ddl: `ALTER TABLE saved_plans ADD COLUMN adapter_families_json TEXT NOT NULL DEFAULT '[]'`},
 		{table: "worklogs", column: "revision", ddl: `ALTER TABLE worklogs ADD COLUMN revision INTEGER NOT NULL DEFAULT 1`},
+		{table: "issues", column: "epic", ddl: `ALTER TABLE issues ADD COLUMN epic TEXT NULL`},
+		{table: "issues", column: "created_at", ddl: `ALTER TABLE issues ADD COLUMN created_at TEXT NULL`},
 		{table: "trashed_worklogs", column: "source_created_at", ddl: `ALTER TABLE trashed_worklogs ADD COLUMN source_created_at TEXT NULL`},
 		{table: "trashed_worklogs", column: "source_updated_at", ddl: `ALTER TABLE trashed_worklogs ADD COLUMN source_updated_at TEXT NULL`},
 		{table: "trashed_worklogs", column: "source_revision", ddl: `ALTER TABLE trashed_worklogs ADD COLUMN source_revision INTEGER NULL`},
@@ -783,6 +824,7 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		{table: "saved_plan_items", column: "inspection_summary_json", ddl: `ALTER TABLE saved_plan_items ADD COLUMN inspection_summary_json TEXT NOT NULL DEFAULT '{}'`},
 		{table: "saved_plan_items", column: "delivery_key", ddl: `ALTER TABLE saved_plan_items ADD COLUMN delivery_key TEXT NOT NULL DEFAULT ''`},
 	}
+	backfillIssueCreatedAt := false
 	for _, repair := range columnRepairs {
 		ok, err := s.hasColumn(tx, repair.table, repair.column)
 		if err != nil {
@@ -791,6 +833,9 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		}
 		if ok {
 			continue
+		}
+		if repair.table == "issues" && repair.column == "created_at" {
+			backfillIssueCreatedAt = true
 		}
 		if _, err := tx.ExecContext(ctx, repair.ddl); err != nil {
 			_ = tx.Rollback()
@@ -803,12 +848,37 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 	}
 
 	postRepairIndexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_issues_epic ON issues(epic, issue_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_saved_plan_items_target_scope ON saved_plan_items(target_adapter_family, target_adapter_instance, target_issue)`,
 		`CREATE INDEX IF NOT EXISTS idx_saved_plan_items_delivery_key ON saved_plan_items(delivery_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_saved_plan_items_plan_order ON saved_plan_items(plan_id, target_issue, target_adapter_family, target_adapter_instance, window_from_utc, id)`,
 	}
 	for _, statement := range postRepairIndexes {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO issues(issue_key, created_at, updated_at)
+		SELECT issue_key, MIN(known_at), MAX(known_at) FROM (
+			SELECT issue_key, created_at AS known_at FROM worklogs
+			UNION ALL SELECT issue_key, refreshed_at AS known_at FROM issue_metadata
+		) GROUP BY issue_key ON CONFLICT(issue_key) DO NOTHING`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if backfillIssueCreatedAt {
+		// Historical creation was not recorded. Preserve the earliest surviving
+		// evidence, including archived worklogs, rather than using migration time.
+		if _, err := tx.ExecContext(ctx, `WITH known AS (
+			SELECT issue_key, MIN(known_at) AS created_at FROM (
+				SELECT issue_key, updated_at AS known_at FROM issues
+				UNION ALL SELECT issue_key, created_at FROM worklogs
+				UNION ALL SELECT issue_key, source_created_at FROM trashed_worklogs
+				UNION ALL SELECT issue_key, refreshed_at FROM issue_metadata
+			) WHERE known_at IS NOT NULL GROUP BY issue_key
+		) UPDATE issues SET created_at=(SELECT created_at FROM known WHERE known.issue_key=issues.issue_key)
+		WHERE created_at IS NULL`); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -1025,11 +1095,13 @@ var requiredSchema = []tableRequirement{
 		},
 	},
 	{
-		table: "issue_decorations",
+		table: "issues",
 		columns: []columnRequirement{
 			{column: "issue_key", typ: "TEXT", notNull: false},
 			{column: "title", typ: "TEXT", notNull: false},
+			{column: "epic", typ: "TEXT", notNull: false},
 			{column: "max_estimate_seconds", typ: "INTEGER", notNull: false},
+			{column: "created_at", typ: "TEXT", notNull: false},
 			{column: "updated_at", typ: "TEXT", notNull: true},
 		},
 	},
@@ -1201,13 +1273,16 @@ func (s *Store) validateSchemaCompatibility() error {
 			}
 		}
 	}
-	for _, name := range []string{"trg_worklogs_minutes_insert", "trg_worklogs_minutes_update", "trg_presets_minutes_insert", "trg_presets_minutes_update"} {
+	for _, name := range []string{
+		"trg_worklogs_minutes_insert", "trg_worklogs_minutes_update", "trg_presets_minutes_insert", "trg_presets_minutes_update",
+		"trg_worklogs_issue_insert", "trg_worklogs_issue_update", "trg_metadata_issue_insert",
+	} {
 		var count int
 		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name=?`, name).Scan(&count); err != nil {
 			return err
 		}
 		if count == 0 {
-			return &schemaValidationError{Kind: schemaValidationErrorMismatch, Err: fmt.Errorf("minute-precision guard %s is missing", name)}
+			return &schemaValidationError{Kind: schemaValidationErrorMismatch, Err: fmt.Errorf("required storage guard %s is missing", name)}
 		}
 	}
 	return nil

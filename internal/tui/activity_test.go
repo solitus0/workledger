@@ -77,7 +77,7 @@ func TestActivityLifecycleAndDrawer(t *testing.T) {
 	if !strings.Contains(rendered, "Activity") || !strings.Contains(rendered, "worklogs.add") {
 		t.Fatalf("activity drawer missing: %s", rendered)
 	}
-	activityTitleLine := strings.Split(rendered, "\n")[minimumHeight-3-activityDrawerHeight+1]
+	activityTitleLine := strings.Split(rendered, "\n")[minimumHeight-appFooterHeight-activityDrawerHeight+1]
 	if offset := strings.Index(activityTitleLine, "Activity"); offset < calculateLayout(m.width, m.height, true).workspace.x {
 		t.Fatalf("activity drawer starts at column %d, want inside the right panel: %q", offset, activityTitleLine)
 	}
@@ -122,7 +122,7 @@ func TestActivityMouseHitAreaIsLimitedToRightPanel(t *testing.T) {
 	m.width, m.height = 120, 32
 	m.activityOpen = true
 	m.activities = []activity.Entry{{ID: "one"}}
-	activityTop := m.height - 3 - activityDrawerHeight
+	activityTop := m.height - appFooterHeight - activityDrawerHeight
 
 	next, _ := m.Update(mouseClick(1, activityTop+2, tea.MouseLeft))
 	m = next.(model)
@@ -152,26 +152,32 @@ func TestActivityCommitDoesNotStaleOpenEditor(t *testing.T) {
 	}
 }
 
-func TestActivityShortcutAppearsInIdleActionBar(t *testing.T) {
+func TestActivityShortcutRemainsDiscoverableInActions(t *testing.T) {
 	ws, deps := testWorkspace(t)
 	m := newModel(context.Background(), deps, ws, nil)
 	m.width, m.height = minimumWidth, minimumHeight
-	for _, tab := range []tab{statusTab, worklogsTab, trashTab, presetsTab} {
-		m.activeTab = tab
-		footer := m.renderFooter(m.width)
-		if !strings.Contains(footer, "g Activity") {
-			t.Fatalf("tab %d action bar missing activity shortcut: %q", tab, footer)
+	for _, destination := range []tab{statusTab, worklogsTab, trashTab, presetsTab, plansTab, issuesTab} {
+		m.activeTab = destination
+		found := false
+		for _, action := range m.commandActions() {
+			if action.key == "g" {
+				found = true
+			}
 		}
-		if strings.Index(footer, "g Activity") < strings.Index(footer, "q Quit") {
-			t.Fatalf("tab %d activity shortcut is not at the end: %q", tab, footer)
+		if !found {
+			t.Fatalf("tab %d Actions menu missing Activity", destination)
+		}
+		footer := m.renderFooter(m.width)
+		if lipgloss.Height(footer) != 2 {
+			t.Fatalf("tab %d footer has more than one action row: %q", destination, footer)
+		}
+		if strings.Contains(footer, "g Activity") || strings.Contains(footer, "1 Status") {
+			t.Fatalf("tab %d repeats removed navigation row: %q", destination, footer)
 		}
 	}
 	m.activityOpen = true
-	if footer := m.renderFooter(m.width); !strings.Contains(footer, "g Close activity") {
-		t.Fatalf("open drawer action bar missing close shortcut: %q", footer)
-	}
 	m.focus = focusActivity
 	if footer := m.renderFooter(m.width); !strings.Contains(footer, "g Close activity") {
-		t.Fatalf("focused drawer action bar missing close shortcut: %q", footer)
+		t.Fatalf("focused drawer missing close shortcut: %q", footer)
 	}
 }

@@ -47,21 +47,19 @@ func (s *Service) ListUsedIssues(ctx context.Context, mode IssueFindMode, query 
 		if strings.TrimSpace(query) == "" {
 			where = `1 = 1`
 		} else {
-			where, args = `m.title LIKE ? ESCAPE '\' COLLATE NOCASE`, []any{literalSubstringPattern(strings.TrimSpace(query))}
+			where, args = `k.title LIKE ? ESCAPE '\' COLLATE NOCASE`, []any{literalSubstringPattern(strings.TrimSpace(query))}
 		}
 	default:
 		return nil, false, fmt.Errorf("unsupported issue find mode %q", mode)
 	}
 	args = append(args, limit+1, offset)
-	rows, err := s.store.DB().QueryContext(ctx, issueCatalogSQL+`, known_keys AS (
-        SELECT issue_key FROM worklogs UNION SELECT issue_key FROM metadata
-    ), used AS (SELECT issue_key, MAX(created_at) AS last_entered_at FROM worklogs GROUP BY issue_key)
-    SELECT k.issue_key, COALESCE(u.last_entered_at, ''), COALESCE(m.title, ''),
-        COALESCE(m.manual_estimate, CASE WHEN m.cached_estimate > 0 THEN m.cached_estimate END)
-    FROM known_keys k LEFT JOIN used u ON u.issue_key = k.issue_key
-    LEFT JOIN metadata m ON m.issue_key = k.issue_key WHERE `+where+`
+	rows, err := s.store.DB().QueryContext(ctx, issueCatalogSQL+`, used AS (
+        SELECT issue_key, MAX(created_at) AS last_entered_at FROM worklogs GROUP BY issue_key
+    ) SELECT k.issue_key, COALESCE(u.last_entered_at, ''), COALESCE(k.title, ''),
+        COALESCE(k.manual_estimate, CASE WHEN k.cached_estimate > 0 THEN k.cached_estimate END)
+    FROM metadata k LEFT JOIN used u ON u.issue_key = k.issue_key WHERE `+where+`
     ORDER BY u.last_entered_at IS NULL, u.last_entered_at DESC,
-        CASE WHEN u.last_entered_at IS NULL THEN m.recent_at END DESC, k.issue_key
+        CASE WHEN u.last_entered_at IS NULL THEN k.recent_at END DESC, k.issue_key
     LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, false, err

@@ -213,10 +213,7 @@ func TestMonthCalendarFitsMinimumViewportWithActivityAndColor(t *testing.T) {
 						t.Fatalf("render = %dx%d; want 100x28:\n%s", w, h, rendered)
 					}
 					plain := stripANSI(rendered)
-					for _, expected := range []string{"Local booked", "Day  Week", "Mon", "Sun", "Past weekdays:", "? below quota", "! overlap", date.Format("2006-01-02"), "WL-1234", "PgUp/Dn Month", "g Activity"} {
-						if activity && expected == "g Activity" {
-							expected = "g Close activity"
-						}
+					for _, expected := range []string{"Local booked", "Day  Week", "Mon", "Sun", "Past weekdays:", "? below quota", "! overlap", date.Format("2006-01-02"), "WL-1234", "PgUp/Dn Month", "? Actions"} {
 						if !strings.Contains(plain, expected) {
 							t.Fatalf("render missing %q:\n%s", expected, plain)
 						}
