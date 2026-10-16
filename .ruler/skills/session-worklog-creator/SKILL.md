@@ -16,7 +16,7 @@ Create canonical local `workledger` worklogs from evidence visible in the curren
 - Do not run setup, diagnostics, totals, worklog search, edit/delete, remote sync, reconciliation, or artifact-rendering flows. Local `issues list` is allowed only for unresolved issue attribution after the work-evidence and explicit-duration gates.
 - Never supply `--overtime` unless the user explicitly authorizes overtime placement in the current request or after a blocked dry-run.
 - Load `references/worklog-creation-contract.md` before choosing placement, building payloads, running `workledger`, or explaining CLI failures.
-- If `workledger` is unavailable, stop and report that no worklog was created.
+- After the work-evidence and explicit-duration gates, follow the reference's CLI readiness check before any `workledger` domain command. If the CLI is unavailable or incompatible, stop and report that no worklog was created; do not install or upgrade it automatically.
 
 ## Gate order
 
@@ -28,25 +28,25 @@ Create canonical local `workledger` worklogs from evidence visible in the curren
    ```
 
 2. **Issue key next.** Explicit user issue selection wins. Otherwise use only an unambiguous key in current-session evidence; if unresolved, run `git branch --show-current` once and use an unambiguous Jira-style key from that branch. If still unresolved, run local `workledger issues list --output json`, optionally narrowed by an evidence-supported `--search` title substring or `--issue-prefix`. Select a key only when the session's work evidence clearly matches one title. Similar, broad, conflicting, or absent title matches require asking for the issue key. Estimates, remaining budget, and key recency never establish attribution, and estimates never replace explicit duration.
-3. **Defaults are not questions.** Do not ask for started time, date/window, log count, description, summary, or split just because they are absent. Default to one log, `--fill --today`, and a descriptive entry generated from session evidence. Never ask for a description under any circumstances.
+3. **Defaults are not questions.** Do not ask for started time, date/window, log count, description, summary, or split just because they are absent. Default to one issue and activity with `--fill --today` and a descriptive entry generated from session evidence. Fill may create multiple worklog fragments; report the actual returned count. Never ask for a description under any circumstances.
 4. **Optional fields stay optional.** Use user-provided started time, date/window, log count, and split when present. Ask only when those supplied fields conflict, are malformed, or cannot be applied without changing intent. Use a supplied description when it is descriptive and evidence-matched; otherwise generate one from the session without asking the user.
 
 Never invent duration, issue keys, or completed work. Normalize explicit duration syntax, then round the supplied total to the nearest minute with 30-second ties upward, following the canonical worklog contract. Starts also normalize to minute boundaries. Preserve the normalized total during placement and report changes from the supplied timing.
 
 ## Creation flow
 
-1. Confirm there is evidence of work performed, then extract explicit duration.
+1. Confirm there is evidence of work performed, extract explicit duration, then check CLI readiness as described in the reference.
 2. Resolve the issue in the gate order above: explicit selection, unambiguous session or branch key, then a clear single local metadata title match; ask for the key if unresolved.
 3. Extract optional user-provided started time, date/window, log count, and split details. Generate a concise description from the work evidence, or use a supplied description that meets the same standard. Missing optional fields use defaults rather than prompts.
 4. Follow `references/worklog-creation-contract.md` for allowed commands, placement, payload shape, and failure handling.
-5. Use `worklogs add` for the default single-log path:
+5. Use `worklogs add` for the default one-issue activity:
    - use `--fill --today` when no exact start or date/window is supplied
    - use a supplied date/window with `--fill` when the user provided one but no exact start
    - use `--fit` only when the user requests one continuous placement or the session clearly calls for a single earliest free slot
    - use `--started` or `--started-utc` only when the user supplies the exact start
    - include the evidence-based `--description` in the first dry-run and the apply command
 6. Use `worklogs apply` with one JSON payload when the user supplies multiple issues, per-entry durations, a log count, explicit split instructions, or payload-shaped evidence. For one total with multiple issues or a log count but no split, round the total once, divide its whole minutes evenly, and assign remainder minutes one at a time in input order. Preserve the normalized total; every fragment must satisfy the effective minimum.
-7. Dry-run first with `--output json`; apply immediately only after a clean dry-run.
+7. Dry-run first with `--output json`; read the command-specific response shape from the reference and verify the normalized timing and total. Apply immediately only after a clean dry-run, then report the actual saved records and IDs.
 8. If dry-run fails, repair only evidence-supported command shape, payload shape, timestamp grammar/exclusivity, slot placement, description normalization, or allocation math that preserves the normalized total. When the CLI says placement would require `--overtime`, report that nothing was created and ask permission before retrying with `--overtime`. Otherwise ask only when the smallest safe correction needs a missing duration, a missing issue key, or a change to timing, issue, or allocation intent. Repair description problems from session evidence; never ask the user to provide, clarify, or approve a description.
 9. If apply fails, do not claim success. Retry once only for a command-shape or transient persistence failure that preserves intent.
 

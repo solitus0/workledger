@@ -17,11 +17,17 @@ Required gate order:
 2. **No duration inference.** Never derive duration from elapsed time, timestamps, tool history, commit count, branch age, calendar gaps, or `workledger` context.
 3. **Issue key.** Explicit user selection wins. Otherwise use an unambiguous key in current-session evidence, then run `git branch --show-current` once if unresolved. If neither identifies one key, inspect local `workledger issues list --output json`, optionally filtering with an evidence-supported `--search` title substring or `--issue-prefix`. Choose only one clearly matching title supported by the session's work evidence; ask for the issue key for broad, ambiguous, conflicting, absent, or unavailable matches. Issue estimates, remaining budget, and recency never establish attribution or duration.
 4. **Optional user input.** Started time, date/window, log count, split, and description need not be supplied by the user. Never ask for a description, even when supplied text is unusable; generate or repair it from session evidence.
-5. **Default placement.** If no start or date/window is supplied, create one worklog with `--fill --today`. If a date/window is supplied without a start, use `--fill DATE_WINDOW`.
-6. **Default count.** If no log count, multiple issues, per-entry durations, split, or payload-shaped evidence is supplied, create one log.
+5. **Default placement.** If no start or date/window is supplied, place the activity with `--fill --today`. If a date/window is supplied without a start, use `--fill DATE_WINDOW`.
+6. **Default count.** If no log count, multiple issues, per-entry durations, split, or payload-shaped evidence is supplied, make one add request for one issue. `--fill` can create multiple fragments around lunch, occupied gaps, or selected dates; it does not promise one persisted worklog. Preserve the normalized total and report the returned fragment count. Handle an explicit log count through the multi-entry path.
 7. **Description.** Include a descriptive, evidence-matched description from the first dry-run. Use supplied text if it meets that standard; otherwise generate it from work performed in the session. Do not omit it, use a generic placeholder, or prompt the user for it.
 
 Normalize explicit duration syntax, then round the supplied total once to the nearest minute, with 30-second ties upward. Reject a total that rounds to zero. Preserve this normalized total exactly during allocation. UTC starts also round to minute boundaries; dry-run output must show the resulting timing, and success must report any change from the supplied timing.
+
+## CLI readiness
+
+After work evidence and explicit duration are established, check `workledger issues list --help` once before running a catalog read, placement read, or write. Require successful help exposing `--search` and `--issue-prefix`; the skill uses the current `issues` catalog and minute-normalized worklog contract. This help probe does not require config or initialized storage.
+
+If the executable is missing or the probe fails or lacks those flags, stop and report the incompatible CLI and that no worklog was created. An older executable can exist on PATH while lacking this interface. State that a CLI matching this skill is required; do not automatically install, upgrade, switch to a repository build, or substitute obsolete commands. If an upgrade is deferred, leave the workflow stopped until the user supplies a compatible executable or explicitly requests another execution path.
 
 ## Allowed commands
 
@@ -29,6 +35,7 @@ Allowed command families only:
 
 ```text
 git branch --show-current
+workledger issues list --help
 workledger issues list [--search TITLE_TEXT] [--issue-prefix PREFIX] --output json
 
 workledger worklogs add --issue KEY (--fill DATE_WINDOW | --fit DATE_WINDOW) [--overtime] --duration DURATION --description "..." --dry --output json
@@ -50,13 +57,13 @@ Prefer stdin for `apply`; use files only for debugging or when requested.
 
 `DATE_WINDOW` is one supported selector: `--today`, `--yesterday`, `--tomorrow`, `--mon` through `--sun`, `--current-week`, `--last-week`, `--current-month`, `--last-month`, or `--from DATE --to DATE`. `--week-offset N` is valid only with a weekday selector.
 
-`DATE` may be `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, `+Nd`, or `-Nd`.
+`DATE` may be `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun`, `+Nd`, or `-Nd`. Weekday names resolve inside the current local Monday-through-Sunday week.
 
-`LOCAL_TIME` examples: `2026-05-14T09:00`, `todayT09:00`, `yesterdayT09:00`, `tomorrowT09:00`, `+2dT09:00`, `-3dT09:00`.
+`LOCAL_TIME` combines a supported `DATE` with `THH:MM`, for example `2026-05-14T09:00`, `todayT09:00`, `monT09:00`, `friT14:30`, `+2dT09:00`, or `-3dT09:00`. `--week-offset` modifies weekday selector flags only; it does not modify weekdays embedded in timestamps or `--from`/`--to` values.
 
 `UTC_TIME` must be RFC3339, for example `2026-05-15T07:00:00Z`.
 
-## Single-entry path
+## Direct add
 
 Use `worklogs add` directly for the default one-issue add after duration and issue key are available.
 
@@ -101,6 +108,22 @@ Keep input requirements low:
 ```
 
 Each add requires `issue_key`, positive integer `duration_seconds` in multiples of 60 from the normalized explicit duration, and exactly one timestamp field: `started_at` for local grammar or `started_at_utc` for UTC RFC3339. Every add must include a descriptive, evidence-matched `description`, supplied by the user or generated from current-session work evidence. Do not include extra fields unless the CLI requires them.
+
+## JSON responses
+
+Read the result shape for the command used; manual add, automatic add, and batch apply return different envelopes.
+
+| Command | Dry-run records | Applied records |
+| --- | --- | --- |
+| `worklogs add --started` or `--started-utc` | `record` | Root object |
+| `worklogs add --fit` or `--fill` | `records[]` | `records[]` |
+| `worklogs apply` | `items[].record` | `items[].record` |
+
+Records expose `issue_key`, local RFC3339 `started_at`, UTC `started_at_utc`, `duration_seconds`, and `description`; applied records also contain the generated `id`. Add previews omit IDs; batch previews have `items[].id: null` and no saved identity. Batch apply also returns `summary.add_count` and `dry_run`; add returns `dry_run: true` only for previews.
+
+Use preview timing to verify minute normalization and sum the returned durations to check the normalized requested total. After apply, report the actual record count, saved timing, and returned IDs. Count `--fill` fragments from `records[]`, even when one activity was requested; `--fit` returns exactly one record. Never report preview rows as created worklogs.
+
+For issue attribution, read `issues list` results from `items[]` and match the effective `title`, which prefers a manual title over a cached Jira title. Either title source is available through this local read. `manual_title`, `cached_title`, `epic`, estimates, and summary budgets are metadata; they do not replace work evidence or explicit duration. For batch placement, use `days[].free_slots` and `planning.minimum_duration_seconds` from `worklogs context`.
 
 ## Descriptions
 

@@ -30,6 +30,7 @@ dist/
 .claude
 
 # START Ruler Generated Files
+/.agents/skills
 /.claude/skills
 /.codex/config.toml
 /.codex/config.toml.bak

@@ -25,6 +25,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Scrollable TUI details for worklogs, diagnostics, effective configuration, presets, trash records, and saved plan scopes, including full descriptions and saved desired entries.
 
 ### Changed
+- Session-worklog guidance now checks CLI capabilities, distinguishes activities from placement fragments, and documents weekday timestamps and command-specific JSON responses.
 - Unified TUI Find on `/`, separated issue-picker search modes onto Ctrl+T, and made contextual `?` Actions available in every window without losing drafts or confirmations.
 - TUI Issues list headings show only the matching issue count, keeping aggregate budgets in Epics and issue details.
 - **Breaking:** New worklog and preset writes now use whole-minute timing. Starts and durations round to the nearest minute before validation; automatic placement uses inward-rounded free slots and whole-minute fragments. Shift deltas round to minutes and reject zero results. Existing rows are not converted automatically, and saved plans with second-precision payloads must be reconciled again before apply or retry.
