@@ -35,6 +35,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Session worklog creation now requires evidence of work performed, generates descriptive entries from that evidence, and defaults unknown exact starts to `--fill --today`; unresolved issue selection may use one clear local title match after explicit duration is provided.
 
 ### Fixed
+- Applying retained second-precision presets now saves minute-normalized worklogs without changing the preset duration or failing its recency update; explicit initialization refreshes the duration guard.
+- Issue-picker title and description searches now match Unicode case variants while preserving literal substring matching and pagination.
+- Initial issue-catalog creation now uses earlier local archived-worklog creation dates without adding trash-only issues.
 - Jira Cloud and Data Center worklog creation now verifies returned start time and duration against the request, stops the affected scope on disagreement, and reports requested and actual timing without automatic mutation replay.
 - Worklog context now slices occupancy at local calendar midnights across 23-hour and 25-hour daylight-saving dates, preventing omitted or double-counted time in daily and monthly totals.
 

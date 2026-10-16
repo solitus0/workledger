@@ -251,7 +251,7 @@ var schemaStatements = []string{
 	`CREATE TRIGGER IF NOT EXISTS trg_presets_minutes_insert BEFORE INSERT ON worklog_presets
 	WHEN typeof(NEW.duration_seconds) != 'integer' OR NEW.duration_seconds <= 0 OR NEW.duration_seconds % 60 != 0
 	BEGIN SELECT RAISE(ABORT, 'presets require positive whole-minute durations'); END`,
-	`CREATE TRIGGER IF NOT EXISTS trg_presets_minutes_update BEFORE UPDATE ON worklog_presets
+	`CREATE TRIGGER IF NOT EXISTS trg_presets_minutes_duration_update BEFORE UPDATE OF duration_seconds ON worklog_presets
 	WHEN typeof(NEW.duration_seconds) != 'integer' OR NEW.duration_seconds <= 0 OR NEW.duration_seconds % 60 != 0
 	BEGIN SELECT RAISE(ABORT, 'presets require positive whole-minute durations'); END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_insert AFTER INSERT ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
@@ -789,9 +789,8 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		}
 	}
 
-	// Initialization replaces identity guards so every creation path records its
-	// timestamp, including stores created before issues had a creation column.
-	for _, name := range []string{"trg_worklogs_issue_insert", "trg_worklogs_issue_update", "trg_metadata_issue_insert"} {
+	// Explicit initialization installs the current identity and duration guards.
+	for _, name := range []string{"trg_worklogs_issue_insert", "trg_worklogs_issue_update", "trg_metadata_issue_insert", "trg_presets_minutes_update"} {
 		if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS `+name); err != nil {
 			_ = tx.Rollback()
 			return err
@@ -861,11 +860,17 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO issues(issue_key, created_at, updated_at)
-		SELECT issue_key, MIN(known_at), MAX(known_at) FROM (
-			SELECT issue_key, created_at AS known_at FROM worklogs
-			UNION ALL SELECT issue_key, refreshed_at AS known_at FROM issue_metadata
-		) GROUP BY issue_key ON CONFLICT(issue_key) DO NOTHING`); err != nil {
+	// Active worklogs and cache rows establish identity; local trash can supply
+	// earlier creation evidence without introducing trash-only issues.
+	if _, err := tx.ExecContext(ctx, `WITH known AS (
+		SELECT issue_key, created_at AS known_at, created_at AS recent_at FROM worklogs
+		UNION ALL SELECT issue_key, refreshed_at, refreshed_at FROM issue_metadata
+		UNION ALL SELECT issue_key, source_created_at, NULL FROM trashed_worklogs
+		WHERE storage_scope = 'local' AND source_created_at IS NOT NULL
+	) INSERT INTO issues(issue_key, created_at, updated_at)
+		SELECT issue_key, MIN(known_at), MAX(recent_at) FROM known
+		GROUP BY issue_key HAVING MAX(recent_at) IS NOT NULL
+		ON CONFLICT(issue_key) DO NOTHING`); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
@@ -876,7 +881,7 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 			SELECT issue_key, MIN(known_at) AS created_at FROM (
 				SELECT issue_key, updated_at AS known_at FROM issues
 				UNION ALL SELECT issue_key, created_at FROM worklogs
-				UNION ALL SELECT issue_key, source_created_at FROM trashed_worklogs
+				UNION ALL SELECT issue_key, source_created_at FROM trashed_worklogs WHERE storage_scope = 'local'
 				UNION ALL SELECT issue_key, refreshed_at FROM issue_metadata
 			) WHERE known_at IS NOT NULL GROUP BY issue_key
 		) UPDATE issues SET created_at=(SELECT created_at FROM known WHERE known.issue_key=issues.issue_key)
@@ -1277,7 +1282,7 @@ func (s *Store) validateSchemaCompatibility() error {
 		}
 	}
 	for _, name := range []string{
-		"trg_worklogs_minutes_insert", "trg_worklogs_minutes_update", "trg_presets_minutes_insert", "trg_presets_minutes_update",
+		"trg_worklogs_minutes_insert", "trg_worklogs_minutes_update", "trg_presets_minutes_insert", "trg_presets_minutes_duration_update",
 		"trg_worklogs_issue_insert", "trg_worklogs_issue_update", "trg_metadata_issue_insert",
 	} {
 		var count int

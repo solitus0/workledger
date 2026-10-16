@@ -47,7 +47,7 @@ Placement rule:
 - [ ] NFR-019: The `delivery_attempts` table shall include `id`, `plan_id`, `plan_item_id`, `attempt_state`, `message`, and `created_at`.
 - [ ] NFR-019a: The `worklog_presets` table shall include `id`, `name`, `issue_key`, `start_time`, `duration_seconds`, `description`, `created_at`, `updated_at`, nullable `last_used_at`, and `revision`.
 - [ ] NFR-019b: SQLite shall define a unique index on `worklog_presets(name)` and an index supporting last-used and name ordering.
-- [ ] NFR-019c: SQLite shall reject preset inserts and updates whose duration is not a positive integer multiple of 60.
+- [ ] NFR-019c: SQLite shall reject preset inserts and duration updates whose duration is not a positive integer multiple of 60; recency-only updates shall preserve and accept retained second-precision preset durations, while applying those presets shall create minute-normalized worklogs.
 - [ ] NFR-021: Additive storage shall define a unique index on `issue_metadata(issue_key)`.
 - [ ] NFR-022: Additive storage shall define an index on `issue_metadata(refreshed_at)`.
 - [ ] NFR-023: Additive storage shall define an index on `saved_plans(created_at)`.

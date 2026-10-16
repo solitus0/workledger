@@ -219,6 +219,49 @@ func TestPasteLiteralQuestionMarkAndHelpPasteIsolation(t *testing.T) {
 	}
 }
 
+func TestIssueInputsAcceptPaste(t *testing.T) {
+	for _, name := range []string{"form", "picker", "issue search", "epic search"} {
+		t.Run(name, func(t *testing.T) {
+			ws, deps := testWorkspace(t)
+			m := newModel(t.Context(), deps, ws, nil)
+			m.width, m.height, m.activeTab = minimumWidth, minimumHeight, issuesTab
+			switch name {
+			case "form":
+				m.openIssueForm(nil)
+			case "picker":
+				m.activeTab = worklogsTab
+				m.openAddForm()
+				m.openIssuePicker()
+				m = sendIssueKey(m, "/")
+			case "issue search":
+				m = sendIssueKey(m, "/")
+			case "epic search":
+				m.issueView = epicListView
+				m = sendIssueKey(m, "/")
+			}
+			next, _ := m.Update(tea.PasteMsg{Content: "APP-1"})
+			m = next.(model)
+			var value string
+			switch name {
+			case "form":
+				value = m.issueForm.inputs[0].Value()
+			case "picker":
+				value = m.issuePicker.input.Value()
+				if m.issuePicker.query != "APP-1" || !m.issuePicker.loading {
+					t.Fatal("paste did not schedule the matching issue query")
+				}
+			case "issue search":
+				value = m.issueSearch.input.Value()
+			case "epic search":
+				value = m.epicSearch.input.Value()
+			}
+			if value != "APP-1" {
+				t.Fatalf("pasted value = %q", value)
+			}
+		})
+	}
+}
+
 func TestCompletedOperationDoesNotResurrectItsWindowAfterHelp(t *testing.T) {
 	m, _ := issueFixture(t)
 	m.activeTab = plansTab

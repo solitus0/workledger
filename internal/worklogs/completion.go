@@ -31,23 +31,24 @@ func (s *Service) ListUsedIssues(ctx context.Context, mode IssueFindMode, query 
 	if limit <= 0 || offset < 0 {
 		return []UsedIssue{}, false, nil
 	}
+	query = strings.TrimSpace(query)
 	var where string
 	var args []any
 	switch mode {
 	case IssueFindByPrefix:
-		lower, upper := sqlitestore.PrefixRange(strings.ToUpper(strings.TrimSpace(query)))
+		lower, upper := sqlitestore.PrefixRange(strings.ToUpper(query))
 		where, args = `k.issue_key >= ? AND k.issue_key < ?`, []any{lower, upper}
 	case IssueFindByDescription:
-		if strings.TrimSpace(query) == "" {
+		if query == "" {
 			where = `1 = 1`
 		} else {
-			where, args = `EXISTS (SELECT 1 FROM worklogs w WHERE w.issue_key = k.issue_key AND w.description LIKE ? ESCAPE '\' COLLATE NOCASE)`, []any{literalSubstringPattern(strings.TrimSpace(query))}
+			where, args = `EXISTS (SELECT 1 FROM worklogs w WHERE w.issue_key = k.issue_key AND instr(workledger_lower(w.description), ?) > 0)`, []any{strings.ToLower(query)}
 		}
 	case IssueFindByTitle:
-		if strings.TrimSpace(query) == "" {
+		if query == "" {
 			where = `1 = 1`
 		} else {
-			where, args = `k.title LIKE ? ESCAPE '\' COLLATE NOCASE`, []any{literalSubstringPattern(strings.TrimSpace(query))}
+			where, args = `instr(workledger_lower(k.title), ?) > 0`, []any{strings.ToLower(query)}
 		}
 	default:
 		return nil, false, fmt.Errorf("unsupported issue find mode %q", mode)

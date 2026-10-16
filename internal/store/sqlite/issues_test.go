@@ -222,3 +222,51 @@ func TestIssueCreationMigrationRetainsEarliestEvidenceAndMetadata(t *testing.T) 
 		t.Fatalf("migrated trigger omitted creation: %s %v", created, err)
 	}
 }
+
+func TestCatalogCreationUsesArchivedEvidenceWithoutAddingTrashOnlyIssues(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "issues.db")
+	store, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`DROP TRIGGER trg_worklogs_issue_insert`, `DROP TRIGGER trg_worklogs_issue_update`, `DROP TRIGGER trg_metadata_issue_insert`,
+		`DROP TABLE issues`,
+		`INSERT INTO worklogs(id,issue_key,started_at_utc,duration_seconds,description,created_at,updated_at) VALUES('current','APP-1','2026-05-01T08:00:00Z',900,'Current','2026-05-01T00:00:00Z','2026-05-01T00:00:00Z')`,
+		`INSERT INTO issue_metadata(issue_key,max_estimate_seconds,source_adapter_family,source_adapter_instance,refreshed_at) VALUES('APP-2',3600,'jira-cloud','main','2026-04-01T00:00:00Z')`,
+		`INSERT INTO trashed_worklogs(id,storage_scope,issue_key,started_at_utc,duration_seconds,description,trashed_at,reason_code,reason_detail,plan_direction,source_created_at) VALUES
+		('active-history','local','APP-1','2025-01-01T00:00:00Z',900,'Archived','2026-01-01T00:00:00Z','user_deleted','','local','2025-01-01T00:00:00Z'),
+		('cache-history','local','APP-2','2025-02-01T00:00:00Z',900,'Archived','2026-01-01T00:00:00Z','user_deleted','','local','2025-02-01T00:00:00Z'),
+		('trash-only','local','APP-3','2025-01-01T00:00:00Z',900,'Archived','2026-01-01T00:00:00Z','user_deleted','','local','2025-01-01T00:00:00Z'),
+		('remote-history','remote','APP-1','2024-01-01T00:00:00Z',900,'Remote audit','2026-01-01T00:00:00Z','remote_deleted','','push','2024-01-01T00:00:00Z')`,
+	} {
+		if _, err := store.DB().Exec(statement); err != nil {
+			store.Close()
+			t.Fatalf("%s: %v", statement, err)
+		}
+	}
+	store.Close()
+	for iteration := 0; iteration < 2; iteration++ {
+		store, _, err = Bootstrap(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for key, want := range map[string]string{"APP-1": "2025-01-01T00:00:00Z", "APP-2": "2025-02-01T00:00:00Z"} {
+			var created string
+			if err := store.DB().QueryRow(`SELECT created_at FROM issues WHERE issue_key=?`, key).Scan(&created); err != nil || created != want {
+				store.Close()
+				t.Fatalf("%s creation = %s, want %s: %v", key, created, want, err)
+			}
+		}
+		var count int
+		if err := store.DB().QueryRow(`SELECT COUNT(*) FROM issues`).Scan(&count); err != nil || count != 2 {
+			store.Close()
+			t.Fatalf("trash established issue identity: %d issues, %v", count, err)
+		}
+		if _, err := store.DB().Exec(`DELETE FROM trashed_worklogs`); err != nil {
+			store.Close()
+			t.Fatal(err)
+		}
+		store.Close()
+	}
+}

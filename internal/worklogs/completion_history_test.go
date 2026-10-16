@@ -139,3 +139,44 @@ func TestIssueDescriptionsKeepRepeatedWorklogs(t *testing.T) {
 		}
 	}
 }
+
+func TestUsedIssueUnicodeSearchPreservesPagingAndLiteralSubstrings(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	for i := 1; i <= 3; i++ {
+		key := fmt.Sprintf("APP-%d", i)
+		title := "ŽURNALAS %_\\"
+		if i == 3 {
+			title = "Žurnalas without punctuation"
+		}
+		if err := service.ApplyIssueMetadata(t.Context(), []IssueMetadataPatch{{IssueKey: key, Title: &title, TitleSet: true}}, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.DB().Exec(`INSERT INTO worklogs(id,issue_key,started_at_utc,duration_seconds,description,created_at,updated_at) VALUES(?,?,'2026-05-01T09:00:00Z',900,?,'2026-05-01T00:00:00Z','2026-05-01T00:00:00Z')`, key, key, title); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An unused issue can match by title, but never by worklog description.
+	cached := "ŽURNALAS %_\\"
+	if err := service.UpsertIssueMetadataBatch(t.Context(), []IssueMetadata{{IssueKey: "APP-4", Title: cached, RefreshedAt: service.now().UTC(), SourceAdapterFamily: "jira-cloud", SourceAdapterInst: "main"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []IssueFindMode{IssueFindByTitle, IssueFindByDescription} {
+		t.Run(string(mode), func(t *testing.T) {
+			for _, query := range []string{"žurnalas", "ŽURNALAS"} {
+				items, more, err := service.ListUsedIssues(t.Context(), mode, query, 1, 1)
+				if err != nil || len(items) != 1 || items[0].IssueKey != "APP-2" || !more {
+					t.Fatalf("second page for %q = %#v, more=%t, err=%v", query, items, more, err)
+				}
+			}
+			items, more, err := service.ListUsedIssues(t.Context(), mode, "žurnalas %_\\", 10, 0)
+			want := 2
+			if mode == IssueFindByTitle {
+				want = 3
+			}
+			if err != nil || len(items) != want || more {
+				t.Fatalf("literal substring = %#v, more=%t, err=%v", items, more, err)
+			}
+		})
+	}
+}
