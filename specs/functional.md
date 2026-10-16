@@ -149,9 +149,10 @@ Placement rule:
 - [ ] FUNC-111: Planning issue selectors shall preserve operator-supplied issue order.
 
 ## Worklog Listing
-- [ ] FUNC-112: `workledger worklogs list` shall require at least one explicit time selector from the shared date-window selector family.
-- [ ] FUNC-113: `workledger worklogs list` shall render active local worklogs within the selected time scope.
+- [ ] FUNC-112: `workledger worklogs list` shall require at least one explicit time selector from the shared date-window selector family unless `--epic` is supplied; an epic without time selectors shall include all stored dates.
+- [ ] FUNC-113: `workledger worklogs list` shall render active local worklogs within the selected time scope, excluding trash and additional remote rows.
 - [ ] FUNC-115: `workledger worklogs list` shall support active-worklog selectors.
+- [ ] FUNC-115a: `workledger worklogs list --epic <NAME>` shall match the exact trimmed, case-sensitive local epic name through each issue's current catalog membership, intersect with supplied issue, issue-prefix, and date selectors, and return an empty successful result for an unknown or unused epic. Blank or non-single-line names shall fail validation.
 - [ ] FUNC-117: `workledger worklogs list` shall support the field selector.
 - [ ] FUNC-118: `workledger worklogs list` shall return the full filtered result set without pagination.
 - [ ] FUNC-119: `workledger worklogs list` shall expose active worklog JSON items using the default active-worklog record shape when `--fields` is not set.

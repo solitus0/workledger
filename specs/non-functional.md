@@ -303,6 +303,7 @@ Placement rule:
 - [ ] NFR-245: `worklogs list` JSON `filters` shall expose effective normalized values.
 - [ ] NFR-245a: `worklogs list` and `worklogs search` JSON `filters.raw.issue_prefix` shall expose the raw `--issue-prefix` input when provided.
 - [ ] NFR-245b: `worklogs list` and `worklogs search` JSON `filters.effective.issue_prefix` shall expose the normalized effective prefix when provided.
+- [ ] NFR-245c: `worklogs list` JSON shall expose the supplied epic name in `filters.raw.epic` and the trimmed matching name in `filters.effective.epic`; all-date epic reads shall omit effective `from` and `to` bounds. Field selection shall preserve these filters and the full matching `total`.
 - [ ] NFR-246: `worklogs search` JSON `filters.raw.query` shall preserve the operator-supplied query.
 - [ ] NFR-247: `worklogs search` JSON `filters.effective.query` shall contain the trimmed normalized query used for matching.
 - [ ] NFR-248: `--fields` shall not remove `filters` from `worklogs list` or `worklogs search` JSON output.

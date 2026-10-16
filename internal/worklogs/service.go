@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -89,6 +90,7 @@ type DeleteMapping struct {
 type ListFilters struct {
 	Issue         string
 	IssuePrefix   string
+	Epic          *string
 	Today         bool
 	Yesterday     bool
 	Tomorrow      bool
@@ -123,6 +125,7 @@ type SearchInput struct {
 type EffectiveFilters struct {
 	IssueKey    *string
 	IssuePrefix *string
+	Epic        *string
 	From        *time.Time
 	To          *time.Time
 	Timezone    string
@@ -258,8 +261,8 @@ func NewService(store *sqlitestore.Store) *Service {
 }
 
 func (s *Service) List(ctx context.Context, cfg config.EffectiveConfig, filters ListFilters) ([]LocalWorklog, EffectiveFilters, error) {
-	if !hasListTimeSelector(filters) {
-		return nil, EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: "worklogs list requires at least one time selector"}}}
+	if !hasListTimeSelector(filters) && filters.Epic == nil {
+		return nil, EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: "worklogs list requires at least one time selector or --epic"}}}
 	}
 
 	effective, err := normalizeListFiltersAt(cfg, filters, false, s.now)
@@ -1201,6 +1204,13 @@ func normalizeListFiltersAt(cfg config.EffectiveConfig, filters ListFilters, all
 		issuePrefix := filters.IssuePrefix
 		effective.IssuePrefix = &issuePrefix
 	}
+	if filters.Epic != nil {
+		epic := strings.TrimSpace(*filters.Epic)
+		if epic == "" || strings.ContainsFunc(*filters.Epic, unicode.IsControl) || strings.ContainsAny(*filters.Epic, "\u2028\u2029") {
+			return EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "epic", Message: "must be non-empty single-line text"}}}
+		}
+		effective.Epic = &epic
+	}
 
 	effective.From = from
 	effective.To = to
@@ -1675,6 +1685,10 @@ func buildWhereClause(filters EffectiveFilters, deleted bool, args *[]any) strin
 		lower, upper := sqlitestore.PrefixRange(*filters.IssuePrefix + "-")
 		whereParts = append(whereParts, "issue_key >= ?", "issue_key < ?")
 		*args = append(*args, lower, upper)
+	}
+	if filters.Epic != nil {
+		whereParts = append(whereParts, "issue_key IN (SELECT issue_key FROM issues WHERE epic = ?)")
+		*args = append(*args, *filters.Epic)
 	}
 
 	column := "started_at_utc"

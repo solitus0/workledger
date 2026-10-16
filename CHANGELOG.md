@@ -8,6 +8,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
+- `worklogs list --epic <NAME>` lists active local worklogs by exact local epic membership across all dates, with optional date and issue filters, JSON filter metadata, and epic-name completion.
 - Immutable local issue creation timestamps and Created at sorting, applied newest first by default in the TUI; `workledger init` backfills older catalogs from their earliest surviving local timestamps.
 - Logged time in TUI issue rows and epic summaries, Logged sorting, and expanded issue details with paged, scrollable all-time local worklog history.
 - TUI issue multi-selection through Space, visual range selection through `v`/`V`, and filtered select-all through Ctrl+A, with an atomic local epic assignment picker through `b`; Issues/Epics switching now uses `t`.

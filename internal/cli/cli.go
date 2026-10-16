@@ -516,6 +516,7 @@ func (a *app) newWorklogsCommand() *cobra.Command {
 func (a *app) newWorklogsListCommand() *cobra.Command {
 	var issue string
 	var issuePrefix string
+	var epic string
 	var today bool
 	var yesterday bool
 	var tomorrow bool
@@ -538,7 +539,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   "List local worklogs",
-		Example: "  workledger worklogs list --today\n  workledger worklogs list --from 2026-05-14 --to 2026-05-16\n  workledger worklogs list --mon --week-offset -1",
+		Example: "  workledger worklogs list --today\n  workledger worklogs list --epic \"SBA-october-work\"\n  workledger worklogs list --epic \"SBA-october-work\" --current-month\n  workledger worklogs list --from 2026-05-14 --to 2026-05-16\n  workledger worklogs list --mon --week-offset -1",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, false, "")
@@ -572,6 +573,9 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 				WeekOffsetSet: weekOffsetSet,
 				Fields:        fieldList,
 			}
+			if cmd.Flags().Changed("epic") {
+				raw.Epic = &epic
+			}
 			active, effectiveFilters, err := service.List(cmd.Context(), effective, raw)
 			if err != nil {
 				return a.handleWorklogError(mode, effective, err)
@@ -594,6 +598,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
 	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
+	cmd.Flags().StringVar(&epic, "epic", "", "Filter by exact local epic name; includes all dates unless date selectors are supplied")
 	addDateWindowFlags(cmd, dateWindowFlagValues{
 		Today:        &today,
 		Yesterday:    &yesterday,
@@ -3482,6 +3487,7 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 			"raw": map[string]any{
 				"issue":         emptyToNil(raw.Issue),
 				"issue_prefix":  emptyToNil(raw.IssuePrefix),
+				"epic":          raw.Epic,
 				"today":         raw.Today,
 				"yesterday":     raw.Yesterday,
 				"tomorrow":      raw.Tomorrow,
@@ -3512,6 +3518,9 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 	}
 	if effective.IssuePrefix != nil {
 		payload["filters"].(map[string]any)["effective"].(map[string]any)["issue_prefix"] = *effective.IssuePrefix
+	}
+	if effective.Epic != nil {
+		payload["filters"].(map[string]any)["effective"].(map[string]any)["epic"] = *effective.Epic
 	}
 	if effective.From != nil {
 		payload["filters"].(map[string]any)["effective"].(map[string]any)["from"] = effective.From.In(cfg.Location).Format(time.RFC3339)

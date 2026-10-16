@@ -89,11 +89,15 @@ workledger issues set --issue SBAH-1
 workledger issues set --issue SBAH-2 --title "Product data lifecycle" --max-estimate 16h --epic "Product documents"
 workledger issues list --issue-prefix SBAH
 workledger issues list --epic "Product documents"
+workledger worklogs list --epic "Product documents"
+workledger worklogs list --epic "Product documents" --current-month
 workledger issues epics --issue-prefix SBAH
 workledger issues set --issue SBAH-2 --clear-epic
 ```
 
 Each issue belongs to at most one named local epic. Groups need no separate creation and do not change Jira hierarchy. `issues list --search` matches issue keys, titles, and epic names; `issues epics --search` matches group names.
+
+`worklogs list --epic "Product documents"` lists all active local worklogs for the epic across all dates. The name matches exactly after trimming, including case, using the issues' current epic assignments. Add a date selector, `--issue`, or `--issue-prefix` to narrow the results. Without `--epic`, `worklogs list` requires a date selector. Use `--output json` for records with raw and effective filters, or `--fields` to select record fields.
 
 Tables show readable estimate, logged, remaining, and overrun durations. Budgets use all active local worklogs across all dates; date selectors choose issues without reducing their lifetime logged totals. Trash and additional remote rows are excluded. The local total is only as complete as the history available locally.
 

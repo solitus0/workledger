@@ -160,7 +160,9 @@ func TestWorklogsListHelpKeepsGroupedFlagIndentation(t *testing.T) {
 
 	for _, want := range []string{
 		"workledger worklogs list --mon --week-offset -1",
-		"Flags:\n      --fields string",
+		"workledger worklogs list --epic \"SBA-october-work\"",
+		"Flags:\n      --epic string",
+		"\n      --fields string",
 		"Date filters:\n      --today",
 		"Weekday filters:\n      --mon",
 		"Date filter modifiers:\n      --week-offset int",
