@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-10-16
+
 ### Added
 - `worklogs list --epic <NAME>` lists active local worklogs by exact local epic membership across all dates, with optional date and issue filters, JSON filter metadata, and epic-name completion.
 - Shift+R in TUI Issues pulls Jira titles and original estimates for marked or focused issues, preserves manual overrides, reports progress, and retains failed or canceled issues for retry.
