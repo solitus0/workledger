@@ -119,7 +119,7 @@ func TestDecoratedIssueDiscoveryDeduplicationPagingAndTitles(t *testing.T) {
 	if err := service.ApplyIssueMetadata(ctx, patches, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.DB().Exec(`INSERT INTO issue_metadata VALUES('APP-1',3600,'jira-cloud','main','2026-01-01T00:00:00Z')`); err != nil {
+	if _, err := store.DB().Exec(`INSERT INTO issue_metadata(issue_key,max_estimate_seconds,source_adapter_family,source_adapter_instance,refreshed_at) VALUES('APP-1',3600,'jira-cloud','main','2026-01-01T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.DB().Exec(`INSERT INTO worklogs(id,issue_key,started_at_utc,duration_seconds,description,created_at,updated_at) VALUES('used','APP-2','2026-01-01T00:00:00Z',900,'needle','2026-01-01T00:00:00Z','2026-02-01T00:00:00Z')`); err != nil {

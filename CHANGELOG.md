@@ -9,6 +9,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 - `worklogs list --epic <NAME>` lists active local worklogs by exact local epic membership across all dates, with optional date and issue filters, JSON filter metadata, and epic-name completion.
+- Shift+R in TUI Issues pulls Jira titles and original estimates for marked or focused issues, preserves manual overrides, reports progress, and retains failed or canceled issues for retry.
 - Immutable local issue creation timestamps and Created at sorting, applied newest first by default in the TUI; `workledger init` backfills older catalogs from their earliest surviving local timestamps.
 - Logged time in TUI issue rows and epic summaries, Logged sorting, and expanded issue details with paged, scrollable all-time local worklog history.
 - TUI issue multi-selection through Space, visual range selection through `v`/`V`, and filtered select-all through Ctrl+A, with an atomic local epic assignment picker through `b`; Issues/Epics switching now uses `t`.
@@ -24,6 +25,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Scrollable TUI details for worklogs, diagnostics, effective configuration, presets, trash records, and saved plan scopes, including full descriptions and saved desired entries.
 
 ### Changed
+- Unified TUI Find on `/`, separated issue-picker search modes onto Ctrl+T, and made contextual `?` Actions available in every window without losing drafts or confirmations.
+- TUI Issues list headings show only the matching issue count, keeping aggregate budgets in Epics and issue details.
 - **Breaking:** New worklog and preset writes now use whole-minute timing. Starts and durations round to the nearest minute before validation; automatic placement uses inward-rounded free slots and whole-minute fragments. Shift deltas round to minutes and reject zero results. Existing rows are not converted automatically, and saved plans with second-precision payloads must be reconciled again before apply or retry.
 - Pull reconcile now compares minute-normalized candidates while retaining observed remote timing in totals and trash; rounding-induced duplicates or overlaps block affected scopes.
 - The TUI now uses a compact navigation rail, shared title/date header, adjacent inspectors, and a single-row action bar without repeated destination shortcuts. Day browsing and placement forms share a chronological segmented timeline with stable interval widths, solid selected-worklog fill, explicit lunch and overtime states, and available-window summaries.

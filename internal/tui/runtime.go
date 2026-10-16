@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/solitus0/workledger/internal/activity"
 	"github.com/solitus0/workledger/internal/config"
+	"github.com/solitus0/workledger/internal/issues"
 	"github.com/solitus0/workledger/internal/presets"
 	"github.com/solitus0/workledger/internal/reconcile"
 	statusservice "github.com/solitus0/workledger/internal/status"
@@ -62,6 +63,10 @@ type issueService interface {
 	ApplyIssueMetadata(context.Context, []worklogs.IssueMetadataPatch, bool) error
 }
 
+type issuePuller interface {
+	Pull(context.Context, config.EffectiveConfig, []string) issues.PullResult
+}
+
 type activityService interface {
 	Start(context.Context, activity.StartInput) (activity.Entry, error)
 	Finish(context.Context, string, activity.FinishInput) (activity.Entry, error)
@@ -88,6 +93,7 @@ type workspace struct {
 	trash           trashService
 	presets         presetService
 	issues          issueService
+	issuePuller     issuePuller
 	activities      activityService
 	plans           planService
 	tracker         changeTracker
@@ -152,6 +158,7 @@ func openWorkspace(ctx context.Context) (*workspace, error) {
 		trash:           worklogService,
 		presets:         presets.NewService(store),
 		issues:          worklogService,
+		issuePuller:     issues.NewService(worklogService),
 		activities:      activity.NewService(store),
 		plans:           reconcile.NewService(store),
 		tracker:         tracker,

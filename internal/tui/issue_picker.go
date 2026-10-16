@@ -189,16 +189,18 @@ func (m model) applyIssueDescriptionsResult(msg issueDescriptionsResultMsg) (tea
 func (m model) updateIssuePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyPressMsg)
 	if !ok {
-		return m, nil
+		return m.updateIssuePickerInput(msg)
 	}
 	picker := m.issuePicker
 	switch key.String() {
-	case "ctrl+f":
-		if !picker.searching {
+	case "/":
+		if !picker.searching || picker.detailFocus {
 			picker.searching = true
 			picker.detailFocus = false
 			return m, picker.input.Focus()
 		}
+	case "ctrl+t":
+		picker.searching = true
 		picker.detailFocus = false
 		if picker.mode == worklogs.IssueFindByPrefix {
 			picker.mode = worklogs.IssueFindByDescription
@@ -299,7 +301,12 @@ func (m model) updateIssuePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if picker.detailFocus {
+	return m.updateIssuePickerInput(msg)
+}
+
+func (m model) updateIssuePickerInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	picker := m.issuePicker
+	if !picker.searching || picker.detailFocus {
 		return m, nil
 	}
 	before := picker.input.Value()

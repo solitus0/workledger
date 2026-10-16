@@ -342,9 +342,11 @@ func (m model) updatePresetPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, isKey := msg.(tea.KeyPressMsg)
 	if isKey {
 		switch key.String() {
-		case "ctrl+f":
-			m.presetPicker.searching = true
-			return m, m.presetPicker.input.Focus()
+		case "/":
+			if !m.presetPicker.searching {
+				m.presetPicker.searching = true
+				return m, m.presetPicker.input.Focus()
+			}
 		case "esc":
 			if m.presetPicker.searching {
 				m.presetPicker.searching = false

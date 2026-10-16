@@ -7,35 +7,36 @@ import (
 	"testing"
 	"time"
 
+	jiradataadapter "github.com/solitus0/workledger/internal/adapter/jiradatacenter"
 	"github.com/solitus0/workledger/internal/config"
 	sqlitestore "github.com/solitus0/workledger/internal/store/sqlite"
 	"github.com/solitus0/workledger/internal/worklogs"
 )
 
-type fakeEstimateClient struct {
+type fakeIssueClient struct {
 	estimates map[string]*int64
 	errAt     string
 }
 
-type cancelingEstimateClient struct {
+type cancelingIssueClient struct {
 	cancel   context.CancelFunc
 	estimate *int64
 	calls    int
 }
 
-func (f *cancelingEstimateClient) OriginalEstimateSeconds(context.Context, string) (*int64, error) {
+func (f *cancelingIssueClient) GetIssue(context.Context, string, []string) (jiradataadapter.IssueBrief, error) {
 	f.calls++
 	if f.calls == 1 {
 		f.cancel()
 	}
-	return f.estimate, nil
+	return issueBrief("", f.estimate), nil
 }
 
-func (f fakeEstimateClient) OriginalEstimateSeconds(_ context.Context, key string) (*int64, error) {
+func (f fakeIssueClient) GetIssue(_ context.Context, key string, _ []string) (jiradataadapter.IssueBrief, error) {
 	if key == f.errAt {
-		return nil, errors.New("remote failed")
+		return jiradataadapter.IssueBrief{}, errors.New("remote failed")
 	}
-	return f.estimates[key], nil
+	return issueBrief("Jira "+key, f.estimates[key]), nil
 }
 
 func TestRefreshPersistsResultsAtomically(t *testing.T) {
@@ -47,9 +48,9 @@ func TestRefreshPersistsResultsAtomically(t *testing.T) {
 	seedWorklog(t, store, "one", "APP-1")
 	seedWorklog(t, store, "two", "APP-2")
 	estimate := int64(3600)
-	client := fakeEstimateClient{estimates: map[string]*int64{"APP-1": &estimate, "APP-2": nil}}
+	client := fakeIssueClient{estimates: map[string]*int64{"APP-1": &estimate, "APP-2": nil}}
 	service := NewServiceWith(worklogs.NewService(store), Dependencies{
-		JiraCloudClient: func(config.JiraCloudInstance) EstimateClient { return client },
+		JiraCloudClient: func(config.JiraCloudInstance) IssueClient { return client },
 		Now:             func() time.Time { return time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC) },
 	})
 
@@ -77,9 +78,9 @@ func TestRefreshRemoteFailureDoesNotPartiallyPersist(t *testing.T) {
 	seedWorklog(t, store, "one", "APP-1")
 	seedWorklog(t, store, "two", "APP-2")
 	estimate := int64(3600)
-	client := fakeEstimateClient{estimates: map[string]*int64{"APP-1": &estimate}, errAt: "APP-2"}
+	client := fakeIssueClient{estimates: map[string]*int64{"APP-1": &estimate}, errAt: "APP-2"}
 	service := NewServiceWith(worklogs.NewService(store), Dependencies{
-		JiraCloudClient: func(config.JiraCloudInstance) EstimateClient { return client },
+		JiraCloudClient: func(config.JiraCloudInstance) IssueClient { return client },
 	})
 
 	_, err = service.Refresh(context.Background(), issueTestConfig(), RefreshInput{
@@ -104,9 +105,9 @@ func TestRefreshCancellationDoesNotPartiallyPersist(t *testing.T) {
 	seedWorklog(t, store, "two", "APP-2")
 	ctx, cancel := context.WithCancel(context.Background())
 	estimate := int64(3600)
-	client := &cancelingEstimateClient{cancel: cancel, estimate: &estimate}
+	client := &cancelingIssueClient{cancel: cancel, estimate: &estimate}
 	service := NewServiceWith(worklogs.NewService(store), Dependencies{
-		JiraCloudClient: func(config.JiraCloudInstance) EstimateClient { return client },
+		JiraCloudClient: func(config.JiraCloudInstance) IssueClient { return client },
 	})
 
 	_, err = service.Refresh(ctx, issueTestConfig(), RefreshInput{
@@ -136,4 +137,11 @@ func issueTestConfig() config.EffectiveConfig {
 			"product": {BaseURL: "https://jira.example.test", Auth: config.JiraCloudAuthBlock{Email: "user@example.test", Token: "token"}},
 		}}},
 	}
+}
+
+func issueBrief(title string, estimate *int64) jiradataadapter.IssueBrief {
+	var item jiradataadapter.IssueBrief
+	item.Fields.Summary = title
+	item.Fields.Timetracking = &jiradataadapter.Timetracking{OriginalEstimateSeconds: estimate}
+	return item
 }

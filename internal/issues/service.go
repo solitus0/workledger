@@ -39,13 +39,13 @@ func (e ValidationError) Unwrap() error {
 	return ErrValidation
 }
 
-type EstimateClient interface {
-	OriginalEstimateSeconds(context.Context, string) (*int64, error)
+type IssueClient interface {
+	GetIssue(context.Context, string, []string) (jiradataadapter.IssueBrief, error)
 }
 
 type Dependencies struct {
-	JiraCloudClient func(config.JiraCloudInstance) EstimateClient
-	JiraDataClient  func(config.JiraDataCenterInstance) EstimateClient
+	JiraCloudClient func(config.JiraCloudInstance) IssueClient
+	JiraDataClient  func(config.JiraDataCenterInstance) IssueClient
 	Now             func() time.Time
 }
 
@@ -74,13 +74,13 @@ func NewService(worklogService *worklogs.Service) *Service {
 
 func NewServiceWith(worklogService *worklogs.Service, deps Dependencies) *Service {
 	if deps.JiraCloudClient == nil {
-		deps.JiraCloudClient = func(cfg config.JiraCloudInstance) EstimateClient {
-			return jiraCloudEstimateClient{client: jiracloudadapter.NewClient(cfg.BaseURL, cfg.Auth.Email, cfg.Auth.Token)}
+		deps.JiraCloudClient = func(cfg config.JiraCloudInstance) IssueClient {
+			return jiracloudadapter.NewClient(cfg.BaseURL, cfg.Auth.Email, cfg.Auth.Token)
 		}
 	}
 	if deps.JiraDataClient == nil {
-		deps.JiraDataClient = func(cfg config.JiraDataCenterInstance) EstimateClient {
-			return jiraDataEstimateClient{client: jiradataadapter.NewClient(cfg.BaseURL, cfg.Auth.Bearer.Token)}
+		deps.JiraDataClient = func(cfg config.JiraDataCenterInstance) IssueClient {
+			return jiradataadapter.NewClient(cfg.BaseURL, cfg.Auth.Bearer.Token)
 		}
 	}
 	if deps.Now == nil {
@@ -104,7 +104,7 @@ func (s *Service) Refresh(ctx context.Context, cfg config.EffectiveConfig, input
 	keys := issueKeys(active)
 	result := RefreshResult{Adapter: input.Adapter, Field: input.Field}
 
-	var client EstimateClient
+	var client IssueClient
 	var prefixes []string
 	switch input.Adapter {
 	case "jira-cloud":
@@ -149,7 +149,8 @@ func (s *Service) Refresh(ctx context.Context, cfg config.EffectiveConfig, input
 		if err := ctx.Err(); err != nil {
 			return RefreshResult{}, err
 		}
-		estimate, err := client.OriginalEstimateSeconds(ctx, key)
+		remote, err := client.GetIssue(ctx, key, []string{"timetracking"})
+		estimate := originalEstimate(remote)
 		if err != nil {
 			return RefreshResult{}, &RemoteError{Adapter: input.Adapter, Err: err}
 		}
@@ -171,28 +172,11 @@ func (s *Service) Refresh(ctx context.Context, cfg config.EffectiveConfig, input
 	return result, nil
 }
 
-type jiraCloudEstimateClient struct {
-	client *jiracloudadapter.Client
-}
-
-func (c jiraCloudEstimateClient) OriginalEstimateSeconds(ctx context.Context, key string) (*int64, error) {
-	item, err := c.client.GetIssue(ctx, key, []string{"timetracking"})
-	if err != nil || item.Fields.Timetracking == nil {
-		return nil, err
+func originalEstimate(item jiradataadapter.IssueBrief) *int64 {
+	if item.Fields.Timetracking == nil || item.Fields.Timetracking.OriginalEstimateSeconds == nil || *item.Fields.Timetracking.OriginalEstimateSeconds <= 0 {
+		return nil
 	}
-	return item.Fields.Timetracking.OriginalEstimateSeconds, nil
-}
-
-type jiraDataEstimateClient struct {
-	client *jiradataadapter.Client
-}
-
-func (c jiraDataEstimateClient) OriginalEstimateSeconds(ctx context.Context, key string) (*int64, error) {
-	item, err := c.client.GetIssue(ctx, key, []string{"timetracking"})
-	if err != nil || item.Fields.Timetracking == nil {
-		return nil, err
-	}
-	return item.Fields.Timetracking.OriginalEstimateSeconds, nil
+	return item.Fields.Timetracking.OriginalEstimateSeconds
 }
 
 func issueKeys(items []worklogs.LocalWorklog) []string {

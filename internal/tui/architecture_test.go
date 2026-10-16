@@ -46,7 +46,7 @@ func TestInteractionStateChoosesOneActiveMode(t *testing.T) {
 	if got := state.kind(); got != interactionPlanOperation {
 		t.Fatalf("active interaction = %v, want plan operation", got)
 	}
-	state.overlay = helpOverlay
+	state.actions = &actionsState{}
 	if got := state.kind(); got != interactionHelp {
 		t.Fatalf("active interaction = %v, want help", got)
 	}

@@ -133,7 +133,7 @@ func TestActionsSearchDispatchesThroughExistingConfirmation(t *testing.T) {
 	m = next.(model)
 	next, cmd = m.Update(textKey("q"))
 	m = next.(model)
-	if cmd != nil || m.overlay != helpOverlay || m.actions.input.Value() != "q" {
+	if cmd != nil || m.actions == nil || m.actions.input.Value() != "q" {
 		t.Fatal("typing q in Actions quit instead of filtering")
 	}
 	next, _ = m.Update(specialKey(tea.KeyEsc))
@@ -157,7 +157,7 @@ func TestActionsOpenAndCloseFromEveryDestination(t *testing.T) {
 			selectedTab := m.activeTab
 			next, _ = m.Update(textKey("?"))
 			m = next.(model)
-			if m.overlay != helpOverlay || !strings.Contains(stripANSI(m.View().Content), "Actions · "+destination.label) {
+			if m.actions == nil || !strings.Contains(stripANSI(m.View().Content), "Actions · "+destination.label) {
 				t.Fatal("Actions did not render for the selected destination")
 			}
 			assertRedesignBounds(t, m, "Actions on "+destination.label)

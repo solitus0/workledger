@@ -15,7 +15,7 @@ import (
 
 // Issue identity and optional local fields are independent of the remote cache.
 const issueCatalogSQL = `WITH metadata AS (
-    SELECT d.issue_key, d.title, d.epic, d.max_estimate_seconds AS manual_estimate,
+    SELECT d.issue_key, COALESCE(d.title, c.title) AS title, d.title AS manual_title, c.title AS cached_title, d.epic, d.max_estimate_seconds AS manual_estimate,
            c.max_estimate_seconds AS cached_estimate,
            c.source_adapter_family, c.source_adapter_instance, c.refreshed_at,
            d.created_at, d.updated_at,
@@ -24,7 +24,7 @@ const issueCatalogSQL = `WITH metadata AS (
     LEFT JOIN issue_metadata c ON c.issue_key = d.issue_key
 ) `
 
-const issueMetadataFields = `SELECT m.issue_key, m.title, m.epic, m.manual_estimate, m.cached_estimate,
+const issueMetadataFields = `SELECT m.issue_key, m.manual_title, m.cached_title, m.epic, m.manual_estimate, m.cached_estimate,
     m.source_adapter_family, m.source_adapter_instance, m.refreshed_at, m.created_at, m.updated_at, `
 
 func (s *Service) LookupIssueMetadata(ctx context.Context, issueKeys []string) (map[string]IssueMetadata, error) {
@@ -93,12 +93,16 @@ func readIssueMetadata(rows *sql.Rows) ([]IssueMetadata, error) {
 	items := []IssueMetadata{}
 	for rows.Next() {
 		var item IssueMetadata
-		var title, epic, family, instance, refreshed, created, updated sql.NullString
+		var title, cachedTitle, epic, family, instance, refreshed, created, updated sql.NullString
 		var manual, cached sql.NullInt64
-		if err := rows.Scan(&item.IssueKey, &title, &epic, &manual, &cached, &family, &instance, &refreshed, &created, &updated, &item.LoggedSeconds); err != nil {
+		if err := rows.Scan(&item.IssueKey, &title, &cachedTitle, &epic, &manual, &cached, &family, &instance, &refreshed, &created, &updated, &item.LoggedSeconds); err != nil {
 			return nil, err
 		}
 		item.Title, item.SourceAdapterFamily, item.SourceAdapterInst = title.String, family.String, instance.String
+		item.ManualTitle, item.CachedTitle = title.String, cachedTitle.String
+		if item.Title == "" {
+			item.Title = item.CachedTitle
+		}
 		item.Epic = epic.String
 		if manual.Valid {
 			item.ManualMaxEstimateSeconds = &manual.Int64

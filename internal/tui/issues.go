@@ -30,6 +30,8 @@ type issuesScreen struct {
 	issueMarks      map[string]bool
 	issueRange      *issueRangeState
 	issueHistoryGen int
+	issuePull       *issuePullState
+	issuePullGen    int
 }
 
 type issueView int
@@ -189,6 +191,11 @@ func (m *model) moveIssueSelection(delta int) {
 }
 
 func (m model) updateIssues(key string) (tea.Model, tea.Cmd) {
+	if key == "esc" && m.issuePull != nil {
+		m.issuePull.cancel()
+		m.setNotice(noticeInfo, "Stopping Jira pull…")
+		return m, nil
+	}
 	if key != "up" && key != "k" && key != "down" && key != "j" && key != "pgup" && key != "pgdown" && key != "home" && key != "end" && key != "v" && key != "V" && key != "esc" {
 		m.issueRange = nil
 	}
@@ -210,6 +217,8 @@ func (m model) updateIssues(key string) (tea.Model, tea.Cmd) {
 		return m.updateEpics(key)
 	}
 	switch key {
+	case "R", "shift+r":
+		return m.startIssuePull()
 	case "v", "V":
 		m.toggleIssueRange(key == "V")
 	case "ctrl+a":
@@ -317,7 +326,7 @@ func (m *model) openIssueForm(item *worklogs.IssueMetadata) tea.Cmd {
 	state := issueFormState{}
 	values := []string{"", "", "", ""}
 	if item != nil {
-		values[0], values[1], values[3] = item.IssueKey, item.Title, item.Epic
+		values[0], values[1], values[3] = item.IssueKey, item.ManualTitle, item.Epic
 		if item.ManualMaxEstimateSeconds != nil {
 			values[2] = formatEstimateDuration(*item.ManualMaxEstimateSeconds)
 		}

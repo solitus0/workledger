@@ -196,9 +196,6 @@ func (m model) updateActivity(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "q":
 		return m, tea.Quit
-	case "?":
-		m.overlay = helpOverlay
-		m.focus = focusWorkspace
 	case "up", "k":
 		m.activitySelected = max(0, m.activitySelected-1)
 	case "down", "j":

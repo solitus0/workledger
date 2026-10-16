@@ -74,13 +74,13 @@ func TestPresetPickerShowsShortcutsOnlyInActionBar(t *testing.T) {
 	if m.presetPicker.searching || strings.Contains(body, "Find preset") || strings.Contains(body, "Type preset name") {
 		t.Fatalf("preset picker should open in browse mode:\n%s", body)
 	}
-	for _, hint := range []string{"Ctrl+F Find", "↑/↓ Select", "Enter Choose", "Esc Cancel"} {
+	for _, hint := range []string{"/ Find", "↑/↓ Select", "Enter Choose", "Esc Cancel"} {
 		if strings.Contains(body, hint) {
 			t.Fatalf("preset picker body duplicates action-bar hint %q:\n%s", hint, body)
 		}
 	}
 	rendered := m.render()
-	for _, shortcut := range []string{"Ctrl+F Find", "↑/↓ Select", "Enter Choose", "Esc Cancel"} {
+	for _, shortcut := range []string{"/ Find", "↑/↓ Select", "Enter Choose", "Esc Cancel"} {
 		if strings.Count(rendered, shortcut) != 1 {
 			t.Fatalf("shortcut %q should appear once in the action bar:\n%s", shortcut, rendered)
 		}
@@ -91,10 +91,10 @@ func TestPresetPickerShowsShortcutsOnlyInActionBar(t *testing.T) {
 	if len(m.presetPicker.items) != 2 {
 		t.Fatal("typing in browse mode unexpectedly filtered presets")
 	}
-	next, _ = m.Update(ctrlKey('f'))
+	next, _ = m.Update(textKey("/"))
 	m = next.(model)
 	if !m.presetPicker.searching || !strings.Contains(m.renderPresetPicker(m.width, m.height), "Find preset") {
-		t.Fatal("ctrl+f did not reveal the preset search field")
+		t.Fatal("/ did not reveal the preset search field")
 	}
 	next, _ = m.Update(textKey("d"))
 	m = next.(model)

@@ -9,6 +9,9 @@ type commandAction struct {
 }
 
 func (m model) commandActions() []commandAction {
+	if label, actions := m.dialogActions(); label != "" {
+		return append(actions, commandAction{"ctrl+c", "Ctrl+C", "Interrupt"})
+	}
 	actions := []commandAction{}
 	add := func(key, chord, label string) { actions = append(actions, commandAction{key, chord, label}) }
 	if m.focus == focusActivity {
@@ -71,7 +74,9 @@ func (m model) commandActions() []commandAction {
 			if m.selectedEpic() != nil {
 				add("enter", "Enter", "Open epic issues")
 			}
-			if m.epicSearch != nil {
+			if m.issuePull != nil {
+				add("esc", "Esc", "Stop Jira metadata pull")
+			} else if m.epicSearch != nil {
 				add("esc", "Esc", "Clear epic filter")
 			}
 		} else {
@@ -85,6 +90,9 @@ func (m model) commandActions() []commandAction {
 				add("V", "V", "Start or finish range unselection")
 				add("ctrl+a", "Ctrl+A", "Select all matching issues")
 			}
+			if m.issuePull == nil && m.workspace.issuePuller != nil && (len(m.issueMarks) > 0 || m.selectedIssue() != nil) && !m.issuesLoading && m.issuesErr == "" {
+				add("R", "Shift+R", "Pull Jira titles and estimates")
+			}
 			if len(m.issueMarks) > 0 && !m.issuesLoading && m.issuesErr == "" {
 				add("b", "b", "Assign epic to selected issues")
 			}
@@ -94,7 +102,9 @@ func (m model) commandActions() []commandAction {
 					add("e", "e", "Edit issue metadata")
 				}
 			}
-			if m.issueRange != nil {
+			if m.issuePull != nil {
+				add("esc", "Esc", "Stop Jira metadata pull")
+			} else if m.issueRange != nil {
 				add("esc", "Esc", "Finish range selection")
 			} else if len(m.issueMarks) > 0 {
 				add("esc", "Esc", "Clear issue selection")
@@ -170,7 +180,7 @@ func (m model) idleHints() (primary []actionHint) {
 		keys = []string{"a", "e", "D", "enter", "r"}
 	case issuesTab:
 		primary[0] = actionHint{"↑/↓ PgUp/Dn", "Select"}
-		keys = []string{"space", "v", "b", "s", "/", "t", "esc", "a", "e", "enter", "r"}
+		keys = []string{"space", "v", "b", "R", "s", "/", "t", "esc", "a", "e", "enter", "r"}
 	case trashTab:
 		keys = []string{"R", "s", "enter", "r"}
 	case plansTab:
@@ -200,9 +210,12 @@ func (m model) idleHints() (primary []actionHint) {
 	}
 	if m.activeTab == issuesTab {
 		labels["s"] = "Sort"
+		labels["R"] = "Pull Jira"
 		labels["t"] = "Epics"
 		labels["space"], labels["v"], labels["b"] = "Mark", "Range", "Assign epic"
-		if m.issueRange != nil {
+		if m.issuePull != nil {
+			labels["esc"] = "Stop pull"
+		} else if m.issueRange != nil {
 			labels["v"], labels["esc"] = "Finish range", "Finish range"
 		} else if len(m.issueMarks) > 0 {
 			labels["esc"] = "Clear marks"

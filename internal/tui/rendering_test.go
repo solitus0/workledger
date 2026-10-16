@@ -97,7 +97,7 @@ func TestMouseNavigationRespectsBlockingStatesAndUnavailableTabs(t *testing.T) {
 		click tea.MouseClickMsg
 	}{
 		{name: "form", setup: func(m *model) { m.openAddForm() }, click: mouseClick(1, 1, tea.MouseLeft)},
-		{name: "overlay", setup: func(m *model) { m.overlay = helpOverlay }, click: mouseClick(1, 1, tea.MouseLeft)},
+		{name: "overlay", setup: func(m *model) { m.openActions() }, click: mouseClick(1, 1, tea.MouseLeft)},
 		{name: "undersized", setup: func(m *model) { m.width = minimumWidth - 1 }, click: mouseClick(1, 1, tea.MouseLeft)},
 		{name: "non-left", setup: func(*model) {}, click: mouseClick(1, 1, tea.MouseRight)},
 	}
@@ -213,7 +213,7 @@ func TestAutomaticPlacementShortcutsToggleOptionsAndRecalculate(t *testing.T) {
 		t.Fatalf("enabled footer actions did not follow state: %s", footer)
 	}
 	compactFooter := m.renderFooter(minimumWidth)
-	if lipgloss.Width(compactFooter) != minimumWidth || !strings.Contains(compactFooter, "Ctrl+P Manual") || !strings.Contains(compactFooter, "Ctrl+O Late starts off") || !strings.Contains(compactFooter, "Ctrl+L Reserve lunch") {
+	if lipgloss.Width(compactFooter) != minimumWidth || !strings.Contains(compactFooter, "Ctrl+P Manual") || !strings.Contains(compactFooter, "Ctrl+O Late off") || !strings.Contains(compactFooter, "Ctrl+L Keep lunch") || !strings.Contains(compactFooter, "? Actions") {
 		t.Fatalf("compact footer does not preserve state-dependent actions: %s", compactFooter)
 	}
 
@@ -401,7 +401,7 @@ func TestAutomaticAddFormFitsMinimumViewport(t *testing.T) {
 	if width, height := lipgloss.Width(rendered), lipgloss.Height(rendered); width != minimumWidth || height != minimumHeight {
 		t.Fatalf("automatic add render = %dx%d, want %dx%d", width, height, minimumWidth, minimumHeight)
 	}
-	for _, expected := range []string{"Worklog details", "› Issue", "│ Duration", "│ Description", "─ Placement", "[Fill]", "─ Calculated", "Ctrl+P Manual", "Ctrl+O Late starts on", "Ctrl+L Use lunch", "09:30–11:00", "Ctrl+S Create 1 worklog"} {
+	for _, expected := range []string{"Worklog details", "› Issue", "│ Duration", "│ Description", "─ Placement", "[Fill]", "─ Calculated", "Ctrl+P Manual", "Ctrl+O Late on", "Ctrl+L Use lunch", "09:30–11:00", "Ctrl+S Create", "? Actions"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("automatic add render missing %q", expected)
 		}
@@ -1630,8 +1630,8 @@ func TestViewUsesSemanticColorWhenEnabled(t *testing.T) {
 	picker.presets = []presets.Preset{{Name: "daily-standup"}}
 	picker.openPresetPicker()
 	footer = picker.renderFooter(140)
-	if !strings.Contains(footer, m.paint("Ctrl+F", m.colors.Focus)) || strings.Contains(footer, m.paint("Find", m.colors.Focus)) {
-		t.Fatalf("preset picker footer does not style Ctrl+F as a key chord: %q", footer)
+	if !strings.Contains(footer, m.paint("/", m.colors.Focus)) || strings.Contains(footer, m.paint("Find", m.colors.Focus)) {
+		t.Fatalf("preset picker footer does not style / as a key chord: %q", footer)
 	}
 	legend := m.renderTimelineLegend(nil, "")
 	for _, expected := range []string{m.paint("█", m.colors.Information), m.paint("╱", m.colors.Secondary), m.paint("□", m.colors.Muted)} {

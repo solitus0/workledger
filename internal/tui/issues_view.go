@@ -67,14 +67,9 @@ func (m model) renderIssuesWorkspace(width, height int) string {
 	return m.inspector(strings.Join(lines, "\n"), m.renderIssueDetails(detailWidth-2), width, height)
 }
 
-// Rendering and paging share the exact header height, including wrapped summaries.
+// Rendering and paging share the exact header height, including wrapped labels.
 func (m model) issueListContent(contentWidth int) ([]string, []int, int) {
 	indices := m.visibleIssues()
-	items := make([]worklogs.IssueMetadata, 0, len(indices))
-	for _, index := range indices {
-		items = append(items, m.issues[index])
-	}
-	summary := worklogs.SummarizeIssues(items)
 	lines := []string{m.renderIssueViewSelector()}
 	if state := m.issueRefreshLabel(); state != "" {
 		lines = append(lines, strings.Split(ansi.Wrap(state, contentWidth, ""), "\n")...)
@@ -82,7 +77,11 @@ func (m model) issueListContent(contentWidth int) ([]string, []int, int) {
 	if m.issueEpic != nil {
 		lines = append(lines, m.secondary(truncate("Epic: "+epicName(*m.issueEpic), contentWidth)))
 	}
-	lines = append(lines, strings.Split(ansi.Wrap(m.issueSummaryLine(summary), contentWidth, ""), "\n")...)
+	countLabel := issueCountLabel(len(indices))
+	if m.issuePull != nil {
+		countLabel += " · " + m.issuePullLabel()
+	}
+	lines = append(lines, strings.Split(ansi.Wrap(countLabel, contentWidth, ""), "\n")...)
 	if label := m.issueSelectionLabel(); label != "" {
 		lines = append(lines, strings.Split(ansi.Wrap(m.paint(label, m.colors.Focus), contentWidth, ""), "\n")...)
 	}
@@ -97,6 +96,9 @@ func (m model) issueListContent(contentWidth int) ([]string, []int, int) {
 }
 
 func (m model) issueRefreshLabel() string {
+	if m.issuePull != nil && m.issueView == epicListView {
+		return m.paint(m.issuePullLabel(), m.colors.Progress)
+	}
 	if m.issuesLoading {
 		return m.paint("Refreshing issues…", m.colors.Progress)
 	}
@@ -296,6 +298,27 @@ func (m model) renderIssueMetadataDetails(item *worklogs.IssueMetadata, compactW
 	if compactWidth > 0 {
 		epic = truncate(epic, compactWidth)
 	}
+	if item.CachedTitle != "" || !item.RefreshedAt.IsZero() {
+		lines = append(lines, "", "Jira cache · "+item.SourceAdapterFamily+"/"+item.SourceAdapterInst)
+		if item.CachedTitle != "" {
+			label := "Title     " + item.CachedTitle
+			if item.ManualTitle != "" {
+				label += " · manual override active"
+			}
+			lines = append(lines, label)
+		}
+		label := "Estimate  Unknown"
+		if item.CachedMaxEstimateSeconds != nil {
+			label = "Estimate  " + formatEstimateDuration(*item.CachedMaxEstimateSeconds)
+		}
+		if item.ManualMaxEstimateSeconds != nil {
+			label += " · manual override active"
+		}
+		lines = append(lines, label)
+		if !item.RefreshedAt.IsZero() {
+			lines = append(lines, "Refreshed "+item.RefreshedAt.In(m.workspace.cfg.Location).Format("2006-01-02 15:04"))
+		}
+	}
 	lines = append(lines, "", "Epic", epic)
 	if item.Epic != "" {
 		members := make([]worklogs.IssueMetadata, 0)
@@ -325,11 +348,11 @@ func (m model) renderIssueForm() string {
 	}
 	helper := "Title, estimate and epic are optional."
 	if m.issueForm.editing {
-		helper = "Blank title, estimate or epic clears that value."
+		helper = "Blank fields clear local overrides and epic assignment."
 	}
 	lines = append(lines, "", m.muted(helper))
-	if item := m.selectedIssue(); m.issueForm.editing && item != nil && item.CachedMaxEstimateSeconds != nil {
-		lines = append(lines, m.muted("Blank estimate uses the cached Jira estimate."))
+	if item := m.selectedIssue(); m.issueForm.editing && item != nil && (item.CachedMaxEstimateSeconds != nil || item.CachedTitle != "") {
+		lines = append(lines, m.muted("Blank title or estimate uses the cached Jira value."))
 	}
 	if m.issueForm.saving {
 		lines = append(lines, "", m.paint("Saving…", m.colors.Progress))

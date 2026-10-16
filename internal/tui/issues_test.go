@@ -61,7 +61,7 @@ func issueFixture(t *testing.T) (model, *worklogs.Service) {
 func TestIssuesEstimateSaveAndCancelPreserveSelection(t *testing.T) {
 	m, service := issueFixture(t)
 	before := m.render()
-	if !strings.Contains(before, "9h known left") || !strings.Contains(before, "1 unestimated") || m.selectedIssueKey() != "SBAH-2" {
+	if !strings.Contains(before, "3 issues") || !strings.Contains(m.renderIssueDetail(), "9h known left") || !strings.Contains(m.renderIssueDetail(), "1 unestimated") || m.selectedIssueKey() != "SBAH-2" {
 		t.Fatalf("initial issue view: %s", before)
 	}
 	next, _ := m.Update(textKey("e"))
@@ -187,7 +187,13 @@ func TestIssuesLayoutsPreserveMetricsAndFormAtMinimumSize(t *testing.T) {
 				base.width, base.height, base.activityOpen, base.deps.noColor = size[0], size[1], drawer, noColor
 				assertRedesignBounds(t, base, "issues")
 				view := ansi.Strip(base.render())
-				for _, content := range []string{"6 Issues", "Logged", "Estimate", "Remaining", "Document management", "Unknown", "1 unestimated"} {
+				listWidth, _ := inspectorWidths(calculateLayout(base.width, base.height, drawer).workspace.width)
+				header, _, _ := base.issueListContent(listWidth - 2)
+				listHeader := ansi.Strip(strings.Join(header, "\n"))
+				if !strings.Contains(listHeader, "3 issues") || strings.Contains(listHeader, "left") || strings.Contains(listHeader, "unestimated") {
+					t.Fatalf("list header repeats aggregate budget: %s", listHeader)
+				}
+				for _, content := range []string{"6 Issues", "Logged", "Estimate", "Remaining", "Document management", "Unknown", "unestimated"} {
 					if !strings.Contains(view, content) {
 						t.Fatalf("lost %s at %v activity=%t: %s", content, size, drawer, view)
 					}

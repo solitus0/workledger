@@ -5,6 +5,41 @@ import (
 	"testing"
 )
 
+func TestBootstrapAddsCachedTitleWithoutChangingIssueData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "issues.db")
+	store, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO issues(issue_key,title,epic,max_estimate_seconds,created_at,updated_at) VALUES('APP-1','Manual title','October',7200,'2026-01-01T00:00:00Z','2026-02-01T00:00:00Z')`,
+		`INSERT INTO issue_metadata(issue_key,title,max_estimate_seconds,source_adapter_family,source_adapter_instance,refreshed_at) VALUES('APP-1','Discarded title',3600,'jira-cloud','main','2026-03-01T00:00:00Z')`,
+		`ALTER TABLE issue_metadata DROP COLUMN title`,
+	} {
+		if _, err := store.DB().Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store.Close()
+	store, status, err := Bootstrap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if status != StatusRepaired {
+		t.Fatalf("status = %s", status)
+	}
+	var title, epic, created, updated, family, instance, refreshed string
+	var manual, cached int64
+	var missingTitle bool
+	if err := store.DB().QueryRow(`SELECT d.title,d.epic,d.max_estimate_seconds,d.created_at,d.updated_at,c.title IS NULL,c.max_estimate_seconds,c.source_adapter_family,c.source_adapter_instance,c.refreshed_at FROM issues d JOIN issue_metadata c USING(issue_key) WHERE issue_key='APP-1'`).Scan(&title, &epic, &manual, &created, &updated, &missingTitle, &cached, &family, &instance, &refreshed); err != nil {
+		t.Fatal(err)
+	}
+	if title != "Manual title" || epic != "October" || manual != 7200 || created != "2026-01-01T00:00:00Z" || updated != "2026-02-01T00:00:00Z" || !missingTitle || cached != 3600 || family != "jira-cloud" || instance != "main" || refreshed != "2026-03-01T00:00:00Z" {
+		t.Fatal("upgrade changed existing fields")
+	}
+}
+
 func TestBootstrapReplacesDecorationsAndBackfillsIssueIdentity(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "worklogs.db")
 	store, _, err := Bootstrap(path)
@@ -18,8 +53,8 @@ func TestBootstrapReplacesDecorationsAndBackfillsIssueIdentity(t *testing.T) {
 		`DROP TABLE issues`,
 		`CREATE TABLE issue_decorations(issue_key TEXT PRIMARY KEY, title TEXT NULL, max_estimate_seconds INTEGER NULL, updated_at TEXT NOT NULL)`,
 		`INSERT INTO issue_decorations VALUES('APP-1','Local title',7200,'2026-02-01T00:00:00Z')`,
-		`INSERT INTO issue_metadata VALUES('APP-1',3600,'jira-cloud','main','2026-01-01T00:00:00Z')`,
-		`INSERT INTO issue_metadata VALUES('APP-2',3600,'jira-cloud','main','2026-01-01T00:00:00Z')`,
+		`INSERT INTO issue_metadata(issue_key,max_estimate_seconds,source_adapter_family,source_adapter_instance,refreshed_at) VALUES('APP-1',3600,'jira-cloud','main','2026-01-01T00:00:00Z')`,
+		`INSERT INTO issue_metadata(issue_key,max_estimate_seconds,source_adapter_family,source_adapter_instance,refreshed_at) VALUES('APP-2',3600,'jira-cloud','main','2026-01-01T00:00:00Z')`,
 		`INSERT INTO worklogs(id,issue_key,started_at_utc,duration_seconds,description,created_at,updated_at) VALUES('old','APP-3','2026-01-01T00:00:00Z',900,'work','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`,
 	} {
 		if _, err := store.DB().Exec(statement); err != nil {
@@ -136,7 +171,7 @@ func TestIssueCreationMigrationRetainsEarliestEvidenceAndMetadata(t *testing.T) 
 	statements := []string{
 		`INSERT INTO issues(issue_key,title,epic,max_estimate_seconds,updated_at) VALUES('APP-1','Title','October',7200,'2026-03-01T00:00:00Z'),('APP-2',NULL,NULL,NULL,'2026-02-01T00:00:00Z')`,
 		`INSERT INTO worklogs(id,issue_key,started_at_utc,duration_seconds,description,created_at,updated_at) VALUES('first','APP-1','2025-12-01T09:00:00Z',900,'First','2026-01-01T00:00:00Z','2026-03-01T00:00:00Z'),('second','APP-1','2026-02-01T09:00:00Z',900,'Second','2026-02-01T00:00:00Z','2026-03-01T00:00:00Z')`,
-		`INSERT INTO issue_metadata VALUES('APP-1',3600,'jira-cloud','main','2026-01-10T00:00:00Z')`,
+		`INSERT INTO issue_metadata(issue_key,max_estimate_seconds,source_adapter_family,source_adapter_instance,refreshed_at) VALUES('APP-1',3600,'jira-cloud','main','2026-01-10T00:00:00Z')`,
 		`INSERT INTO trashed_worklogs(id,storage_scope,issue_key,started_at_utc,duration_seconds,description,trashed_at,reason_code,reason_detail,plan_direction,source_created_at) VALUES('archived','local','APP-1','2025-12-01T00:00:00Z',900,'Archived','2026-01-01T00:00:00Z','user_deleted','','local','2025-12-15T00:00:00Z')`,
 		`DROP TRIGGER trg_worklogs_issue_insert`, `DROP TRIGGER trg_worklogs_issue_update`, `DROP TRIGGER trg_metadata_issue_insert`,
 		`ALTER TABLE issues DROP COLUMN created_at`,

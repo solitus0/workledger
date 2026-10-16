@@ -181,7 +181,7 @@ func TestDeleteAndHelpOverlays(t *testing.T) {
 	}
 	next, _ = m.Update(textKey("?"))
 	m = next.(model)
-	if m.overlay != helpOverlay {
+	if m.actions == nil {
 		t.Fatalf("help overlay = %v", m.overlay)
 	}
 }

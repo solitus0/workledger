@@ -75,7 +75,6 @@ type overlay int
 
 const (
 	noOverlay overlay = iota
-	helpOverlay
 	deleteOverlay
 	deleteDayOverlay
 	forceOverlay
@@ -222,7 +221,7 @@ const (
 )
 
 func (state interactionState) kind() interactionKind {
-	if state.overlay == helpOverlay {
+	if state.actions != nil {
 		return interactionHelp
 	}
 	if state.overlay != noOverlay {
@@ -846,6 +845,8 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleIssueListResult(msg)
 	case issueMutationResultMsg:
 		return m.handleIssueMutationResult(msg)
+	case issuePullResultMsg:
+		return m.handleIssuePullResult(msg)
 	case epicAssignmentResultMsg:
 		return m.handleEpicAssignmentResult(msg)
 	case activityListResultMsg:
@@ -919,16 +920,28 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 
 	key, ok := msg.(tea.KeyPressMsg)
 	if !ok {
+		if m.actions != nil {
+			return m.updateActions(msg)
+		}
 		if m.overlay == epicAssignmentOverlay {
 			return m.updateEpicAssignment(msg)
-		}
-		if m.overlay == helpOverlay {
-			return m.updateActions(msg)
 		}
 		if m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.worklogView == dayWorklogView && m.interactionState.kind() == interactionIdle {
 			return m.updateWorklogFilter(msg)
 		}
+		if m.interactionState.kind() == interactionIdle && m.activeTab == issuesTab {
+			if m.issueView == issueListView && m.issueSearch != nil && m.issueSearch.editing {
+				return m.updateIssueSearch(msg)
+			}
+			if m.issueView == epicListView && m.epicSearch != nil && m.epicSearch.editing {
+				return m.updateEpicSearch(msg)
+			}
+		}
 		switch m.interactionState.kind() {
+		case interactionIssueForm:
+			return m.updateIssueForm(msg)
+		case interactionIssuePicker:
+			return m.updateIssuePicker(msg)
 		case interactionPresetPicker:
 			return m.updatePresetPicker(msg)
 		case interactionPresetForm:
@@ -943,6 +956,13 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	keyName := key.String()
 	if keyName == "ctrl+c" {
 		return m, tea.Interrupt
+	}
+	if keyName == "?" {
+		if m.actions != nil {
+			m.actions = nil
+			return m, nil
+		}
+		return m, m.openActions()
 	}
 	if m.width < minimumWidth || m.height < minimumHeight {
 		if keyName == "q" {
@@ -1021,9 +1041,6 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	}
 	if keyName == "q" {
 		return m, tea.Quit
-	}
-	if keyName == "?" {
-		return m, m.openActions()
 	}
 	if m.focus == focusActivity {
 		return m.updateActivity(keyName)
@@ -1962,6 +1979,9 @@ func restorableLocalTrash(items []worklogs.TrashRecord) []worklogs.TrashRecord {
 }
 
 func (m model) close() {
+	if m.issuePull != nil {
+		m.issuePull.cancel()
+	}
 	if m.statusCancel != nil {
 		m.statusCancel()
 	}

@@ -137,8 +137,8 @@ func TestUnusedIssuePickerTitleModeAndLayout(t *testing.T) {
 		if noColor && strings.Contains(view, "\x1b[") {
 			t.Fatal("picker emitted ANSI")
 		}
-		for range 3 {
-			next, _ = m.Update(ctrlKey('f'))
+		for range 2 {
+			next, _ = m.Update(ctrlKey('t'))
 			m = next.(model)
 		}
 		if m.issuePicker.mode != worklogs.IssueFindByTitle {

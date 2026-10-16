@@ -65,7 +65,6 @@ func (m *model) searchInputs() []*textinput.Model {
 
 func (m *model) openActions() tea.Cmd {
 	m.actions = &actionsState{input: m.searchInput("Find an action…")}
-	m.overlay = helpOverlay
 	m.resizeSearchInputs()
 	return m.actions.input.Focus()
 }
@@ -91,7 +90,7 @@ func (m model) updateActions(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.String() {
 		case "esc":
-			m.overlay, m.actions = noOverlay, nil
+			m.actions = nil
 			return m, nil
 		case "up":
 			m.actions.selected = max(0, m.actions.selected-1)
@@ -105,8 +104,8 @@ func (m model) updateActions(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			action := matches[clampIndex(m.actions.selected, len(matches))]
-			m.overlay, m.actions = noOverlay, nil
-			if m.focus == focusRail {
+			m.actions = nil
+			if m.focus == focusRail && m.interactionState.kind() == interactionIdle {
 				m.focus = focusWorkspace
 			}
 			return m.Update(actionKey(action.key))
@@ -122,11 +121,16 @@ func (m model) updateActions(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func actionKey(value string) tea.KeyPressMsg {
+	if code, ok := strings.CutPrefix(value, "ctrl+"); ok && len([]rune(code)) == 1 {
+		return tea.KeyPressMsg{Code: []rune(code)[0], Mod: tea.ModCtrl}
+	}
 	switch value {
 	case "space":
 		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
-	case "ctrl+a":
-		return tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}
+	case "tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
 	case "enter":
 		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "up":
@@ -221,7 +225,7 @@ func (m *model) moveWorklogSelection(direction int) {
 }
 
 func (m model) renderActions(width, height int) string {
-	lines := []string{m.paintBold("Actions · "+m.activeTabLabel(), m.colors.Focus), ""}
+	lines := []string{m.paintBold("Actions · "+m.actionContextLabel(), m.colors.Focus), ""}
 	if m.actions != nil {
 		lines = append(lines, m.actions.input.View(), m.rule(width-4))
 	}

@@ -60,7 +60,7 @@ func TestIssuePickerModesPagingDetailsAndDraft(t *testing.T) {
 	if m.issuePicker.page != 2 || m.issuePicker.items[len(m.issuePicker.items)-1].IssueKey != "APP-000" {
 		t.Fatalf("oldest key unreachable: %#v", m.issuePicker)
 	}
-	next, _ = m.Update(ctrlKey('f'))
+	next, _ = m.Update(textKey("/"))
 	m = next.(model)
 	if !m.issuePicker.searching || m.issuePicker.mode != worklogs.IssueFindByPrefix {
 		t.Fatal("prefix search did not open")
@@ -74,7 +74,7 @@ func TestIssuePickerModesPagingDetailsAndDraft(t *testing.T) {
 	if len(m.issuePicker.items) != 1 || m.issuePicker.items[0].IssueKey != "APP-000" {
 		t.Fatalf("prefix results = %#v", m.issuePicker.items)
 	}
-	next, cmd = m.Update(ctrlKey('f'))
+	next, cmd = m.Update(ctrlKey('t'))
 	m = next.(model)
 	if m.issuePicker.mode != worklogs.IssueFindByDescription || m.issuePicker.query != "" {
 		t.Fatal("description mode did not reset find")
@@ -106,7 +106,7 @@ func TestIssuePickerModesPagingDetailsAndDraft(t *testing.T) {
 	m = next.(model)
 	next, _ = m.Update(cmd())
 	m = next.(model)
-	next, _ = m.Update(ctrlKey('f'))
+	next, _ = m.Update(textKey("/"))
 	m = next.(model)
 	next, cmd = m.Update(specialKey(tea.KeyEsc))
 	m = next.(model)
@@ -131,7 +131,7 @@ func TestIssuePickerIgnoresStaleResultsAndFailures(t *testing.T) {
 	m.width, m.height = 120, 32
 	m.openAddForm()
 	old := m.openIssuePicker()
-	next, _ := m.Update(ctrlKey('f'))
+	next, _ := m.Update(textKey("/"))
 	m = next.(model)
 	next, _ = m.Update(textKey("A"))
 	m = next.(model)

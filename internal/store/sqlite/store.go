@@ -119,6 +119,7 @@ var schemaStatements = []string{
     )`,
 	`CREATE TABLE IF NOT EXISTS issue_metadata (
 		issue_key TEXT PRIMARY KEY,
+		title TEXT NULL,
 		max_estimate_seconds INTEGER NULL,
 		source_adapter_family TEXT NOT NULL,
 		source_adapter_instance TEXT NOT NULL,
@@ -810,6 +811,7 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 	}{
 		{table: "saved_plans", column: "adapter_families_json", ddl: `ALTER TABLE saved_plans ADD COLUMN adapter_families_json TEXT NOT NULL DEFAULT '[]'`},
 		{table: "worklogs", column: "revision", ddl: `ALTER TABLE worklogs ADD COLUMN revision INTEGER NOT NULL DEFAULT 1`},
+		{table: "issue_metadata", column: "title", ddl: `ALTER TABLE issue_metadata ADD COLUMN title TEXT NULL`},
 		{table: "issues", column: "epic", ddl: `ALTER TABLE issues ADD COLUMN epic TEXT NULL`},
 		{table: "issues", column: "created_at", ddl: `ALTER TABLE issues ADD COLUMN created_at TEXT NULL`},
 		{table: "trashed_worklogs", column: "source_created_at", ddl: `ALTER TABLE trashed_worklogs ADD COLUMN source_created_at TEXT NULL`},
@@ -1108,6 +1110,7 @@ var requiredSchema = []tableRequirement{
 	{
 		table: "issue_metadata",
 		columns: []columnRequirement{
+			{column: "title", typ: "TEXT", notNull: false},
 			{column: "issue_key", typ: "TEXT", notNull: false},
 			{column: "max_estimate_seconds", typ: "INTEGER", notNull: false},
 			{column: "source_adapter_family", typ: "TEXT", notNull: true},

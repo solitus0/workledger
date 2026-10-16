@@ -4149,6 +4149,8 @@ func issueRecordJSON(item worklogs.IssueMetadata) map[string]any {
 	return map[string]any{
 		"issue_key":                   item.IssueKey,
 		"title":                       emptyToNil(item.Title),
+		"manual_title":                emptyToNil(item.ManualTitle),
+		"cached_title":                emptyToNil(item.CachedTitle),
 		"epic":                        emptyToNil(item.Epic),
 		"logged_seconds":              item.LoggedSeconds,
 		"remaining_seconds":           int64PtrToAny(item.RemainingSeconds),

@@ -19,6 +19,8 @@ const (
 type IssueMetadata struct {
 	IssueKey                 string
 	Title                    string
+	ManualTitle              string
+	CachedTitle              string
 	Epic                     string
 	LoggedSeconds            int64
 	RemainingSeconds         *int64
@@ -189,9 +191,10 @@ func (s *Service) UpsertIssueMetadataBatch(ctx context.Context, items []IssueMet
 	if err != nil {
 		return err
 	}
-	statement, err := tx.PrepareContext(ctx, `INSERT INTO issue_metadata(issue_key, max_estimate_seconds, source_adapter_family, source_adapter_instance, refreshed_at)
-		 VALUES(?, ?, ?, ?, ?)
+	statement, err := tx.PrepareContext(ctx, `INSERT INTO issue_metadata(issue_key, title, max_estimate_seconds, source_adapter_family, source_adapter_instance, refreshed_at)
+		 VALUES(?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(issue_key) DO UPDATE SET
+		   title = COALESCE(excluded.title, issue_metadata.title),
 		   max_estimate_seconds = excluded.max_estimate_seconds,
 		   source_adapter_family = excluded.source_adapter_family,
 		   source_adapter_instance = excluded.source_adapter_instance,
@@ -204,6 +207,7 @@ func (s *Service) UpsertIssueMetadataBatch(ctx context.Context, items []IssueMet
 	for _, item := range items {
 		if _, err := statement.ExecContext(ctx,
 			item.IssueKey,
+			nullableString(item.Title),
 			item.MaxEstimateSeconds,
 			item.SourceAdapterFamily,
 			item.SourceAdapterInst,
