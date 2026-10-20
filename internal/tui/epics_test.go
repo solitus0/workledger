@@ -181,13 +181,19 @@ func TestEpicAndMemberListsScrollAndDetailsExposeLongContent(t *testing.T) {
 	}
 	next, _ = m.Update(specialKey(tea.KeyEnter))
 	m = next.(model)
-	next, _ = m.Update(specialKey(tea.KeyEnter))
-	m = next.(model)
-	next, _ = m.Update(specialKey(tea.KeyEnd))
-	m = next.(model)
-	if !strings.Contains(m.render(), "Final title") {
-		t.Fatal("expanded details did not scroll to full title")
+	m = sendIssueKey(m, "tab")
+	var seen []string
+	for page := 0; page < 100; page++ {
+		seen = append(seen, ansi.Strip(m.issueHistory.metadata.View()))
+		if m.issueHistory.metadata.AtBottom() {
+			break
+		}
+		m = sendIssueKey(m, "pgdown")
 	}
+	if m.overlay != noOverlay || !strings.Contains(strings.Join(strings.Fields(strings.Join(seen, " ")), " "), "Final title") {
+		t.Fatal("inline metadata did not expose full title")
+	}
+
 	next, _ = m.Update(specialKey(tea.KeyEsc))
 	m = next.(model)
 	if m.selectedIssueKey() != "SBAH-144" {
@@ -215,7 +221,11 @@ func TestEpicAndMemberLayoutsAcrossThemesAndActivity(t *testing.T) {
 						base.width, base.height, base.activityOpen, base.issueView = size[0], size[1], drawer, view
 						base.restoreEpicSelection("Document management", true)
 						assertRedesignBounds(t, base, "issues/epics")
-						for _, content := range []string{"Logged", "Remaining", "Document management", "unestimated"} {
+						contentLabels := []string{"Logged", "Remaining"}
+						if view == epicListView {
+							contentLabels = append(contentLabels, "Document management", "unestimated")
+						}
+						for _, content := range contentLabels {
 							if !strings.Contains(ansi.Strip(base.render()), content) {
 								t.Fatalf("lost %s in view %d at %v activity=%t", content, view, size, drawer)
 							}

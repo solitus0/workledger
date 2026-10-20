@@ -106,6 +106,8 @@ const (
 	focusWorkspace focusTarget = iota
 	focusRail
 	focusActivity
+	focusIssueHistory
+	focusIssueMetadata
 )
 
 type runtimeState struct {
@@ -196,7 +198,6 @@ type interactionState struct {
 	epicAssignment *epicAssignmentState
 	presetPicker   *presetPickerState
 	issuePicker    *issuePickerState
-	issueHistory   *issueHistoryState
 	actions        *actionsState
 	detailViewport viewport.Model
 	detailTitle    string
@@ -497,6 +498,14 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
+	defer func() {
+		if current, ok := next.(model); ok {
+			if historyCmd := current.syncIssueHistory(); historyCmd != nil {
+				cmd = tea.Batch(cmd, historyCmd)
+			}
+			next = current
+		}
+	}()
 	if completed, ok := msg.(activityResultMsg); ok {
 		m.upsertActivity(completed.entry)
 		msg = completed.inner
@@ -519,7 +528,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.restyleIssueInputs()
 		m.restyleIssuePickerInput()
 		m.restyleSearchInputs()
-		m.refreshIssueHistoryMetadata()
+		m.resizeIssueHistory()
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -529,6 +538,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.resizeIssuePickerInput()
 		m.resizeSearchInputs()
 		m.refreshDetailViewport()
+		m.resizeIssueHistory()
 		return m, nil
 	case statusResultMsg:
 		if msg.generation != m.statusGen {
@@ -634,6 +644,13 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.applyIssuePickerResult(msg)
 	case issueDescriptionsResultMsg:
 		return m.applyIssueDescriptionsResult(msg)
+	case issueTextSearchReadyMsg:
+		if m.issueSearch != nil && m.issueSearch.loading && msg.generation == m.issueSearchGen {
+			return m, m.issueTextSearchCmd()
+		}
+		return m, nil
+	case issueTextSearchResultMsg:
+		return m.applyIssueTextSearchResult(msg)
 	case issueHistoryResultMsg:
 		return m.applyIssueHistoryResult(msg)
 	case descriptionSuggestionsResultMsg:
@@ -1006,6 +1023,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	}
 	if keyName == "g" {
 		m.activityOpen = !m.activityOpen
+		m.resizeIssueHistory()
 		m.focus = focusWorkspace
 		if m.activityOpen {
 			m.focus = focusActivity
@@ -1042,38 +1060,15 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	if keyName == "q" {
 		return m, tea.Quit
 	}
+	if keyName == "tab" || keyName == "shift+tab" {
+		m.cyclePanelFocus(keyName == "shift+tab")
+		return m, nil
+	}
 	if m.focus == focusActivity {
 		return m.updateActivity(keyName)
 	}
-	if keyName == "tab" || keyName == "shift+tab" {
-		if m.activityOpen {
-			if keyName == "tab" {
-				switch m.focus {
-				case focusRail:
-					m.focus = focusWorkspace
-				case focusWorkspace:
-					m.focus = focusActivity
-				default:
-					m.focus = focusRail
-				}
-			} else {
-				switch m.focus {
-				case focusRail:
-					m.focus = focusActivity
-				case focusActivity:
-					m.focus = focusWorkspace
-				default:
-					m.focus = focusRail
-				}
-			}
-		} else {
-			if m.focus == focusRail {
-				m.focus = focusWorkspace
-			} else {
-				m.focus = focusRail
-			}
-		}
-		return m, nil
+	if (m.focus == focusIssueHistory || m.focus == focusIssueMetadata) && m.issueHistory != nil {
+		return m.updateIssueHistory(keyName)
 	}
 	if m.focus == focusRail {
 		switch keyName {
@@ -1106,6 +1101,21 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.updatePlans(keyName)
 	}
 	return m.updateWorklogs(keyName)
+}
+
+func (m *model) cyclePanelFocus(backward bool) {
+	panels := []focusTarget{focusRail, focusWorkspace}
+	if m.activeTab == issuesTab && m.issueView == issueListView && m.selectedIssue() != nil {
+		panels = append(panels, focusIssueMetadata, focusIssueHistory)
+	}
+	if m.activityOpen {
+		panels = append(panels, focusActivity)
+	}
+	step := 1
+	if backward {
+		step = -1
+	}
+	m.focus = panels[(max(0, slices.Index(panels, m.focus))+step+len(panels))%len(panels)]
 }
 
 func (m *model) activateTab(destination tab) {

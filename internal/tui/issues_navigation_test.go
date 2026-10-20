@@ -320,12 +320,13 @@ func TestIssueNavigationEmptyListsAndInputFocus(t *testing.T) {
 	}
 	m = sendIssueKey(sendIssueKey(m, "esc"), "enter")
 	selected := m.selectedIssueKey()
-	if m.overlay != detailsOverlay {
-		t.Fatal("details did not open")
+	if m.overlay != noOverlay {
+		t.Fatal("Enter opened removed issue details")
 	}
+	m = sendIssueKey(m, "tab")
 	m = sendIssueKey(sendIssueKey(m, "end"), "pgup")
-	if m.selectedIssueKey() != selected || m.overlay != detailsOverlay {
-		t.Fatal("detail paging changed the list selection")
+	if m.selectedIssueKey() != selected || m.overlay != noOverlay || m.focus != focusIssueMetadata {
+		t.Fatal("inline metadata paging changed the list selection")
 	}
 }
 

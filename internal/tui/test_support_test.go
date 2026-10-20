@@ -194,6 +194,19 @@ type usedIssueCall struct {
 
 type fakeWorklogQueries struct{ state *fakeWorklogState }
 
+func (f *fakeWorklogQueries) FindIssuesByWorklogText(_ context.Context, query string) ([]string, error) {
+	keys := []string{}
+	for key, items := range f.state.issueDetails {
+		for _, item := range items {
+			if strings.Contains(strings.ToLower(item.Description), strings.ToLower(strings.TrimSpace(query))) {
+				keys = append(keys, key)
+				break
+			}
+		}
+	}
+	return keys, f.state.usedIssueErr
+}
+
 func (f *fakeWorklogQueries) ActiveIssueTotalSeconds(_ context.Context, issueKey string) (int, error) {
 	f.state.issueTotalKeys = append(f.state.issueTotalKeys, issueKey)
 	return f.state.issueTotals[issueKey], f.state.issueTotalErr

@@ -30,6 +30,8 @@ type issuesScreen struct {
 	issueMarks      map[string]bool
 	issueRange      *issueRangeState
 	issueHistoryGen int
+	issueHistory    *issueHistoryState
+	issueSearchGen  int
 	issuePull       *issuePullState
 	issuePullGen    int
 }
@@ -53,6 +55,12 @@ type issueSearchState struct {
 	input       textinput.Model
 	editing     bool
 	previousKey string
+	mode        issueSearchMode
+	queries     [2]string
+	selectedKey string
+	matches     map[string]bool
+	loading     bool
+	err         string
 }
 
 type issueListResultMsg struct {
@@ -119,8 +127,8 @@ func (m model) handleIssueListResult(msg issueListResultMsg) (tea.Model, tea.Cmd
 	m.pruneIssueMarks()
 	m.restoreIssueSelection(key)
 	m.restoreEpicSelection(m.epicsSelected, m.epicSelected)
-	m.refreshIssueHistoryMetadata()
-	return m, nil
+	m.resizeIssueHistory()
+	return m, m.loadIssueTextSearch(false)
 }
 
 func (m model) visibleIssues() []int {
@@ -133,7 +141,11 @@ func (m model) visibleIssues() []int {
 		if m.issueEpic != nil && issue.Epic != *m.issueEpic {
 			continue
 		}
-		if query == "" || strings.Contains(strings.ToLower(issue.IssueKey+" "+issue.Title+" "+issue.Epic), query) {
+		matches := query == "" || strings.Contains(strings.ToLower(issue.IssueKey+" "+issue.Title+" "+issue.Epic), query)
+		if m.issueSearch != nil && m.issueSearch.mode == searchWorklogText && query != "" {
+			matches = !m.issueSearch.loading && m.issueSearch.err == "" && m.issueSearch.matches[issue.IssueKey]
+		}
+		if matches {
 			indices = append(indices, index)
 		}
 	}
@@ -253,22 +265,10 @@ func (m model) updateIssues(key string) (tea.Model, tea.Cmd) {
 			cmd := m.openIssueForm(&copy)
 			return m, cmd
 		}
-	case "enter":
-		if m.selectedIssue() != nil {
-			return m.openIssueHistory()
-		}
+	case "ctrl+t":
+		return m.switchIssueSearchMode()
 	case "/":
-		previous := m.selectedIssueKey()
-		input := textinput.New()
-		input.Prompt, input.Placeholder = "", "Issue key, title or epic"
-		if m.issueSearch != nil {
-			input.SetValue(m.issueSearch.input.Value())
-			previous = m.issueSearch.previousKey
-		}
-		m.issueSearch = &issueSearchState{input: input, editing: true, previousKey: previous}
-		m.restyleIssueInputs()
-		m.resizeIssueInputs()
-		return m, m.issueSearch.input.Focus()
+		return m, m.openIssueSearch()
 	case "esc":
 		if m.issueRange != nil {
 			m.issueRange = nil
@@ -287,7 +287,7 @@ func (m model) updateIssues(key string) (tea.Model, tea.Cmd) {
 	case "r":
 		cmd := m.startIssueLoad()
 		cmd = m.beginActivity("issues.list", "", cmd)
-		return m, cmd
+		return m, tea.Batch(cmd, m.reloadIssueHistory())
 	}
 	return m, nil
 }
@@ -295,6 +295,13 @@ func (m model) updateIssues(key string) (tea.Model, tea.Cmd) {
 func (m model) updateIssueSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.String() {
+		case "ctrl+t":
+			return m.switchIssueSearchMode()
+		case "tab", "shift+tab":
+			m.issueSearch.editing = false
+			m.issueSearch.input.Blur()
+			m.cyclePanelFocus(key.String() == "shift+tab")
+			return m, nil
 		case "esc":
 			previous := m.issueSearch.previousKey
 			m.issueSearch = nil
@@ -316,8 +323,16 @@ func (m model) updateIssueSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	key := m.selectedIssueKey()
+	query := m.issueSearch.input.Value()
 	input, cmd := m.issueSearch.input.Update(msg)
 	m.issueSearch.input = input
+	if query != input.Value() {
+		m.issueRange = nil
+		if key != "" {
+			m.issueSearch.selectedKey = key
+		}
+		cmd = tea.Batch(cmd, m.loadIssueTextSearch(true))
+	}
 	m.restoreIssueSelection(key)
 	return m, cmd
 }
@@ -360,7 +375,7 @@ func (m *model) resizeIssueInputs() {
 	}
 	if m.issueSearch != nil {
 		list, _ := inspectorWidths(m.width - navigationWidth - 1)
-		m.issueSearch.input.SetWidth(max(10, list-9))
+		m.issueSearch.input.SetWidth(max(1, list-2-len([]rune("Find · "+m.issueSearch.mode.label()+" "))))
 	}
 	if m.epicSearch != nil {
 		list, _ := inspectorWidths(m.width - navigationWidth - 1)

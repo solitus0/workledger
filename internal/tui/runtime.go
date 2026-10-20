@@ -31,6 +31,7 @@ type worklogQueries interface {
 	ListKnownIssueKeys(context.Context, string, int) ([]string, error)
 	ListUsedIssues(context.Context, worklogs.IssueFindMode, string, int, int) ([]worklogs.UsedIssue, bool, error)
 	ListIssueWorklogDescriptions(context.Context, string, int, int) ([]worklogs.IssueWorklogDescription, bool, error)
+	FindIssuesByWorklogText(context.Context, string) ([]string, error)
 	ListRecentDescriptions(context.Context, string, int) ([]string, error)
 	LookupIssueMetadata(context.Context, []string) (map[string]worklogs.IssueMetadata, error)
 	PreviewAdd(context.Context, config.EffectiveConfig, worklogs.AddInput) (worklogs.AddResult, error)

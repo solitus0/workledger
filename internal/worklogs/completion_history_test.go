@@ -3,8 +3,47 @@ package worklogs
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"testing"
 )
+
+func TestFindIssuesByWorklogTextSearchesEntireActiveLedgerLiterally(t *testing.T) {
+	store, service := newTestService(t)
+	defer store.Close()
+	for n := 0; n < 80; n++ {
+		key, description := "APP-1", "ordinary work"
+		if n == 0 || n == 1 {
+			description = "old NEEDLE ŠAKNIS 50% a_b back\\slash"
+		}
+		if n == 79 {
+			key, description = "APP-2", "another needle"
+		}
+		if _, err := store.DB().Exec(`INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at)
+			VALUES(?, ?, '2020-01-01T09:00:00Z', 900, ?, '2020-01-01T09:00:00Z', '2020-01-01T09:00:00Z')`, fmt.Sprint(n), key, description); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.DB().Exec(`INSERT INTO trashed_worklogs(id, storage_scope, issue_key, started_at_utc, duration_seconds, description, trashed_at, reason_code, reason_detail, plan_direction)
+		VALUES('trash', 'local', 'TRASH-1', '2020-01-01T09:00:00Z', 900, 'needle', '2020-01-01T09:00:00Z', 'test', '', 'local')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		query string
+		want  []string
+	}{
+		{" needle ", []string{"APP-1", "APP-2"}},
+		{"šaknis", []string{"APP-1"}},
+		{"%", []string{"APP-1"}},
+		{"_", []string{"APP-1"}},
+		{"back\\slash", []string{"APP-1"}},
+		{"missing", []string{}},
+	} {
+		keys, err := service.FindIssuesByWorklogText(t.Context(), test.query)
+		if err != nil || !reflect.DeepEqual(keys, test.want) {
+			t.Fatalf("query %q = %v, %v; want %v", test.query, keys, err, test.want)
+		}
+	}
+}
 
 func TestUsedIssueSearchExcludesTrashAndRanksByEntry(t *testing.T) {
 	store, service := newTestService(t)

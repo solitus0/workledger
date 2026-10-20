@@ -180,9 +180,6 @@ func (m model) planRailCounts() (unapplied, failed, uncertain int) {
 }
 
 func (m model) renderWorkspace(width, height int) string {
-	if m.actions == nil && m.overlay == detailsOverlay && m.issueHistory != nil {
-		return m.renderIssueHistory(width, height)
-	}
 	if m.actions != nil || m.overlay != noOverlay {
 		background := m
 		background.actions = nil
@@ -346,9 +343,6 @@ func (m model) renderFooter(width int) string {
 	case m.overlay == detailsOverlay:
 		primary = []actionHint{{"↑/↓", "Scroll"}, {"PgUp/PgDn", "Page"}, {"Enter / Esc", "Close details"}}
 		secondary = nil
-		if m.issueHistory != nil {
-			primary = []actionHint{{"↑/↓ PgUp/Dn", "Scroll"}, {"Home/End", "Edge"}, {"Tab", "Pane"}, {"r", "Refresh"}, {"Esc", "Back"}}
-		}
 	case m.overlay == issueSortOverlay:
 		primary = []actionHint{{"↑/↓", "Select sort"}, {"Enter", "Apply"}, {"Esc", "Cancel"}}
 		secondary = nil
@@ -435,10 +429,16 @@ func (m model) renderFooter(width int) string {
 		primary = []actionHint{{"Type", "Filter worklogs"}, {"↑/↓", "Select"}, {"Enter", "Browse results"}, {"Esc", "Clear filter"}}
 		secondary = nil
 	case m.issueSearch != nil && m.issueSearch.editing && m.activeTab == issuesTab && m.issueView == issueListView:
-		primary = []actionHint{{"Type", "Filter issues"}, {"↑/↓ PgUp/Dn", "Select"}, {"Enter", "Browse results"}, {"Esc", "Clear filter"}}
+		primary = []actionHint{{"Ctrl+T", "Search mode"}, {"↑/↓ PgUp/Dn", "Select"}, {"Tab", "Inspector"}, {"Enter", "Browse"}, {"Esc", "Clear filter"}}
+		if m.selectedIssue() == nil {
+			primary[2].label = "Pane"
+		}
 		secondary = nil
 	case m.epicSearch != nil && m.epicSearch.editing && m.activeTab == issuesTab && m.issueView == epicListView:
 		primary = []actionHint{{"Type", "Filter epic names"}, {"↑/↓ PgUp/Dn", "Select"}, {"Enter", "Browse results"}, {"Esc", "Clear filter"}}
+		secondary = nil
+	case m.focus == focusIssueHistory || m.focus == focusIssueMetadata:
+		primary = []actionHint{{"↑/↓ PgUp/Dn", "Scroll"}, {"Home/End", "Edge"}, {"Tab", "Pane"}, {"r", "Retry / Refresh"}, {"Esc", "Issues"}, {"?", "Actions"}}
 		secondary = nil
 	case m.focus == focusActivity:
 		primary = []actionHint{{"↑/↓", "Select"}, {"PgUp/PgDn", "Page"}, {"r", "Refresh"}, {"g", "Close activity"}, {"?", "Actions"}, {"q", "Quit"}}

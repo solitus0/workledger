@@ -6,20 +6,19 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/solitus0/workledger/internal/worklogs"
 )
 
 type issueHistoryState struct {
-	issueKey                             string
-	generation                           int
-	items                                []worklogs.IssueWorklogDescription
-	loading, more, historyFocus, seekEnd bool
-	advance                              int
-	err                                  string
-	metadataText                         string
-	metadata, history                    viewport.Model
+	issueKey                          string
+	query                             string
+	generation                        int
+	items                             []worklogs.IssueWorklogDescription
+	loading, more, seekEnd, seekMatch bool
+	advance                           int
+	err                               string
+	metadata, history                 viewport.Model
 }
 
 type issueHistoryResultMsg struct {
@@ -31,15 +30,29 @@ type issueHistoryResultMsg struct {
 	err        error
 }
 
-func (m model) openIssueHistory() (tea.Model, tea.Cmd) {
-	item := m.selectedIssue()
-	if item == nil {
-		return m, nil
+// Selection owns the preview lifecycle, including search and epic navigation.
+func (m *model) syncIssueHistory() tea.Cmd {
+	key := ""
+	if m.activeTab == issuesTab && m.issueView == issueListView {
+		key = m.selectedIssueKey()
 	}
-	m.overlay = detailsOverlay
-	m.issueHistory = &issueHistoryState{issueKey: item.IssueKey, historyFocus: true, metadataText: m.renderIssueDetail(), metadata: viewport.New(), history: viewport.New()}
-	m.clearNotice()
-	return m, m.reloadIssueHistory()
+	if key == "" {
+		m.issueHistory = nil
+		if m.focus == focusIssueHistory || m.focus == focusIssueMetadata {
+			m.focus = focusWorkspace
+		}
+		return nil
+	}
+	query := m.issueHistoryQuery()
+	if m.issueHistory != nil && m.issueHistory.issueKey == key && m.issueHistory.query == query {
+		width, metadataHeight, historyHeight := m.issueInspectorSizes()
+		if m.issueHistory.history.Width() != width || m.issueHistory.history.Height() != historyHeight || m.issueHistory.metadata.Height() != metadataHeight {
+			m.resizeIssueHistory()
+		}
+		return nil
+	}
+	m.issueHistory = &issueHistoryState{issueKey: key, query: query, metadata: viewport.New(), history: viewport.New()}
+	return m.reloadIssueHistory()
 }
 
 func (m *model) reloadIssueHistory() tea.Cmd {
@@ -55,6 +68,7 @@ func (m *model) reloadIssueHistory() tea.Cmd {
 	state.err = ""
 	state.advance = 0
 	state.seekEnd = false
+	state.seekMatch = state.query != ""
 	state.history.GotoTop()
 	m.resizeIssueHistory()
 	return m.loadIssueHistoryPage()
@@ -80,20 +94,31 @@ func (m *model) loadIssueHistoryPage() tea.Cmd {
 
 func (m model) applyIssueHistoryResult(msg issueHistoryResultMsg) (tea.Model, tea.Cmd) {
 	state := m.issueHistory
-	if state == nil || m.overlay != detailsOverlay || msg.generation != state.generation || msg.issueKey != state.issueKey || msg.offset != len(state.items) {
+	if state == nil || msg.generation != state.generation || msg.issueKey != state.issueKey || msg.offset != len(state.items) {
 		return m, nil
 	}
 	state.loading = false
 	if msg.err != nil {
 		state.err = msg.err.Error()
 		state.seekEnd = false
+		state.seekMatch = false
 		state.advance = 0
 		return m, nil
 	}
 	state.items = append(state.items, msg.items...)
 	state.more = msg.more
 	state.err = ""
-	m.resizeIssueHistory()
+	firstMatch := m.resizeIssueHistory()
+	if state.seekMatch {
+		if firstMatch >= 0 {
+			state.history.SetYOffset(firstMatch)
+			state.seekMatch = false
+		} else if state.more {
+			return m, m.loadIssueHistoryPage()
+		} else {
+			state.seekMatch = false
+		}
+	}
 	if state.seekEnd {
 		if state.more {
 			return m, m.loadIssueHistoryPage()
@@ -108,69 +133,88 @@ func (m model) applyIssueHistoryResult(msg issueHistoryResultMsg) (tea.Model, te
 	return m, nil
 }
 
-func (m *model) resizeIssueHistory() {
+func (m model) issueInspectorSizes() (width, metadataHeight, historyHeight int) {
+	// Temporary dialogs hide Activity but must preserve the inspector's scroll.
+	layout := calculateLayout(m.width, m.height, m.activityOpen)
+	_, right := inspectorWidths(layout.workspace.width)
+	width = max(1, right-2)
+	available := max(2, layout.workspace.height-len(m.issueInspectorHeader(width))-4)
+	metadataHeight = max(1, available/2)
+	return width, metadataHeight, max(1, available-metadataHeight)
+}
+
+func (m *model) resizeIssueHistory() int {
 	state := m.issueHistory
 	if state == nil {
-		return
+		return -1
 	}
-	layout := calculateLayout(m.width, m.height, false)
-	left, right := issuePickerPanelWidths(layout.workspace.width)
-	state.metadata.SetWidth(max(1, left-4))
-	state.metadata.SetHeight(max(1, layout.workspace.height-2))
-	state.metadata.SetContent(ansi.Wrap(state.metadataText, state.metadata.Width(), ""))
-	state.history.SetWidth(max(1, right-4))
-	state.history.SetHeight(max(1, layout.workspace.height-6))
+	width, metadataHeight, historyHeight := m.issueInspectorSizes()
+	state.metadata.SetWidth(width)
+	state.metadata.SetHeight(metadataHeight)
+	state.metadata.SetContent(ansi.Wrap(m.renderIssueMetadata(), width, ""))
+	state.history.SetWidth(width)
+	state.history.SetHeight(historyHeight)
 	var lines []string
+	firstMatch := -1
 	for _, item := range state.items {
+		matches := state.query != "" && strings.Contains(strings.ToLower(item.Description), state.query)
+		if matches {
+			if firstMatch < 0 {
+				firstMatch = len(lines)
+			}
+			lines = append(lines, m.paintBold("[match]", m.colors.Focus))
+		}
 		date := item.StartedAtUTC.In(m.workspace.cfg.Location).Format("2006-01-02 15:04")
-		lines = append(lines, wrapIssueDescription(date+" · "+formatDuration(item.DurationSeconds), state.history.Width())...)
-		lines = append(lines, wrapIssueDescription(item.Description, state.history.Width())...)
+		lines = append(lines, wrapIssueDescription(date+" · "+formatDuration(item.DurationSeconds), width)...)
+		description := wrapIssueDescription(item.Description, width)
+		if matches {
+			for n := range description {
+				description[n] = m.paintBold(description[n], m.colors.Focus)
+			}
+		}
+		lines = append(lines, description...)
 		lines = append(lines, "")
 	}
 	state.history.SetContent(strings.Join(lines, "\n"))
+	return firstMatch
 }
 
 func (m model) updateIssueHistory(key string) (tea.Model, tea.Cmd) {
 	state := m.issueHistory
 	switch key {
-	case "esc", "enter":
-		m.issueHistory = nil
-		m.overlay = noOverlay
-		return m, nil
-	case "tab", "shift+tab":
-		state.historyFocus = !state.historyFocus
-	case "left":
-		state.historyFocus = false
-	case "right":
-		state.historyFocus = true
+	case "esc", "left":
+		m.focus = focusWorkspace
+	case "/":
+		return m, m.openIssueSearch()
+	case "ctrl+t":
+		m.focus = focusWorkspace
+		return m.switchIssueSearchMode()
 	case "r":
 		return m, tea.Batch(m.reloadIssueHistory(), m.startIssueLoad())
 	case "home":
-		if state.historyFocus {
-			state.seekEnd = false
-			state.advance = 0
-			state.history.GotoTop()
-		} else {
+		if m.focus == focusIssueMetadata {
 			state.metadata.GotoTop()
+			return m, nil
 		}
+		state.seekEnd, state.seekMatch, state.advance = false, false, 0
+		state.history.GotoTop()
 	case "end":
-		if !state.historyFocus {
+		if m.focus == focusIssueMetadata {
 			state.metadata.GotoBottom()
 			return m, nil
 		}
-		state.seekEnd = false
-		state.advance = 0
+		state.seekMatch, state.advance = false, 0
 		state.history.GotoBottom()
 		if state.err == "" && (state.more || state.loading) {
 			state.seekEnd = true
 			return m, m.loadIssueHistoryPage()
 		}
 	case "up", "k", "down", "j", "pgup", "pgdown":
-		if !state.historyFocus {
+		if m.focus == focusIssueMetadata {
 			state.metadata, _ = state.metadata.Update(actionKey(key))
 			return m, nil
 		}
-		state.seekEnd = false
+		state.seekEnd, state.seekMatch = false, false
 		delta := 1
 		if key == "pgup" || key == "pgdown" {
 			delta = max(1, state.history.Height()-1)
@@ -198,15 +242,56 @@ func (m model) scrollIssueHistory(delta int) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) renderIssueHistory(width, height int) string {
+func (m model) issueInspectorHeader(width int) []string {
+	item := m.selectedIssue()
+	if item == nil {
+		return []string{m.paintBold("Issue details", m.colors.Secondary), "", "No issue selected."}
+	}
+	estimate := "Not set"
+	if item.MaxEstimateSeconds != nil {
+		estimate = formatEstimateDuration(*item.MaxEstimateSeconds)
+		if item.EstimateSource != "" && item.EstimateSource != "none" {
+			estimate += " · " + item.EstimateSource
+		}
+	}
+	title := "Issue details"
+	if m.focus == focusIssueMetadata {
+		title = "> " + title
+	}
+	if m.issueHistory != nil && m.issueHistory.metadata.TotalLineCount() > m.issueHistory.metadata.Height() {
+		title += " · more"
+	}
+	lines := []string{m.paintBold(truncate(title, width), m.colors.Secondary), item.IssueKey,
+		"Logged    " + formatEstimateDuration(item.LoggedSeconds), truncate("Estimate  "+estimate, width), "Remaining " + issueRemaining(*item)}
+	if item.OverrunSeconds > 0 {
+		lines = append(lines, m.paint("Overrun   "+formatEstimateDuration(item.OverrunSeconds), m.colors.Warning))
+	}
+	return lines
+}
+
+func (m model) renderIssueInspector(width, height int) string {
+	lines := m.issueInspectorHeader(width)
 	state := m.issueHistory
-	leftWidth, rightWidth := issuePickerPanelWidths(width)
-	right := []string{m.paintBold(truncate("Worklogs · "+state.issueKey, rightWidth-4), m.colors.Focus), m.muted("All active local worklogs"), ""}
+	if m.selectedIssue() == nil {
+		return strings.Join(lines, "\n")
+	}
+	if state == nil || state.issueKey != m.selectedIssueKey() {
+		return strings.Join(append(lines, m.muted("Loading worklogs…")), "\n")
+	}
+	lines = append(lines, state.metadata.View(), m.rule(width))
+	title := "Worklogs"
+	if m.focus == focusIssueHistory {
+		title = "> " + title
+	}
+	lines = append(lines, m.paintBold(title, m.colors.Focus), m.muted("All active local worklogs"))
 	content := state.history.View()
 	if len(state.items) == 0 && !state.loading && state.err == "" {
-		content = m.muted("No worklogs for this issue.")
+		content = "No worklogs for this issue."
 	}
-	right = append(right, lipgloss.NewStyle().Height(max(1, height-6)).Render(content))
+	lines = append(lines, strings.Split(content, "\n")...)
+	for rows := strings.Count(strings.Join(lines, "\n"), "\n") + 1; rows < height-1; rows++ {
+		lines = append(lines, "")
+	}
 	status := fmt.Sprintf("%d worklogs", len(state.items))
 	if state.loading {
 		status = "Loading worklogs…"
@@ -215,26 +300,12 @@ func (m model) renderIssueHistory(width, height int) string {
 	} else if state.more {
 		status += " loaded · more available"
 	} else if !state.history.AtBottom() {
-		status += " · ↓ more"
+		status += " · more below"
 	}
 	if state.err != "" {
-		status = m.paint(truncate(status, rightWidth-4), m.colors.Destructive)
+		lines = append(lines, m.paint(truncate(status, width), m.colors.Destructive))
 	} else {
-		status = m.muted(truncate(status, rightWidth-4))
+		lines = append(lines, m.muted(truncate(status, width)))
 	}
-	right = append(right, status)
-	return lipgloss.JoinHorizontal(lipgloss.Top, m.box(state.metadata.View(), leftWidth, height, !state.historyFocus), m.box(strings.Join(right, "\n"), rightWidth, height, state.historyFocus))
-}
-
-func (m *model) refreshIssueHistoryMetadata() {
-	if m.issueHistory == nil {
-		return
-	}
-	for index := range m.issues {
-		if m.issues[index].IssueKey == m.issueHistory.issueKey {
-			m.issueHistory.metadataText = m.renderIssueMetadataDetails(&m.issues[index], 0)
-			m.resizeIssueHistory()
-			return
-		}
-	}
+	return strings.Join(lines, "\n")
 }

@@ -7,6 +7,12 @@ func (m model) actionContextLabel() string {
 	if m.focus == focusActivity {
 		return "Activity"
 	}
+	if m.focus == focusIssueMetadata {
+		return "Issue metadata"
+	}
+	if m.focus == focusIssueHistory {
+		return "Issue worklogs"
+	}
 	return m.activeTabLabel()
 }
 
@@ -44,15 +50,8 @@ func (m model) dialogActions() (string, []commandAction) {
 		add("down", "↓", "Scroll down")
 		pages()
 		edges()
-		if m.issueHistory != nil {
-			add("tab", "Tab", "Switch metadata or worklogs pane")
-			add("r", "r", "Refresh or retry issue history")
-		}
 		add("enter", "Enter", "Close details")
 		add("esc", "Esc", "Close details")
-		if m.issueHistory != nil {
-			return "Issue details", actions
-		}
 		return m.detailTitle, actions
 	case m.overlay == issueSortOverlay:
 		rows()
@@ -169,6 +168,9 @@ func (m model) dialogActions() (string, []commandAction) {
 	case m.issueSearch != nil && m.issueSearch.editing && m.activeTab == issuesTab && m.issueView == issueListView:
 		rows()
 		pages()
+		add("ctrl+t", "Ctrl+T", "Switch Issues or Worklog text search")
+		add("tab", "Tab", "Next pane")
+		add("shift+tab", "Shift+Tab", "Previous pane")
 		add("enter", "Enter", "Browse filtered issues")
 		add("esc", "Esc", "Clear filter")
 		return "Find issues", actions

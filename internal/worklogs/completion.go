@@ -99,6 +99,26 @@ type IssueWorklogDescription struct {
 	Description     string
 }
 
+// FindIssuesByWorklogText searches the complete active ledger, independently of
+// the date window and the pages loaded by a history preview.
+func (s *Service) FindIssuesByWorklogText(ctx context.Context, query string) ([]string, error) {
+	rows, err := s.store.DB().QueryContext(ctx, `SELECT DISTINCT issue_key FROM worklogs
+		WHERE instr(workledger_lower(description), ?) > 0 ORDER BY issue_key`, strings.ToLower(strings.TrimSpace(query)))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
 // ListIssueWorklogDescriptions returns every active worklog description for an
 // exact issue key, preserving repeated descriptions in latest-entry order.
 func (s *Service) ListIssueWorklogDescriptions(ctx context.Context, issueKey string, limit, offset int) ([]IssueWorklogDescription, bool, error) {

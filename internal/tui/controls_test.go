@@ -71,7 +71,8 @@ func TestHelpPreservesEveryWindowAndRemainsVisible(t *testing.T) {
 			m.openDetails("Test details", strings.Repeat("content\n", 30))
 			m.detailViewport.GotoBottom()
 		}},
-		{"issue history", func(m *model) { next, _ := m.openIssueHistory(); *m = next.(model) }},
+		{"issue history", func(m *model) { m.focus = focusIssueHistory }},
+		{"issue metadata", func(m *model) { m.focus = focusIssueMetadata }},
 		{"plan editor", func(m *model) { m.activeTab = plansTab; m.openPlanForm() }},
 		{"plan operation", func(m *model) {
 			m.activeTab = plansTab
@@ -110,6 +111,7 @@ func TestHelpPreservesEveryWindowAndRemainsVisible(t *testing.T) {
 			m, _ := issueFixture(t)
 			m.width, m.height = minimumWidth, minimumHeight
 			tc.setup(&m)
+			m.resizeIssueHistory()
 			before, overlay, focus, kind := m.render(), m.overlay, m.focus, m.interactionState.kind()
 			if !strings.Contains(stripANSI(m.renderFooter(m.width)), "? Actions") {
 				t.Fatal("help hint missing")
@@ -158,10 +160,9 @@ func TestHelpDispatchesPickerModeShortcutAndPreservesDraft(t *testing.T) {
 
 func TestIssueHistoryResultsContinueBehindHelp(t *testing.T) {
 	m, _ := issueFixture(t)
-	next, _ := m.openIssueHistory()
-	m = next.(model)
+	m.reloadIssueHistory()
 	m = sendIssueKey(m, "?")
-	next, _ = m.Update(issueHistoryResultMsg{generation: m.issueHistory.generation, issueKey: m.issueHistory.issueKey, items: []worklogs.IssueWorklogDescription{{Description: "Arrived during help", StartedAtUTC: time.Now(), DurationSeconds: 900}}})
+	next, _ := m.Update(issueHistoryResultMsg{generation: m.issueHistory.generation, issueKey: m.issueHistory.issueKey, items: []worklogs.IssueWorklogDescription{{Description: "Arrived during help", StartedAtUTC: time.Now(), DurationSeconds: 900}}})
 	m = next.(model)
 	if m.actions == nil || len(m.issueHistory.items) != 1 {
 		t.Fatal("help blocked background history")

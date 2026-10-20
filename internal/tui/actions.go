@@ -14,6 +14,13 @@ func (m model) commandActions() []commandAction {
 	}
 	actions := []commandAction{}
 	add := func(key, chord, label string) { actions = append(actions, commandAction{key, chord, label}) }
+	if m.focus == focusIssueHistory || m.focus == focusIssueMetadata {
+		actions = []commandAction{{"up", "↑", "Scroll panel up"}, {"down", "↓", "Scroll panel down"}, {"pgup", "PgUp", "Previous panel page"}, {"pgdown", "PgDn", "Next panel page"}, {"home", "Home", "First panel content"}, {"end", "End", "Last panel content"}, {"tab", "Tab", "Next pane"}, {"shift+tab", "Shift+Tab", "Previous pane"}, {"esc", "Esc", "Focus issues"}, {"/", "/", "Find issues"}, {"ctrl+t", "Ctrl+T", "Switch Issues or Worklog text search"}, {"r", "r", "Refresh or retry issue data"}, {"g", "g", "Toggle activity"}, {"q", "q", "Quit"}}
+		for index, name := range tabLabels {
+			add(fmt.Sprint(index+1), fmt.Sprint(index+1), "Open "+name)
+		}
+		return actions
+	}
 	if m.focus == focusActivity {
 		for _, action := range []commandAction{{"up", "↑", "Select previous activity"}, {"down", "↓", "Select next activity"}, {"pgup", "PgUp", "Previous page"}, {"pgdown", "PgDn", "Next page"}, {"home", "Home", "Newest activity"}, {"end", "End", "Oldest activity"}, {"r", "r", "Refresh activity"}, {"g", "g", "Close activity"}, {"q", "q", "Quit"}} {
 			actions = append(actions, action)
@@ -84,7 +91,9 @@ func (m model) commandActions() []commandAction {
 				add("a", "a", "Add issue")
 			}
 			add("/", "/", "Find issues")
+			add("ctrl+t", "Ctrl+T", "Switch Issues or Worklog text search")
 			if m.selectedIssue() != nil {
+				add("tab", "Tab", "Focus issue metadata")
 				add("space", "Space", "Toggle issue selection and advance")
 				add("v", "v", "Start or finish range selection")
 				add("V", "V", "Start or finish range unselection")
@@ -97,7 +106,6 @@ func (m model) commandActions() []commandAction {
 				add("b", "b", "Assign epic to selected issues")
 			}
 			if m.selectedIssue() != nil {
-				add("enter", "Enter", "Issue details")
 				if !m.issuesLoading && m.issuesErr == "" {
 					add("e", "e", "Edit issue metadata")
 				}
@@ -180,7 +188,7 @@ func (m model) idleHints() (primary []actionHint) {
 		keys = []string{"a", "e", "D", "enter", "r"}
 	case issuesTab:
 		primary[0] = actionHint{"↑/↓ PgUp/Dn", "Select"}
-		keys = []string{"space", "v", "b", "R", "s", "/", "t", "esc", "a", "e", "enter", "r"}
+		keys = []string{"s", "/", "ctrl+t", "tab", "space", "v", "b", "R", "t", "esc", "a", "e", "enter", "r"}
 	case trashTab:
 		keys = []string{"R", "s", "enter", "r"}
 	case plansTab:
@@ -209,6 +217,7 @@ func (m model) idleHints() (primary []actionHint) {
 		labels["A"] = "Preset"
 	}
 	if m.activeTab == issuesTab {
+		labels["tab"], labels["ctrl+t"] = "Inspector", "Search mode"
 		labels["s"] = "Sort"
 		labels["R"] = "Pull Jira"
 		labels["t"] = "Epics"

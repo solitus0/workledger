@@ -12,9 +12,6 @@ func (m model) updateOverlay(key string) (tea.Model, tea.Cmd) {
 		return m.updateIssueSort(key)
 	}
 	if m.overlay == detailsOverlay {
-		if m.issueHistory != nil {
-			return m.updateIssueHistory(key)
-		}
 		if key == "esc" || key == "enter" {
 			m.overlay = noOverlay
 			return m, nil

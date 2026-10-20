@@ -55,13 +55,14 @@ func issueFixture(t *testing.T) (model, *worklogs.Service) {
 	next, _ := m.Update(m.issueListCmd(m.issuesGen)())
 	m = next.(model)
 	m.restoreIssueSelection("SBAH-2")
+	m = resolveHistory(t, m, m.syncIssueHistory())
 	return m, service
 }
 
 func TestIssuesEstimateSaveAndCancelPreserveSelection(t *testing.T) {
 	m, service := issueFixture(t)
 	before := m.render()
-	if !strings.Contains(before, "3 issues") || !strings.Contains(m.renderIssueDetail(), "9h known left") || !strings.Contains(m.renderIssueDetail(), "1 unestimated") || m.selectedIssueKey() != "SBAH-2" {
+	if !strings.Contains(before, "3 issues") || !strings.Contains(m.renderIssueMetadata(), "9h known left") || !strings.Contains(m.renderIssueMetadata(), "1 unestimated") || m.selectedIssueKey() != "SBAH-2" {
 		t.Fatalf("initial issue view: %s", before)
 	}
 	next, _ := m.Update(textKey("e"))
@@ -88,7 +89,7 @@ func TestIssuesEstimateSaveAndCancelPreserveSelection(t *testing.T) {
 	if item == nil || item.IssueKey != "SBAH-2" || *item.MaxEstimateSeconds != 20*3600 || *item.RemainingSeconds != 10*3600 {
 		t.Fatalf("save did not retain key and recalculate: %#v", item)
 	}
-	if !strings.Contains(m.render(), "13h known left") {
+	if !strings.Contains(m.renderIssueMetadata(), "13h known left") {
 		t.Fatalf("list/group summary did not update: %s", m.render())
 	}
 	next, _ = m.Update(textKey("e"))
@@ -135,13 +136,13 @@ func TestIssuesSearchEmptyResultsAndDetails(t *testing.T) {
 	}
 	next, _ = m.Update(specialKey(tea.KeyEnter))
 	m = next.(model)
-	if m.overlay != detailsOverlay || !strings.Contains(m.render(), "Document management") {
-		t.Fatal("details did not open")
+	if m.overlay != noOverlay || !strings.Contains(m.renderIssueMetadata(), "Document management") {
+		t.Fatal("Enter opened a separate issue view or metadata is missing")
 	}
 	for _, size := range [][2]int{{100, 28}, {120, 36}} {
 		m.width, m.height = size[0], size[1]
-		m.refreshDetailViewport()
-		assertRedesignBounds(t, m, "issue details")
+		m.resizeIssueHistory()
+		assertRedesignBounds(t, m, "issue inspector")
 	}
 }
 
@@ -193,7 +194,7 @@ func TestIssuesLayoutsPreserveMetricsAndFormAtMinimumSize(t *testing.T) {
 				if !strings.Contains(listHeader, "3 issues") || strings.Contains(listHeader, "left") || strings.Contains(listHeader, "unestimated") {
 					t.Fatalf("list header repeats aggregate budget: %s", listHeader)
 				}
-				for _, content := range []string{"6 Issues", "Logged", "Estimate", "Remaining", "Document management", "Unknown", "unestimated"} {
+				for _, content := range []string{"6 Issues", "Logged", "Estimate", "Remaining", "Unknown", "Worklogs"} {
 					if !strings.Contains(view, content) {
 						t.Fatalf("lost %s at %v activity=%t: %s", content, size, drawer, view)
 					}
@@ -378,14 +379,14 @@ func TestIssuesRefreshFailureRetainsDataWithPersistentLabel(t *testing.T) {
 			next, cmd := m.Update(textKey("r"))
 			m = next.(model)
 			view := ansi.Strip(m.render())
-			if !strings.Contains(view, "Refreshing issues…") || !strings.Contains(view, "9h known left") {
+			if !strings.Contains(view, "Refreshing issues…") || !strings.Contains(m.renderIssueMetadata(), "9h known left") {
 				t.Fatalf("refresh hid prior data or its freshness: %s", view)
 			}
 			next, _ = m.Update(issueListResultMsg{generation: m.issuesGen, err: errors.New("refresh unavailable")})
 			m = next.(model)
 			m.clearNotice()
 			view = ansi.Strip(m.render())
-			if !strings.Contains(view, "Refresh failed; showing previous data.") || !strings.Contains(view, "9h known left") || !strings.Contains(view, "r Retry") {
+			if !strings.Contains(view, "Refresh failed; showing previous data.") || !strings.Contains(m.renderIssueMetadata(), "9h known left") || !strings.Contains(view, "r Retry") {
 				t.Fatalf("failure removed prior data or its persistent label: %s", view)
 			}
 			assertRedesignBounds(t, m, "issue refresh failure")
@@ -394,8 +395,7 @@ func TestIssuesRefreshFailureRetainsDataWithPersistentLabel(t *testing.T) {
 			if cmd == nil || retry == nil {
 				t.Fatal("refresh/retry command missing")
 			}
-			next, _ = m.Update(retry())
-			m = next.(model)
+			m = resolveIssueCommands(t, m, retry)
 			if m.issuesErr != "" || m.issuesLoading || m.selectedIssueKey() != "SBAH-2" || strings.Contains(ansi.Strip(m.render()), "Refresh failed") {
 				t.Fatal("successful retry did not recover and preserve selection")
 			}

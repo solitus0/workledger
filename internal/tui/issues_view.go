@@ -61,10 +61,15 @@ func (m model) renderIssuesWorkspace(width, height int) string {
 		message := "No issues yet. Add one or create a worklog."
 		if m.issueSearch != nil {
 			message = "No matching issues."
+			if m.issueSearch.loading {
+				message = "Searching worklog text…"
+			} else if m.issueSearch.err != "" {
+				message = "Worklog search failed: " + m.issueSearch.err
+			}
 		}
 		lines = append(lines, m.muted(message))
 	}
-	return m.inspector(strings.Join(lines, "\n"), m.renderIssueDetails(detailWidth-2), width, height)
+	return m.inspector(strings.Join(lines, "\n"), m.renderIssueInspector(detailWidth-2, height), width, height)
 }
 
 // Rendering and paging share the exact header height, including wrapped labels.
@@ -87,7 +92,7 @@ func (m model) issueListContent(contentWidth int) ([]string, []int, int) {
 	}
 	lines = append(lines, "")
 	if m.issueSearch != nil {
-		lines = append(lines, m.paint("Find ", m.colors.Focus)+m.issueSearch.input.View(), "")
+		lines = append(lines, m.paint("Find · "+m.issueSearch.mode.label()+" ", m.colors.Focus)+m.issueSearch.input.View(), "")
 	}
 	keyWidth, loggedWidth, remainingWidth := 12, 9, 10
 	titleWidth := max(4, contentWidth-keyWidth-loggedWidth-remainingWidth-9)
@@ -255,48 +260,23 @@ func issueRemaining(item worklogs.IssueMetadata) string {
 	return formatEstimateDuration(*item.RemainingSeconds)
 }
 
-func (m model) renderIssueDetail() string {
-	return m.renderIssueDetails(0)
-}
-
-func (m model) renderIssueDetails(compactWidth int) string {
+func (m model) renderIssueMetadata() string {
 	item := m.selectedIssue()
 	if item == nil {
-		return m.paintBold("Issue details", m.colors.Secondary) + "\n\nNo issue selected."
+		return "No issue selected."
 	}
-	return m.renderIssueMetadataDetails(item, compactWidth)
-}
-
-func (m model) renderIssueMetadataDetails(item *worklogs.IssueMetadata, compactWidth int) string {
-	lines := []string{m.paintBold("Issue details", m.colors.Secondary), "", item.IssueKey}
+	var lines []string
 	if item.Title != "" {
-		title := item.Title
-		if compactWidth > 0 {
-			title = truncate(title, compactWidth)
-		}
-		lines = append(lines, m.secondary(title))
-	}
-	estimate := "Not set"
-	if item.MaxEstimateSeconds != nil && *item.MaxEstimateSeconds > 0 {
-		estimate = formatEstimateDuration(*item.MaxEstimateSeconds)
-		if item.EstimateSource != "none" && item.EstimateSource != "" {
-			estimate += " · " + item.EstimateSource
-		}
+		lines = append(lines, "Title", m.secondary(item.Title), "")
 	}
 	created := "Unknown"
 	if !item.CreatedAt.IsZero() {
 		created = item.CreatedAt.In(m.workspace.cfg.Location).Format("2006-01-02 15:04")
 	}
-	lines = append(lines, "", "Created   "+created, "Logged    "+formatEstimateDuration(item.LoggedSeconds), "Estimate  "+estimate, "Remaining "+issueRemaining(*item))
-	if item.OverrunSeconds > 0 {
-		lines = append(lines, m.paint("Overrun   "+formatEstimateDuration(item.OverrunSeconds), m.colors.Warning))
-	}
+	lines = append(lines, "Created   "+created)
 	epic := item.Epic
 	if epic == "" {
 		epic = "Not grouped"
-	}
-	if compactWidth > 0 {
-		epic = truncate(epic, compactWidth)
 	}
 	if item.CachedTitle != "" || !item.RefreshedAt.IsZero() {
 		lines = append(lines, "", "Jira cache · "+item.SourceAdapterFamily+"/"+item.SourceAdapterInst)
