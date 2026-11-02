@@ -1171,6 +1171,7 @@ func TestRetryPlanFailedReexecutesOnlyFailedReadyItems(t *testing.T) {
 		projects: []clockify.Project{{ID: "proj-app", Name: "App"}},
 	}
 	service := NewService(store)
+	service.now = func() time.Time { return mustTime("2026-05-02T12:00:00Z") }
 	service.newClockifyClient = func(cfg config.ClockifyConfig) clockifyClient { return client }
 
 	plan, err := service.CreateClockifyPushPlan(context.Background(), testClockifyConfig(true), mustTime("2026-05-01T00:00:00Z"), mustTime("2026-05-01T23:59:59Z"), false)
@@ -1181,8 +1182,19 @@ func TestRetryPlanFailedReexecutesOnlyFailedReadyItems(t *testing.T) {
 	for _, item := range plan.Items {
 		itemsByIssue[item.IssueKey] = item
 	}
-	seedDeliveryAttempt(t, store, plan.ID, itemsByIssue["AAPP-1"].ID, "failed", "first failed", "2026-05-02T10:00:00Z")
+	seedDeliveryAttempt(t, store, plan.ID, itemsByIssue["AAPP-1"].ID, "failed", "first failed", "2026-05-02T12:00:00Z")
+	// A retry in the same second must use append order rather than random IDs.
+	if _, err := store.DB().Exec(`UPDATE delivery_attempts SET id = 'zzz-first-failure' WHERE plan_item_id = ?`, itemsByIssue["AAPP-1"].ID); err != nil {
+		t.Fatal(err)
+	}
 	seedDeliveryAttempt(t, store, plan.ID, itemsByIssue["BAPP-1"].ID, "succeeded", "done", "2026-05-02T10:00:00Z")
+	before, err := service.LoadPlan(plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempt := before.Items[0].LatestAttempt; attempt == nil || attempt.State != "failed" || attempt.Message != "first failed" || !attempt.CreatedAt.Equal(service.now()) {
+		t.Fatalf("latest saved failure missing: %#v", attempt)
+	}
 
 	result, err := service.RetryPlan(context.Background(), testClockifyConfig(true), plan.ID, "failed")
 	if err != nil {
@@ -1193,6 +1205,22 @@ func TestRetryPlanFailedReexecutesOnlyFailedReadyItems(t *testing.T) {
 	}
 	if len(client.entries) != 1 {
 		t.Fatalf("expected one retried remote create, got %#v", client.entries)
+	}
+	after, err := service.LoadPlan(plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range after.Items {
+		attempt := item.LatestAttempt
+		if attempt == nil || attempt.State != "succeeded" {
+			t.Fatalf("missing latest success: %#v", item)
+		}
+		if item.IssueKey == "AAPP-1" && (attempt.Message != "push delivery succeeded" || !attempt.CreatedAt.Equal(service.now())) {
+			t.Fatalf("retry did not replace the latest failure: %#v", attempt)
+		}
+		if item.IssueKey == "BAPP-1" && (attempt.Message != "done" || !attempt.CreatedAt.Equal(mustTime("2026-05-02T10:00:00Z"))) {
+			t.Fatalf("retry replaced an excluded result: %#v", attempt)
+		}
 	}
 }
 

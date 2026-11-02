@@ -724,14 +724,34 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			m.setNotice(noticeError, msg.err.Error())
 			return m, nil
 		}
+		selectedScopeID := ""
+		if m.plan != nil && m.plan.ID == msg.plan.ID {
+			if item := m.selectedPlanItem(); item != nil {
+				selectedScopeID = item.ID
+			}
+		}
 		m.plan = &msg.plan
 		m.planItemSelected = 0
+		for index, item := range m.visiblePlanItems() {
+			if item.ID == selectedScopeID {
+				m.planItemSelected = index
+				break
+			}
+		}
+		if m.planOperation != nil {
+			return m, nil
+		}
 		return m, m.startPlanLoad()
 	case planProgressMsg:
 		if m.planOperation == nil {
 			return m, nil
 		}
+		completedScope := msg.event.ScopeDone > m.planOperation.progress.ScopeDone
 		m.planOperation.progress = msg.event
+		if completedScope && m.planOperation.planID != "" {
+			m.planGen++
+			return m, tea.Batch(waitPlanProgressCmd(msg.ch), m.planLoadCmd(m.planGen, m.planOperation.planID))
+		}
 		return m, waitPlanProgressCmd(msg.ch)
 	case planProgressClosedMsg:
 		return m, nil

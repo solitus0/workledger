@@ -14,6 +14,9 @@ func (m model) renderPlansWorkspace(width, height int) string {
 		return m.pane("Plans unavailable", width, height)
 	}
 	if m.planOperation != nil {
+		if m.plan != nil && m.planOperation.planID == m.plan.ID {
+			return m.renderPlanDetailWorkspace(width, height)
+		}
 		return m.pane(m.renderPlanOperation(), width, height)
 	}
 	if m.planForm != nil {
@@ -109,7 +112,9 @@ func (m model) renderPlanDetailWorkspace(width, height int) string {
 }
 
 func (m model) renderPlanItemInspector(item reconcile.PlanItem, width, height int) string {
-	lines := m.planComparisonLines(item)
+	lines := m.planExecutionLines(item)
+	lines = append(lines, "")
+	lines = append(lines, m.planComparisonLines(item)...)
 	if len(item.Payload) > 0 {
 		lines = append(lines, "", m.secondary("Saved desired entries"))
 		for index, row := range item.Payload {
@@ -123,8 +128,35 @@ func (m model) renderPlanItemInspector(item reconcile.PlanItem, width, height in
 	return strings.Join(lines, "\n")
 }
 
+func (m model) planExecutionLines(item reconcile.PlanItem) []string {
+	lines := []string{m.paintBold("Last execution", m.colors.Secondary)}
+	if m.planOperation != nil && m.planOperation.planID == m.plan.ID {
+		operation := "Apply"
+		if strings.HasPrefix(m.planOperation.kind, "plan.retry-") {
+			operation = "Retry"
+		}
+		p := m.planOperation.progress
+		progress := operation + " in progress"
+		if p.ScopeTotal > 0 {
+			progress += fmt.Sprintf(" · %d/%d scopes", p.ScopeDone, p.ScopeTotal)
+		}
+		lines = append(lines, progress)
+	}
+	if item.LatestAttempt == nil {
+		return append(lines, "Not attempted")
+	}
+	lines = append(lines, "State "+m.paintState(item.ExecutionState), item.LatestAttempt.CreatedAt.In(m.workspace.cfg.Location).Format("2006-01-02 15:04:05 MST"))
+	if item.LatestAttempt.State == "pending" && item.ExecutionState == "uncertain" {
+		lines = append(lines, "Previous attempt has no confirmed outcome.")
+	}
+	if item.LatestAttempt.Message != "" {
+		lines = append(lines, item.LatestAttempt.Message)
+	}
+	return lines
+}
+
 func (m model) planComparisonLines(item reconcile.PlanItem) []string {
-	lines := []string{m.paintBold("Saved comparison", m.colors.Secondary), "", "Local at planning", fmt.Sprintf("%d rows · %s", item.LocalRowCount, formatEstimateDuration(int64(item.LocalTotal))), "Remote at planning", fmt.Sprintf("%d rows · %s", item.RemoteRowCount, formatEstimateDuration(int64(item.RemoteTotal))), "", m.paintBold("After apply", m.colors.Proposed)}
+	lines := []string{m.paintBold("Saved comparison", m.colors.Secondary), "", "Local at planning", fmt.Sprintf("%d rows · %s", item.LocalRowCount, formatEstimateDuration(int64(item.LocalTotal))), "Remote at planning", fmt.Sprintf("%d rows · %s", item.RemoteRowCount, formatEstimateDuration(int64(item.RemoteTotal))), "", m.paintBold("Planned destination", m.colors.Proposed)}
 	if item.ComparisonStatus == "not_checked" || item.ComparisonStatus == "check_failed" {
 		lines[5] = "Unavailable"
 	}
@@ -146,7 +178,7 @@ func (m model) planComparisonLines(item reconcile.PlanItem) []string {
 	} else {
 		lines = append(lines, fmt.Sprintf("%s: %d rows · %s", target, rows, formatEstimateDuration(int64(total))))
 	}
-	lines = append(lines, fmt.Sprintf("Create %s · Delete %s", planDiffMetric(item, item.InspectionSummary.CreateRowCount), planDiffMetric(item, item.InspectionSummary.DeleteRowCount)), "Matched "+planDiffMetric(item, item.InspectionSummary.MatchedRowCount), "Execution "+m.paintState(item.ExecutionState))
+	lines = append(lines, fmt.Sprintf("Create %s · Delete %s", planDiffMetric(item, item.InspectionSummary.CreateRowCount), planDiffMetric(item, item.InspectionSummary.DeleteRowCount)), "Matched "+planDiffMetric(item, item.InspectionSummary.MatchedRowCount))
 	return lines
 }
 
@@ -161,7 +193,7 @@ func (m model) renderPlanScopeDetails(item reconcile.PlanItem) string {
 	lines := []string{"Target " + item.TargetAdapterFamily + " / " + item.TargetAdapterInstance + " / " + item.TargetIssue,
 		"Profile " + emptyDash(item.RouteProfile), "Window " + formatPlanWindow(item.WindowFromUTC, item.WindowToUTC, m.workspace.cfg.Location),
 		"Planning " + item.PlanStatus + " · Action " + item.PlannedAction, "Comparison " + item.ComparisonStatus,
-		"Reason " + emptyDash(item.ReasonCode), item.ReasonDetail, "", strings.Join(m.planComparisonLines(item), "\n")}
+		"Reason " + emptyDash(item.ReasonCode), item.ReasonDetail, "", strings.Join(m.planExecutionLines(item), "\n"), "", strings.Join(m.planComparisonLines(item), "\n")}
 	if len(item.Payload) > 0 {
 		lines = append(lines, "", "All saved desired entries")
 		for index, row := range item.Payload {

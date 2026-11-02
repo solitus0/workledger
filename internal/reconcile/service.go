@@ -109,6 +109,7 @@ type PlanItem struct {
 	InspectionSummary     InspectionSummary
 	DeliveryKey           string
 	ExecutionState        string
+	LatestAttempt         *DeliveryAttempt
 	Payload               []model.Row
 }
 
@@ -2613,7 +2614,11 @@ func (s *Service) loadPlanItems(planID string) ([]PlanItem, error) {
 		if item.DeliveryKey == "" {
 			item.DeliveryKey = buildDeliveryKey(item)
 		}
-		item.ExecutionState = deriveExecutionState(attemptsByItem[item.ID], s.now().UTC())
+		attempts := attemptsByItem[item.ID]
+		if len(attempts) > 0 {
+			item.LatestAttempt = &attempts[len(attempts)-1]
+		}
+		item.ExecutionState = deriveExecutionState(attempts, s.now().UTC())
 		if item.ExecutionState == "" {
 			item.ExecutionState = "not_attempted"
 		}
@@ -2627,7 +2632,7 @@ func (s *Service) loadDeliveryAttempts(planID string) (map[string][]DeliveryAtte
 		SELECT plan_item_id, attempt_state, message, created_at
 		FROM delivery_attempts
 		WHERE plan_id = ?
-		ORDER BY created_at ASC, CASE WHEN attempt_state = 'pending' THEN 0 ELSE 1 END, id ASC`, planID)
+		ORDER BY created_at ASC, CASE WHEN attempt_state = 'pending' THEN 0 ELSE 1 END, rowid ASC`, planID)
 	if err != nil {
 		return nil, err
 	}
