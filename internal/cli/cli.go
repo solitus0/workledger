@@ -3896,6 +3896,7 @@ func (a *app) renderPlanExecutionResult(mode string, result reconcile.ApplyResul
 			"applied_count":        result.AppliedCount,
 			"skipped_count":        result.SkippedCount,
 			"failed_count":         result.FailedCount,
+			"unattempted_count":    result.UnattemptedCount,
 			"mixed_result":         result.MixedResult,
 			"noop":                 result.NoOp,
 			"trash_archived_count": result.TrashArchivedCount,
@@ -3909,6 +3910,10 @@ func (a *app) renderPlanExecutionResult(mode string, result reconcile.ApplyResul
 				scopeResults = append(scopeResults, map[string]any{
 					"plan_item_id":         item.PlanItemID,
 					"scope_label":          item.ScopeLabel,
+					"adapter_family":       item.AdapterFamily,
+					"adapter_instance":     item.AdapterInstance,
+					"execution_state":      item.ExecutionState,
+					"message":              item.Message,
 					"plan_direction":       item.PlanDirection,
 					"planned_action":       item.PlannedAction,
 					"trash_archived_count": item.TrashArchivedCount,
@@ -3927,6 +3932,9 @@ func (a *app) renderPlanExecutionResult(mode string, result reconcile.ApplyResul
 			_, _ = fmt.Fprintf(a.stdout, "plan_id=%s applied=%d failed=%d skipped=%d mixed_result=%t noop=%t trashed=%d\n", result.PlanID, result.AppliedCount, result.FailedCount, result.SkippedCount, result.MixedResult, result.NoOp, result.TrashArchivedCount)
 		}
 		for _, item := range result.ScopeResults {
+			if item.ExecutionState == "failed" || item.ExecutionState == "uncertain" {
+				_, _ = fmt.Fprintf(a.stdout, "scope=%s/%s state=%s error=%s\n", item.AdapterInstance, item.ScopeLabel, item.ExecutionState, item.Message)
+			}
 			for _, warning := range item.Warnings {
 				_, _ = fmt.Fprintf(a.stdout, "scope=%s warning=%s\n", item.ScopeLabel, warning)
 			}

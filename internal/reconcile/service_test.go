@@ -1119,7 +1119,7 @@ func TestApplyPlanSkipsNonNotAttemptedReadyItems(t *testing.T) {
 	}
 }
 
-func TestApplyPlanClockifyPreflightFailureDoesNotCreatePendingAttempt(t *testing.T) {
+func TestApplyPlanClockifyPreflightFailureRecordsFailedWithoutPending(t *testing.T) {
 	store := newTestStore(t)
 	defer store.Close()
 	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Create me")
@@ -1140,24 +1140,25 @@ func TestApplyPlanClockifyPreflightFailureDoesNotCreatePendingAttempt(t *testing
 	}
 	client.tagsByID = map[string]clockify.Tag{}
 
-	if _, err := service.ApplyPlan(context.Background(), cfg, plan.ID); err == nil || err.Error() != `issue tag "AAPP-1" is missing and config forbids creating it` {
-		t.Fatalf("expected clockify preflight failure, got %v", err)
+	result, err := service.ApplyPlan(context.Background(), cfg, plan.ID)
+	if err != nil || result.FailedCount != 1 || len(result.ScopeResults) != 1 || !strings.Contains(result.ScopeResults[0].Message, `issue tag "AAPP-1" is missing`) {
+		t.Fatalf("expected scope preparation failure, got %+v, %v", result, err)
 	}
 
 	var attempts int
 	if err := store.DB().QueryRow(`SELECT COUNT(1) FROM delivery_attempts`).Scan(&attempts); err != nil {
 		t.Fatalf("count attempts: %v", err)
 	}
-	if attempts != 0 {
-		t.Fatalf("expected no delivery attempts after preflight failure, got %d", attempts)
+	if attempts != 1 {
+		t.Fatalf("expected one failed preparation result, got %d", attempts)
 	}
 
 	loaded, err := service.LoadPlan(plan.ID)
 	if err != nil {
 		t.Fatalf("LoadPlan failed: %v", err)
 	}
-	if len(loaded.Items) != 1 || loaded.Items[0].ExecutionState != "not_attempted" {
-		t.Fatalf("expected plan item to remain not_attempted, got %#v", loaded.Items)
+	if len(loaded.Items) != 1 || loaded.Items[0].ExecutionState != "failed" || loaded.Items[0].LatestAttempt.State != "failed" {
+		t.Fatalf("expected failed scope eligible for retry, got %#v", loaded.Items)
 	}
 }
 
@@ -3836,6 +3837,9 @@ func TestReconcileJiraCloudPushPlanRejectsReportingTargetOwnedByOtherFamily(t *t
 }
 
 type fakeClockifyClient struct {
+	mu                        sync.Mutex
+	listProjectsErr           error
+	listTagsErr               error
 	entries                   []clockify.TimeEntry
 	tagsByID                  map[string]clockify.Tag
 	projects                  []clockify.Project
@@ -3959,10 +3963,17 @@ func (f *fakeJiraCloudClient) DeleteWorklog(ctx context.Context, issueKey, workl
 }
 
 func (f *fakeClockifyClient) ListUserTimeEntries(ctx context.Context, workspaceID, userID string, start, end time.Time) ([]clockify.TimeEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return append([]clockify.TimeEntry(nil), f.entries...), nil
 }
 
 func (f *fakeClockifyClient) ListTags(ctx context.Context, workspaceID string) (map[string]clockify.Tag, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listTagsErr != nil {
+		return nil, f.listTagsErr
+	}
 	items := map[string]clockify.Tag{}
 	for id, tag := range f.tagsByID {
 		items[id] = tag
@@ -3971,10 +3982,12 @@ func (f *fakeClockifyClient) ListTags(ctx context.Context, workspaceID string) (
 }
 
 func (f *fakeClockifyClient) ListProjects(ctx context.Context, workspaceID string) ([]clockify.Project, error) {
-	return append([]clockify.Project(nil), f.projects...), nil
+	return append([]clockify.Project(nil), f.projects...), f.listProjectsErr
 }
 
 func (f *fakeClockifyClient) CreateTag(ctx context.Context, workspaceID, name string) (clockify.Tag, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	tag := clockify.Tag{ID: "created-" + name, Name: name}
 	if f.tagsByID == nil {
 		f.tagsByID = map[string]clockify.Tag{}
@@ -3984,6 +3997,8 @@ func (f *fakeClockifyClient) CreateTag(ctx context.Context, workspaceID, name st
 }
 
 func (f *fakeClockifyClient) CreateTimeEntry(ctx context.Context, workspaceID string, row clockify.CandidateRow, projectID string, tagIDs []string) (clockify.TimeEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if err := f.createTimeEntryErrByIssue[row.IssueKey]; err != nil {
 		return clockify.TimeEntry{}, err
 	}
@@ -4015,6 +4030,8 @@ func (f *blockingClockifyClient) CreateTimeEntry(ctx context.Context, workspaceI
 }
 
 func (f *fakeClockifyClient) DeleteTimeEntry(ctx context.Context, workspaceID, entryID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.deleteTimeEntryErr != nil {
 		return f.deleteTimeEntryErr
 	}

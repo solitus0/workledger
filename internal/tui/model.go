@@ -756,10 +756,23 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case planProgressClosedMsg:
 		return m, nil
 	case planOperationResultMsg:
+		if m.planOperation != nil && m.planOperation.cancel != nil {
+			m.planOperation.cancel()
+		}
 		m.planOperation = nil
 		m.planForm = nil
+		if msg.kind != "plan.reconcile" {
+			title, content := planExecutionResultDetails(msg)
+			m.openDetails(title, content)
+			m.planGen++
+			return m, tea.Batch(m.planLoadCmd(m.planGen, msg.planID), m.startWorklogLoad(), m.startTrashLoad(), m.startIssueLoad())
+		}
 		if msg.err != nil {
-			m.setNotice(noticeError, planOperationErrorMessage(msg.err))
+			title := "Plan operation failed"
+			if errors.Is(msg.err, context.Canceled) {
+				title = "Plan operation canceled"
+			}
+			m.openDetails(title, planOperationErrorMessage(msg.err))
 			if msg.planID != "" {
 				m.planGen++
 				return m, m.planLoadCmd(m.planGen, msg.planID)
@@ -773,16 +786,13 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			}
 			m.plan = msg.reconcile.Plan
 			m.planItemSelected = 0
-			m.setNotice(noticeSuccess, "saved reconcile plan created; review it before applying")
+			if failures := planReconcileFailures(msg.reconcile); len(failures) > 0 {
+				m.openDetails("Plan saved with inspection failures", "Review this saved plan before applying. No worklogs were changed.\n\n"+strings.Join(failures, "\n\n"))
+			} else {
+				m.setNotice(noticeSuccess, "saved reconcile plan created; review it before applying")
+			}
 			return m, m.startPlanLoad()
 		}
-		kind := noticeSuccess
-		if msg.apply.FailedCount > 0 || msg.apply.SkippedCount > 0 {
-			kind = noticeWarning
-		}
-		m.setNotice(kind, fmt.Sprintf("plan operation complete: applied %d, failed %d, skipped %d", msg.apply.AppliedCount, msg.apply.FailedCount, msg.apply.SkippedCount))
-		m.planGen++
-		return m, tea.Batch(m.planLoadCmd(m.planGen, msg.planID), m.startWorklogLoad(), m.startTrashLoad(), m.startIssueLoad())
 	case workspaceResultMsg:
 		if msg.generation != m.workspaceGen {
 			if msg.workspace != nil && msg.workspace.close != nil {

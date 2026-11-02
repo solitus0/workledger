@@ -152,6 +152,12 @@ func (msg presetMutationResultMsg) trackedOutcome() trackedOutcomeKind {
 	return classifyTrackedOutcome(msg.err, false)
 }
 func (msg planOperationResultMsg) trackedOutcome() trackedOutcomeKind {
+	if !errors.Is(msg.err, context.Canceled) && msg.apply.AppliedCount > 0 && (msg.apply.FailedCount > 0 || msg.err != nil || msg.apply.UnattemptedCount > 0) {
+		return trackedOutcomePartial
+	}
+	if msg.err == nil && msg.apply.FailedCount > 0 && msg.apply.AppliedCount == 0 {
+		return trackedOutcomeUnexpected
+	}
 	partial := msg.apply.MixedResult || len(msg.reconcile.SkippedTargets) > 0 || planHasCheckFailures(msg.reconcile.Plan)
 	return classifyTrackedOutcome(msg.err, partial)
 }

@@ -197,6 +197,7 @@ type ApplyResult struct {
 	AppliedCount       int
 	SkippedCount       int
 	FailedCount        int
+	UnattemptedCount   int
 	MixedResult        bool
 	NoOp               bool
 	TrashArchivedCount int
@@ -206,6 +207,10 @@ type ApplyResult struct {
 type ApplyScopeResult struct {
 	PlanItemID         string
 	ScopeLabel         string
+	AdapterFamily      string
+	AdapterInstance    string
+	ExecutionState     string
+	Message            string
 	PlanDirection      string
 	PlannedAction      string
 	TrashArchivedCount int
@@ -1870,7 +1875,7 @@ func (s *Service) executeSavedPlan(ctx context.Context, cfg config.EffectiveConf
 		return ready[i].ID < ready[j].ID
 	})
 
-	result := ApplyResult{PlanID: plan.ID, RetryScope: retryScope, SkippedCount: skipped}
+	result := ApplyResult{PlanID: plan.ID, RetryScope: retryScope, SkippedCount: skipped, UnattemptedCount: len(ready)}
 	opts.Reporter.Start(progress.Event{
 		Phase:      "applying",
 		ScopeDone:  0,
@@ -1890,9 +1895,10 @@ func (s *Service) executeSavedPlan(ctx context.Context, cfg config.EffectiveConf
 		}
 		outcome, err := s.executePullItem(ctx, item)
 		if err != nil {
-			return ApplyResult{}, err
+			return result, err
 		}
 		scopeDone++
+		result.UnattemptedCount--
 		workDone += applyWorkUnits(item)
 		if outcome.executed {
 			result.AppliedCount++
@@ -1900,17 +1906,24 @@ func (s *Service) executeSavedPlan(ctx context.Context, cfg config.EffectiveConf
 		if outcome.failed {
 			result.FailedCount++
 		}
+		result.MixedResult = result.AppliedCount > 0 && result.FailedCount > 0
 		result.TrashArchivedCount += outcome.trashArchivedCount
-		if outcome.trashArchivedCount > 0 || len(outcome.warnings) > 0 {
-			result.ScopeResults = append(result.ScopeResults, ApplyScopeResult{
-				PlanItemID:         item.ID,
-				ScopeLabel:         planItemScopeLabel(item),
-				PlanDirection:      item.PlanDirection,
-				PlannedAction:      item.PlannedAction,
-				TrashArchivedCount: outcome.trashArchivedCount,
-				Warnings:           append([]string(nil), outcome.warnings...),
-			})
+		state := "succeeded"
+		if outcome.failed {
+			state = "failed"
 		}
+		result.ScopeResults = append(result.ScopeResults, ApplyScopeResult{
+			PlanItemID:         item.ID,
+			ScopeLabel:         planItemScopeLabel(item),
+			AdapterFamily:      item.TargetAdapterFamily,
+			AdapterInstance:    item.TargetAdapterInstance,
+			ExecutionState:     state,
+			Message:            outcome.applyMessage,
+			PlanDirection:      item.PlanDirection,
+			PlannedAction:      item.PlannedAction,
+			TrashArchivedCount: outcome.trashArchivedCount,
+			Warnings:           append([]string(nil), outcome.warnings...),
+		})
 		opts.Reporter.Event(progress.Event{
 			Phase:         "applying",
 			ScopeLabel:    planItemScopeLabel(item),
@@ -1929,6 +1942,8 @@ func (s *Service) executeSavedPlan(ctx context.Context, cfg config.EffectiveConf
 		result.FailedCount += pushResult.failedCount
 		result.TrashArchivedCount += pushResult.trashArchivedCount
 		result.ScopeResults = append(result.ScopeResults, pushResult.scopeResults...)
+		result.UnattemptedCount -= len(pushResult.scopeResults)
+		result.MixedResult = result.AppliedCount > 0 && result.FailedCount > 0
 		scopeDone = pushResult.scopeDone
 		workDone = pushResult.workDone
 		if err != nil {
@@ -1941,11 +1956,11 @@ func (s *Service) executeSavedPlan(ctx context.Context, cfg config.EffectiveConf
 
 	completedPlan, err := s.LoadPlan(plan.ID)
 	if err != nil {
-		return ApplyResult{}, err
+		return result, err
 	}
 	if completedPlan.ExecutionState == "succeeded" {
 		if err := s.markPlanApplied(plan.ID, s.now().UTC()); err != nil {
-			return ApplyResult{}, err
+			return result, err
 		}
 	}
 	result.MixedResult = result.AppliedCount > 0 && result.FailedCount > 0
@@ -2215,98 +2230,18 @@ func (s *Service) loadCurrentJiraCloudScope(ctx context.Context, cfg config.Effe
 }
 
 func (s *Service) applyClockifyPushItem(ctx context.Context, cfg config.EffectiveConfig, item PlanItem) (pushApplyResult, error) {
-	if deps, ok := clockifyDepsFromCtx(ctx); ok {
-		return s.applyClockifyPushItemWithDeps(ctx, item, deps)
-	}
-
-	clockifyCfg, err := config.ResolveClockifyConfig(cfg)
-	if err != nil {
-		return pushApplyResult{}, err
-	}
-
-	client := s.newClockifyClient(*clockifyCfg)
-	projects, err := client.ListProjects(ctx, clockifyCfg.WorkspaceID)
-	if err != nil {
-		return pushApplyResult{}, err
-	}
-	projectMatches := matchingProjects(projects, item.InspectionSummary.ProjectName)
-	if len(projectMatches) != 1 {
-		return pushApplyResult{}, fmt.Errorf("saved target project %q is no longer resolvable", item.InspectionSummary.ProjectName)
-	}
-	project := projectMatches[0]
-
-	tagsByID, err := client.ListTags(ctx, clockifyCfg.WorkspaceID)
-	if err != nil {
-		return pushApplyResult{}, err
-	}
-	tag, tagExists := findTagByName(tagsByID, item.TargetIssue)
-	if !tagExists {
-		allowCreate := clockifyCreateIssueTagIfMissing(clockifyCfg)
-		if !allowCreate {
-			return pushApplyResult{}, fmt.Errorf("issue tag %q is missing and config forbids creating it", item.TargetIssue)
-		}
-		tag, err = client.CreateTag(ctx, clockifyCfg.WorkspaceID, item.TargetIssue)
+	deps, ok := clockifyDepsFromCtx(ctx)
+	if !ok {
+		var err error
+		deps, err = s.prepareClockifyPushDeps(ctx, cfg, []PlanItem{item})
 		if err != nil {
 			return pushApplyResult{}, err
 		}
 	}
-
-	result := pushApplyResult{}
-	switch item.PlannedAction {
-	case "create":
-		for _, row := range item.Payload {
-			if _, err := client.CreateTimeEntry(ctx, clockifyCfg.WorkspaceID, row, project.ID, []string{tag.ID}); err != nil {
-				return result, err
-			}
-		}
-	case "replace":
-		entries, err := client.ListUserTimeEntries(ctx, clockifyCfg.WorkspaceID, clockifyCfg.UserID, item.WindowFromUTC, item.WindowToUTC)
-		if err != nil {
-			return result, err
-		}
-		scopeEntries := filterEntriesByProject(filterEntriesByIssue(entries, tagsByID, item.TargetIssue), project.ID)
-		deleteRows, createRows := diffScopedRemoteRows(buildClockifyScopedRows(scopeEntries, tagsByID, item.TargetIssue), item.Payload)
-		deletedRows := scopedRemoteRowValues(deleteRows)
-		if len(deleteRows) > 0 {
-			if err := deleteRemoteClockifyEntries(ctx, client, clockifyCfg.WorkspaceID, scopedRemoteRawValues(deleteRows)); err != nil {
-				return result, err
-			}
-		}
-		result.deletedRows = append([]model.Row(nil), deletedRows...)
-		if archivedCount, err := s.archiveRemoteTrashRows(ctx, item, deletedRows); err != nil {
-			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
-		} else {
-			result.trashArchivedCount += archivedCount
-		}
-		for _, row := range createRows {
-			if _, err := client.CreateTimeEntry(ctx, clockifyCfg.WorkspaceID, row, project.ID, []string{tag.ID}); err != nil {
-				return result, err
-			}
-		}
-	case "delete":
-		entries, err := client.ListUserTimeEntries(ctx, clockifyCfg.WorkspaceID, clockifyCfg.UserID, item.WindowFromUTC, item.WindowToUTC)
-		if err != nil {
-			return result, err
-		}
-		scopeEntries := filterEntriesByProject(filterEntriesByIssue(entries, tagsByID, item.TargetIssue), project.ID)
-		if len(scopeEntries) == 0 {
-			scopeEntries = findEntriesByTimeIntervals(entries, item.Payload)
-		}
-		deletedRows := normalizeDeletedClockifyRows(scopeEntries, tagsByID, item.TargetIssue)
-		result.deletedRows = append([]model.Row(nil), deletedRows...)
-		if err := deleteRemoteClockifyEntries(ctx, client, clockifyCfg.WorkspaceID, scopeEntries); err != nil {
-			return result, err
-		}
-		if archivedCount, err := s.archiveRemoteTrashRows(ctx, item, deletedRows); err != nil {
-			result.warnings = append(result.warnings, archiveWarning(item.TargetAdapterFamily, len(deletedRows), err))
-		} else {
-			result.trashArchivedCount += archivedCount
-		}
-	default:
-		return pushApplyResult{}, fmt.Errorf("unsupported push action %q", item.PlannedAction)
+	if err := deps.tagErrors[item.TargetIssue]; err != nil {
+		return pushApplyResult{}, err
 	}
-
-	return result, nil
+	return s.applyClockifyPushItemWithDeps(ctx, item, deps)
 }
 
 func clockifyCreateIssueTagIfMissing(clockifyCfg *config.ClockifyConfig) bool {

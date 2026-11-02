@@ -659,7 +659,11 @@ Placement rule:
 - [ ] NFR-498: Per-task failures shall be treated as result data rather than fatal group errors.
 - [ ] NFR-499: Unexpected per-item infrastructure failures during remote I/O shall be recorded on those items while other independent items continue.
 - [ ] NFR-500: Repeated issue capability checks and similar advisory validations shall be cached where practical for push flows.
-- [ ] NFR-501: `429` and transient transport failures shall use narrow retry behavior inside the HTTP client only when safe.
+- [ ] NFR-501: Clockify HTTP requests shall use at most three attempts, retry explicit HTTP 429 rejections with replayable bodies, and retry transient transport or server failures only for reads; unconfirmed mutations shall require reconciliation before replay. Outbound Clockify requests shall have a 30-second HTTP timeout.
+- [ ] NFR-501a: Clockify request starts shall be paced at least 100 milliseconds apart per workspace across API keys and client instances within one process, including reads, writes, pagination, and retries; unrelated workspaces shall remain independent.
+- [ ] NFR-501b: Clockify 429 handling shall honor `Retry-After` seconds and HTTP dates, share cooldowns across clients, and use bounded exponential backoff with jitter when the header is absent or invalid. A server-directed wait longer than five seconds shall return the actual throttling error promptly; exhausted retries shall suppress additional requests to that workspace for at least one minute or the longer server-directed wait. All pacing and retry waits shall honor context cancellation.
+- [ ] NFR-501c: A Clockify scope that fails after confirmed partial mutations or an unconfirmed write shall remain uncertain for explicit reconciliation, including when a later request is rate limited; successful independent scopes shall retain their saved results.
+- [ ] NFR-501d: Clockify pagination shall stop on an empty page or a true `Last-Page` header and, when that header is absent, on a page shorter than the requested page size, avoiding redundant requests and unbounded empty-page reads.
 - [ ] NFR-502: Bare totals may fetch distinct adapter targets concurrently while preserving final row order.
 - [ ] NFR-503: Jira totals may fetch per-issue worklogs concurrently after issue discovery while keeping final aggregation deterministic.
 

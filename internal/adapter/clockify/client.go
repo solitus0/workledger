@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -29,11 +30,24 @@ type Client struct {
 type RequestError struct {
 	StatusCode int
 	Status     string
+	RetryAt    time.Time
 }
 
 func (e *RequestError) Error() string {
-	return fmt.Sprintf("clockify request failed: %s", e.Status)
+	message := fmt.Sprintf("clockify request failed: %s", e.Status)
+	if !e.RetryAt.IsZero() {
+		message += "; retry after " + e.RetryAt.UTC().Format(time.RFC3339)
+	}
+	return message
 }
+
+// MutationError requires reconciliation before replaying an unconfirmed write.
+type MutationError struct{ Err error }
+
+func (e *MutationError) Error() string {
+	return "clockify mutation outcome is unconfirmed: " + e.Err.Error()
+}
+func (e *MutationError) Unwrap() error { return e.Err }
 
 type User struct {
 	ID               string `json:"id"`
@@ -72,7 +86,7 @@ func NewClient(apiKey string) *Client {
 	return &Client{
 		baseURL:    strings.TrimRight(BaseURL, "/"),
 		apiKey:     apiKey,
-		httpClient: http.DefaultClient,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -107,7 +121,7 @@ func (c *Client) ListUserTimeEntries(ctx context.Context, workspaceID, userID st
 		_ = resp.Body.Close()
 
 		items = append(items, batch...)
-		if strings.EqualFold(resp.Header.Get("Last-Page"), "true") {
+		if lastPage(resp, len(batch), 100) {
 			break
 		}
 		page++
@@ -138,7 +152,7 @@ func (c *Client) ListTags(ctx context.Context, workspaceID string) (map[string]T
 		for _, item := range batch {
 			items[item.ID] = item
 		}
-		if strings.EqualFold(resp.Header.Get("Last-Page"), "true") || len(batch) == 0 {
+		if lastPage(resp, len(batch), 200) {
 			break
 		}
 		page++
@@ -167,13 +181,18 @@ func (c *Client) ListProjects(ctx context.Context, workspaceID string) ([]Projec
 		_ = resp.Body.Close()
 
 		items = append(items, batch...)
-		if strings.EqualFold(resp.Header.Get("Last-Page"), "true") || len(batch) == 0 {
+		if lastPage(resp, len(batch), 200) {
 			break
 		}
 		page++
 	}
 
 	return items, nil
+}
+
+func lastPage(resp *http.Response, count, pageSize int) bool {
+	header := resp.Header.Get("Last-Page")
+	return count == 0 || strings.EqualFold(header, "true") || (header == "" && count < pageSize)
 }
 
 func (c *Client) CreateTag(ctx context.Context, workspaceID, name string) (Tag, error) {
@@ -333,7 +352,11 @@ func (c *Client) do(ctx context.Context, method, route string, body any, target 
 		return nil
 	}
 
-	return json.NewDecoder(resp.Body).Decode(target)
+	err = json.NewDecoder(resp.Body).Decode(target)
+	if err != nil && method != http.MethodGet && method != http.MethodHead {
+		return &MutationError{Err: err}
+	}
+	return err
 }
 
 func (c *Client) request(ctx context.Context, method, route string, query url.Values, body any) (*http.Response, error) {
@@ -351,17 +374,12 @@ func (c *Client) request(ctx context.Context, method, route string, query url.Va
 		}
 	}
 
-	const maxAttempts = 5
-	var lastErr error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if attempt > 0 {
-			base := time.Duration(1<<(attempt-1)) * time.Second
-			jitter := time.Duration(rand.Int63n(int64(base) + 1))
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(base + jitter):
-			}
+	const maxAttempts = 3
+	gate := c.requestGate(route)
+	readOnly := method == http.MethodGet || method == http.MethodHead
+	for attempt := 0; ; attempt++ {
+		if err := gate.wait(ctx); err != nil {
+			return nil, err
 		}
 
 		var reader io.Reader
@@ -379,18 +397,55 @@ func (c *Client) request(ctx context.Context, method, route string, query url.Va
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			if !readOnly {
+				return nil, &MutationError{Err: err}
+			}
+			var networkError net.Error
+			transient := errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+				(errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary()))
+			if ctx.Err() == nil && transient && attempt+1 < maxAttempts {
+				if err := waitRequest(ctx, retryBackoff(attempt)); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			return nil, err
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
+			failure := &RequestError{StatusCode: resp.StatusCode, Status: resp.Status}
+			delay := retryBackoff(attempt)
+			if date, ok := retryAfter(resp.Header.Get("Retry-After"), time.Now()); ok {
+				failure.RetryAt = date
+				delay = time.Until(date)
+			}
+			terminal := attempt+1 == maxAttempts || delay > maxRetryWait
+			if terminal {
+				delay = max(delay, exhaustedCooldown)
+			}
+			failure = gate.throttle(delay, failure, terminal)
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			_ = resp.Body.Close()
-			lastErr = &RequestError{StatusCode: resp.StatusCode, Status: resp.Status}
+			if terminal {
+				return nil, failure
+			}
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 			_ = resp.Body.Close()
-			return nil, &RequestError{StatusCode: resp.StatusCode, Status: resp.Status}
+			failure := &RequestError{StatusCode: resp.StatusCode, Status: resp.Status}
+			transient := resp.StatusCode == 500 || resp.StatusCode == 502 || resp.StatusCode == 503 || resp.StatusCode == 504
+			if transient && readOnly && attempt+1 < maxAttempts {
+				if err := waitRequest(ctx, retryBackoff(attempt)); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			if !readOnly && resp.StatusCode >= 500 {
+				return nil, &MutationError{Err: failure}
+			}
+			return nil, failure
 		}
 		return resp, nil
 	}
-	return nil, lastErr
 }

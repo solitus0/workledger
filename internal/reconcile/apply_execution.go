@@ -3,12 +3,11 @@ package reconcile
 import (
 	"context"
 	"errors"
-	"math/rand"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
+	"github.com/solitus0/workledger/internal/adapter/clockify"
 	"github.com/solitus0/workledger/internal/config"
 	"github.com/solitus0/workledger/internal/progress"
 	"github.com/solitus0/workledger/internal/reconcile/model"
@@ -100,6 +99,8 @@ func planItemScopeLabel(item PlanItem) string {
 }
 
 func (s *Service) executeSavedPushGroups(ctx context.Context, cfg config.EffectiveConfig, retryScope string, items []PlanItem, allReadyItems []PlanItem, initialScopeDone, initialWorkDone, scopeTotal, workTotal int, reporter progress.Reporter) (pushExecutionSummary, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	selectedGroups := groupPushExecutionItems(items)
 	allReadyGroups := groupPushExecutionItems(allReadyItems)
 	fullGroupByKey := make(map[string][]PlanItem, len(allReadyGroups))
@@ -107,41 +108,20 @@ func (s *Service) executeSavedPushGroups(ctx context.Context, cfg config.Effecti
 		fullGroupByKey[group.key] = group.items
 	}
 
-	precomputedOutcomes := make([]pushExecutionOutcome, 0)
-	groups := make([]pushExecutionGroup, 0, len(selectedGroups))
-	for _, group := range selectedGroups {
-		fullGroup := fullGroupByKey[group.key]
-		if len(fullGroup) == 0 {
-			fullGroup = group.items
-		}
-		if retryScope != "" && len(group.items) < len(fullGroup) {
-			outcomes, err := s.resolvePartialPushRetryGroup(ctx, cfg, group.items, fullGroup)
-			if err != nil {
-				return pushExecutionSummary{}, err
-			}
-			precomputedOutcomes = append(precomputedOutcomes, outcomes...)
-			continue
-		}
-		groups = append(groups, group)
-	}
-
-	// Pre-resolve Clockify projects and tags sequentially before any goroutine starts.
+	groups := selectedGroups
+	// Dispatch independent adapters before workers can wait on shared Clockify preparation.
+	sort.SliceStable(groups, func(i, j int) bool {
+		return groups[i].items[0].TargetAdapterFamily != "clockify" && groups[j].items[0].TargetAdapterFamily == "clockify"
+	})
 	var clockifyItems []PlanItem
-	numClockifyGroups := 0
 	for _, group := range groups {
 		if len(group.items) > 0 && group.items[0].TargetAdapterFamily == "clockify" {
 			clockifyItems = append(clockifyItems, group.items...)
-			numClockifyGroups++
 		}
 	}
-	clockifyCtx := ctx
-	if len(clockifyItems) > 0 {
-		deps, err := s.prepareClockifyPushDeps(ctx, cfg, clockifyItems)
-		if err != nil {
-			return pushExecutionSummary{}, err
-		}
-		clockifyCtx = withClockifyDeps(ctx, deps)
-	}
+	prepareClockify := sync.OnceValues(func() (*clockifyPushDeps, error) {
+		return s.prepareClockifyPushDeps(ctx, cfg, clockifyItems)
+	})
 
 	jobs := make(chan pushExecutionGroup)
 	results := make(chan pushGroupResult, len(groups))
@@ -152,23 +132,36 @@ func (s *Service) executeSavedPushGroups(ctx context.Context, cfg config.Effecti
 		go func() {
 			defer wg.Done()
 			for group := range jobs {
-				isClockify := len(group.items) > 0 && group.items[0].TargetAdapterFamily == "clockify"
 				itemCtx := ctx
-				if isClockify {
-					itemCtx = clockifyCtx
-				}
-				if isClockify && numClockifyGroups > 1 {
-					jitter := time.Duration(rand.Int63n(int64(time.Duration(numClockifyGroups) * 200 * time.Millisecond)))
-					select {
-					case <-itemCtx.Done():
-						continue
-					case <-time.After(jitter):
-					}
-				}
 				if err := itemCtx.Err(); err != nil {
 					continue
 				}
+				if retryScope != "" && len(group.items) < len(fullGroupByKey[group.key]) {
+					outcomes, err := s.resolvePartialPushRetryGroup(itemCtx, cfg, group.items, fullGroupByKey[group.key])
+					if err != nil {
+						outcomes = preparationFailureOutcomes(group.items, err, retryScope)
+					}
+					if itemCtx.Err() == nil {
+						results <- pushGroupResult{outcomes: outcomes}
+					}
+					continue
+				}
+				if group.items[0].TargetAdapterFamily == "clockify" {
+					deps, err := prepareClockify()
+					if err == nil {
+						err = deps.tagErrors[group.items[0].TargetIssue]
+					}
+					if itemCtx.Err() != nil {
+						continue
+					}
+					if err != nil {
+						results <- pushGroupResult{outcomes: preparationFailureOutcomes(group.items, err, retryScope)}
+						continue
+					}
+					itemCtx = withClockifyDeps(itemCtx, deps)
+				}
 				if err := s.recordPendingGroup(itemCtx, group.items); err != nil {
+					cancel()
 					results <- pushGroupResult{err: err}
 					continue
 				}
@@ -200,27 +193,42 @@ func (s *Service) executeSavedPushGroups(ctx context.Context, cfg config.Effecti
 	}()
 
 	summary := pushExecutionSummary{scopeDone: initialScopeDone, workDone: initialWorkDone}
-	for _, outcome := range precomputedOutcomes {
-		if err := s.recordPushExecutionOutcome(&summary, outcome, reporter, scopeTotal, workTotal); err != nil {
-			return pushExecutionSummary{}, err
-		}
-	}
+	var fatalErr error
 	for groupResult := range results {
 		if groupResult.err != nil {
-			return summary, groupResult.err
+			fatalErr = errors.Join(fatalErr, groupResult.err)
+			cancel()
 		}
 		for _, outcome := range groupResult.outcomes {
 			if err := s.recordPushExecutionOutcome(&summary, outcome, reporter, scopeTotal, workTotal); err != nil {
-				return summary, err
+				fatalErr = errors.Join(fatalErr, err)
+				cancel()
 			}
 		}
+	}
+	if fatalErr != nil {
+		return summary, fatalErr
 	}
 	return summary, ctx.Err()
 }
 
+func preparationFailureOutcomes(items []PlanItem, err error, retryScope string) []pushExecutionOutcome {
+	state := "failed"
+	if retryScope == "uncertain" {
+		state = "uncertain"
+	}
+	outcomes := make([]pushExecutionOutcome, 0, len(items))
+	for _, item := range items {
+		message := sharedPushScopeLabel(item) + " preparation failed: " + err.Error()
+		outcomes = append(outcomes, pushExecutionOutcome{item: item, failed: true, finalState: state, attemptMessage: message, applyMessage: message})
+	}
+	return outcomes
+}
+
 func (s *Service) recordPushExecutionOutcome(summary *pushExecutionSummary, outcome pushExecutionOutcome, reporter progress.Reporter, scopeTotal, workTotal int) error {
-	if err := s.recordDeliveryAttempt(outcome.item.PlanID, outcome.item.ID, outcome.finalState, outcome.attemptMessage); err != nil {
-		return err
+	persistErr := s.recordDeliveryAttempt(outcome.item.PlanID, outcome.item.ID, outcome.finalState, outcome.attemptMessage)
+	if persistErr != nil {
+		outcome.warnings = append(outcome.warnings, "could not save execution result: "+persistErr.Error())
 	}
 	if outcome.executed {
 		summary.appliedCount++
@@ -229,16 +237,18 @@ func (s *Service) recordPushExecutionOutcome(summary *pushExecutionSummary, outc
 		summary.failedCount++
 	}
 	summary.trashArchivedCount += outcome.trashArchivedCount
-	if outcome.trashArchivedCount > 0 || len(outcome.warnings) > 0 {
-		summary.scopeResults = append(summary.scopeResults, ApplyScopeResult{
-			PlanItemID:         outcome.item.ID,
-			ScopeLabel:         planItemScopeLabel(outcome.item),
-			PlanDirection:      outcome.item.PlanDirection,
-			PlannedAction:      outcome.item.PlannedAction,
-			TrashArchivedCount: outcome.trashArchivedCount,
-			Warnings:           append([]string(nil), outcome.warnings...),
-		})
-	}
+	summary.scopeResults = append(summary.scopeResults, ApplyScopeResult{
+		PlanItemID:         outcome.item.ID,
+		ScopeLabel:         planItemScopeLabel(outcome.item),
+		AdapterFamily:      outcome.item.TargetAdapterFamily,
+		AdapterInstance:    outcome.item.TargetAdapterInstance,
+		ExecutionState:     outcome.finalState,
+		Message:            outcome.applyMessage,
+		PlanDirection:      outcome.item.PlanDirection,
+		PlannedAction:      outcome.item.PlannedAction,
+		TrashArchivedCount: outcome.trashArchivedCount,
+		Warnings:           append([]string(nil), outcome.warnings...),
+	})
 	summary.scopeDone++
 	summary.workDone += outcome.workDone
 	reporter.Event(progress.Event{
@@ -252,7 +262,7 @@ func (s *Service) recordPushExecutionOutcome(summary *pushExecutionSummary, outc
 		Failed:        summary.failedCount,
 		Message:       outcome.applyMessage,
 	})
-	return nil
+	return persistErr
 }
 
 func groupPushExecutionItems(items []PlanItem) []pushExecutionGroup {
@@ -562,7 +572,8 @@ func (s *Service) performPushItem(ctx context.Context, cfg config.EffectiveConfi
 }
 
 func pushFailureState(err error, retryScope string) string {
-	if retryScope == "uncertain" || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	var unconfirmed *clockify.MutationError
+	if retryScope == "uncertain" || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &unconfirmed) {
 		return "uncertain"
 	}
 	return "failed"

@@ -589,3 +589,79 @@ func planOperationErrorMessage(err error) string {
 	}
 	return fmt.Sprintf("plan operation failed: %v", err)
 }
+
+func planExecutionResultDetails(msg planOperationResultMsg) (string, string) {
+	r := msg.apply
+	title := "Plan sync complete"
+	switch {
+	case errors.Is(msg.err, context.Canceled):
+		title = "Plan sync canceled"
+	case r.AppliedCount > 0 && (r.FailedCount > 0 || msg.err != nil || r.UnattemptedCount > 0):
+		title = "Plan sync partially completed"
+	case r.FailedCount > 0 || msg.err != nil:
+		title = "Plan sync failed"
+	}
+	lines := []string{"Results for this execution attempt.", "", fmt.Sprintf("Applied %d · Failed or uncertain %d", r.AppliedCount, r.FailedCount),
+		fmt.Sprintf("Not started %d · Excluded %d", r.UnattemptedCount, r.SkippedCount)}
+	if msg.err != nil {
+		lines = append(lines, "", planOperationErrorMessage(msg.err))
+	}
+	type counts struct{ applied, failed, uncertain int }
+	byTarget := map[string]*counts{}
+	var failures []string
+	for _, scope := range r.ScopeResults {
+		target := scope.AdapterFamily + "/" + scope.AdapterInstance
+		if byTarget[target] == nil {
+			byTarget[target] = &counts{}
+		}
+		c := byTarget[target]
+		switch scope.ExecutionState {
+		case "succeeded":
+			c.applied++
+		case "uncertain":
+			c.uncertain++
+		default:
+			c.failed++
+		}
+		if scope.ExecutionState == "failed" || scope.ExecutionState == "uncertain" {
+			failures = append(failures, fmt.Sprintf("%s/%s · %s\n%s", target, scope.ScopeLabel, scope.ExecutionState, scope.Message))
+		}
+	}
+	var targets []string
+	for target := range byTarget {
+		targets = append(targets, target)
+	}
+	sort.Strings(targets)
+	for _, target := range targets {
+		c := byTarget[target]
+		lines = append(lines, "", fmt.Sprintf("%s\nApplied %d · Failed %d · Uncertain %d", target, c.applied, c.failed, c.uncertain))
+	}
+	sort.Strings(failures)
+	for _, failure := range failures {
+		lines = append(lines, "", failure)
+	}
+	for _, scope := range r.ScopeResults {
+		for _, warning := range scope.Warnings {
+			lines = append(lines, "", scope.AdapterInstance+"/"+scope.ScopeLabel+" warning: "+warning)
+		}
+	}
+	if len(failures) > 0 {
+		lines = append(lines, "", "Completed scopes remain saved. Review failed and uncertain scopes before retrying.")
+	}
+	return title, strings.Join(lines, "\n")
+}
+
+func planReconcileFailures(result reconcile.ReconcileResult) []string {
+	var failures []string
+	for _, target := range result.SkippedTargets {
+		failures = append(failures, target.AdapterFamily+"/"+target.Instance+": "+target.Reason)
+	}
+	if result.Plan != nil {
+		for _, scope := range result.Plan.Items {
+			if scope.PlanStatus == "check_failed" {
+				failures = append(failures, scope.TargetAdapterFamily+"/"+scope.TargetAdapterInstance+"/"+scope.TargetIssue+": "+scope.ReasonDetail)
+			}
+		}
+	}
+	return failures
+}

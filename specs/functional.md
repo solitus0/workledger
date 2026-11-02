@@ -379,9 +379,11 @@ Placement rule:
 - [ ] FUNC-264: `workledger plan apply` shall execute according to the saved `plan_direction`.
 - [ ] FUNC-265: `workledger plan apply` shall execute only one saved plan at a time.
 - [ ] FUNC-266: `workledger plan apply` shall record delete and create outcomes separately when one saved push item requires both steps.
-- [ ] FUNC-267: `workledger plan apply` shall continue executing other eligible scopes when one scope fails.
+- [ ] FUNC-267: `workledger plan apply` and retry shall continue executing independent eligible scopes when an adapter, adapter preparation, or scope fails; Clockify preparation shall not gate Jira execution. Cancellation and failures that prevent safe execution-result persistence shall stop new scheduling and join in-flight workers.
+- [ ] FUNC-267a: Adapter preparation failures shall save failed results for affected scopes without pending worklog mutations, expose their actual contextual errors, and remain eligible for failed retry; an uncertain retry shall retain uncertainty when preparation or reconciliation fails. Cancellation before a scope begins shall leave it unattempted.
 - [ ] FUNC-268: `workledger plan apply` shall persist per-scope results independently.
 - [ ] FUNC-268a: A saved plan shall set `applied_at` only after every actionable item has terminally succeeded.
+- [ ] FUNC-268b: Apply and retry results shall retain completed results on cancellation or fatal failure, report applied, failed-or-uncertain, excluded, and selected-but-unattempted scope counts, and include each processed scope's adapter family, instance, effective execution state, message, and existing trash and warning details in `scope_results`; CLI table output shall expose failed and uncertain scope errors, and JSON shall include `unattempted_count`.
 - [ ] FUNC-269: `workledger plan apply` for `plan_direction=pull` shall merge the saved normalized remote payload into canonical local SQLite state.
 - [ ] FUNC-270: `workledger plan apply` for `plan_direction=push` shall re-discover current remote worklogs inside the saved issue/window scope at execution time when cleanup is required.
 - [ ] FUNC-271: `workledger plan apply` for `plan_direction=push` shall apply apply-time remote cleanup only for remote rows inside the saved target scope that are unmatched by the saved payload before creating missing replacement worklogs.
@@ -552,6 +554,7 @@ Placement rule:
 - [ ] FUNC-303zb: TUI plan retry shall expose failed and uncertain retries as separate confirmed actions only while matching `ready` scopes exist, and uncertain retry copy shall explain that an earlier remote mutation may already have succeeded.
 - [ ] FUNC-303zc: A running TUI reconcile, apply, or retry operation shall reject duplicate actions, remain cancellable with Esc or Ctrl+C, and refresh Plans, Worklogs, and Trash after completion as applicable.
 - [ ] FUNC-303zd: Foreground TUI reconcile, plan apply, and plan retry operations shall be recorded as activity without persisting payloads, descriptions, URLs, configuration values, or credentials.
+- [ ] FUNC-303ze: TUI apply and retry completion, failure, or cancellation shall open dismissible, scrollable result details with actual execution counts, per-adapter outcomes, full scope errors, and warnings, preserving partial results and selected-plan review across activity completion and plan reloads. Reconcile failures and saved partial inspection failures shall expose their actual errors in result details. Activity shall classify all-failed execution as failed and mixed completed execution as partial without repeating outcomes in the action bar.
 
 ## Out of Scope
 - [ ] FUNC-304: TUI Totals, a standalone cross-date worklog results view or remote worklog search, multi-day automatic placement, custom workday overrides, batch shift, arbitrary filtered batch delete or restore beyond Week-mode selected-day operations, payload apply, recurring preset schedules, and preset import or export shall remain deferred.
