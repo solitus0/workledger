@@ -21,6 +21,9 @@ func (m model) renderWorklogWorkspace(width, height int) string {
 	if m.form != nil {
 		return m.renderWorklogFormWorkspace(width, height)
 	}
+	if m.worklogView == unassignedWorklogView {
+		return m.renderUnassignedWorkspace(width, height)
+	}
 	if m.worklogView == weekWorklogView {
 		return m.renderWeekWorkspace(width, height)
 	}
@@ -30,8 +33,14 @@ func (m model) renderWorklogWorkspace(width, height int) string {
 	contentWidth := width - 2
 	selector := m.renderWorklogViewSelector()
 	balance := m.renderDayQuota()
+	if lipgloss.Width(balance)+lipgloss.Width(selector)+2 > contentWidth {
+		balance = fmt.Sprintf("%s / %s · %s left", formatDuration(m.dayBookedSeconds()), formatDuration(m.dailyQuotaSeconds()), formatDelta(m.dailyQuotaSeconds()-m.dayBookedSeconds()))
+	}
 	heading := balance + strings.Repeat(" ", max(2, contentWidth-lipgloss.Width(balance)-lipgloss.Width(selector))) + selector
 	lines := []string{heading, ""}
+	if label := m.worklogSelectionLabel(); label != "" {
+		lines = append(lines, m.paint(label, m.colors.Focus))
+	}
 	lines = append(lines, strings.Split(m.renderDayTimelineWidth(nil, m.selectedWorklogID(), contentWidth), "\n")...)
 	lines = append(lines, "", m.renderTimelineLegend(nil, m.selectedWorklogID()), m.rule(contentWidth))
 	chrome := m.pane(strings.Join(lines, "\n"), width, len(lines))
@@ -73,7 +82,7 @@ func (m model) renderDayQuota() string {
 }
 
 func (m model) worklogTableHeader(width int) string {
-	return truncate(fmt.Sprintf("  %-3s %-5s %-8s %-12s %s", "#", "Start", "Duration", "Issue", "Summary"), width)
+	return truncate(fmt.Sprintf("      %-3s %-5s %-8s %-12s %s", "#", "Start", "Duration", "Issue", "Summary"), width)
 }
 
 func (m model) renderAvailableWindows(width, height int) string {
@@ -119,11 +128,15 @@ func (m model) renderWorklogInspector(width, height int) string {
 		return m.paintBold("Worklog details", m.colors.Secondary) + "\n\nNo worklog selected."
 	}
 	metadata := m.issueMetadata[item.IssueKey]
-	lines := []string{m.paintBold("Worklog details", m.colors.Secondary), "Issue " + item.IssueKey}
+	lines := []string{m.paintBold("Worklog details", m.colors.Secondary), "Issue " + worklogs.DisplayIssueKey(item.IssueKey)}
 	if metadata.Title != "" {
 		lines = append(lines, m.secondary(truncate(metadata.Title, width)))
 	}
-	lines = append(lines, "Local issue total", m.renderIssueTotal(item.IssueKey))
+	if item.IssueKey != "" {
+		lines = append(lines, "Local issue total", m.renderIssueTotal(item.IssueKey))
+	} else {
+		lines = append(lines, "Local only · awaiting issue key")
+	}
 	if metadata.MaxEstimateSeconds != nil && *metadata.MaxEstimateSeconds > 0 {
 		usage := "Unavailable"
 		if m.issueTotalLoading {
@@ -142,6 +155,9 @@ func (m model) renderWorklogInspector(width, height int) string {
 	if len(lines) > height {
 		// Keep estimate warnings visible when Activity reduces the height.
 		index := slices.Index(lines, "Local issue total")
+		if index < 0 {
+			return strings.Join(lines[:height], "\n")
+		}
 		lines[index] += " " + lines[index+1]
 		if lipgloss.Width(lines[index]) > width {
 			lines[index] = "Total " + lines[index+1]
@@ -262,7 +278,7 @@ func (m model) renderWeekWorkspace(width, height int) string {
 }
 
 func (m model) renderWorklogViewSelector() string {
-	labels := []string{"Day", "Week", "Month"}
+	labels := []string{"Day", "Week", "Month", "Unassigned"}
 	for index, label := range labels {
 		if worklogView(index) == m.worklogView {
 			if m.deps.noColor || !m.colorReady {
@@ -302,7 +318,7 @@ func (m model) unselectedWorklogRows(width, height int) []string {
 	descriptionWidth := max(10, width-38)
 	for _, item := range m.worklogs[:end] {
 		local := item.StartedAtUTC.In(m.workspace.cfg.Location)
-		rows = append(rows, fmt.Sprintf("  %-7s %-10s %-14s %s", local.Format("15:04"), formatDuration(item.DurationSeconds), item.IssueKey, truncate(item.Description, descriptionWidth)))
+		rows = append(rows, fmt.Sprintf("  %-7s %-10s %-14s %s", local.Format("15:04"), formatDuration(item.DurationSeconds), worklogs.DisplayIssueKey(item.IssueKey), truncate(item.Description, descriptionWidth)))
 	}
 	return rows
 }
@@ -331,7 +347,12 @@ func (m model) worklogRows(width, height int) []string {
 			prefix = "> "
 		}
 		local := item.StartedAtUTC.In(m.workspace.cfg.Location)
-		row := fmt.Sprintf("%s%-3d %-5s %-8s %-12s %s", prefix, index+1, local.Format("15:04"), formatEstimateDuration(int64(item.DurationSeconds)), truncate(item.IssueKey, 12), item.Description)
+		mark := "[ ] "
+		if _, ok := m.worklogMarks[item.ID]; ok {
+			mark = "[x] "
+		}
+		prefix += mark
+		row := fmt.Sprintf("%s%-3d %-5s %-8s %-12s %s", prefix, index+1, local.Format("15:04"), formatEstimateDuration(int64(item.DurationSeconds)), truncate(worklogs.DisplayIssueKey(item.IssueKey), 12), item.Description)
 		rows = append(rows, m.selectedRow(row, width, index == m.worklogSelected))
 	}
 	return rows
@@ -364,11 +385,14 @@ func (m model) renderWorklogDetail() string {
 		extra += "\nEstimate used:    " + usage
 	}
 	return fmt.Sprintf("Issue             %s%s\nLocal issue total %s\nStart             %s\nDuration          %s\nCreated           %s\nUpdated           %s\nID                %s\n\n%s",
-		item.IssueKey, extra, m.renderIssueTotal(item.IssueKey), local.Format("2006-01-02 15:04"), formatDuration(item.DurationSeconds),
+		worklogs.DisplayIssueKey(item.IssueKey), extra, m.renderIssueTotal(item.IssueKey), local.Format("2006-01-02 15:04"), formatDuration(item.DurationSeconds),
 		created.Format("2006-01-02 15:04"), updated.Format("2006-01-02 15:04"), item.ID, item.Description)
 }
 
 func (m model) renderIssueTotal(issueKey string) string {
+	if issueKey == "" {
+		return "Unassigned · local only"
+	}
 	if m.issueTotalIssue != issueKey {
 		return "Unavailable"
 	}
@@ -511,7 +535,7 @@ func (m model) renderPlacementPreview() string {
 		if m.form.placement == manualPlacement {
 			return m.muted("Enter issue, start time, and duration")
 		}
-		return m.muted("Enter issue and duration")
+		return m.muted("Enter duration (issue is optional)")
 	}
 	return m.paint(formatPreviewWindows(m.form.previewRecords, m.workspace.cfg.Location), m.colors.Proposed)
 }

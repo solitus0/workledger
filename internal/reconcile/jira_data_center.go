@@ -245,7 +245,7 @@ func (s *Service) CreateJiraDataPushPlan(ctx context.Context, cfg config.Effecti
 	return plan, nil
 }
 
-func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) (Plan, error) {
+func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.EffectiveConfig, routeProfile string, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) (plan Plan, err error) {
 	opts := resolvePlanOptions(options)
 	fingerprint, err := config.FingerprintEffective(cfg)
 	if err != nil {
@@ -260,8 +260,13 @@ func (s *Service) buildJiraDataPushPlan(ctx context.Context, cfg config.Effectiv
 		return Plan{}, err
 	}
 
+	defer func() {
+		if err == nil {
+			sealPushSnapshot(&plan, localRows, routes)
+		}
+	}()
 	activeRows := worklogsToRows(localRows)
-	plan := Plan{
+	plan = Plan{
 		ID:                uuid.NewString(),
 		Direction:         "push",
 		AdapterFamily:     "jira-data-center",

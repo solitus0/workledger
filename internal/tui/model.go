@@ -55,6 +55,7 @@ const (
 	dayWorklogView worklogView = iota
 	weekWorklogView
 	monthWorklogView
+	unassignedWorklogView
 )
 
 type statusView int
@@ -89,6 +90,7 @@ const (
 	detailsOverlay
 	issueSortOverlay
 	epicAssignmentOverlay
+	worklogAssignmentOverlay
 )
 
 type noticeKind int
@@ -132,6 +134,9 @@ type shellState struct {
 }
 
 type worklogsScreen struct {
+	worklogMarks             map[string]int64
+	worklogRange             *worklogRangeState
+	assignmentGen            int
 	worklogView              worklogView
 	worklogs                 []worklogs.LocalWorklog
 	contextDays              []worklogs.ContextDay
@@ -188,21 +193,22 @@ type statusScreen struct {
 }
 
 type interactionState struct {
-	overlay        overlay
-	move           *moveState
-	form           *formState
-	planForm       *planFormState
-	planOperation  *planOperationState
-	presetForm     *presetFormState
-	issueForm      *issueFormState
-	epicAssignment *epicAssignmentState
-	presetPicker   *presetPickerState
-	issuePicker    *issuePickerState
-	actions        *actionsState
-	detailViewport viewport.Model
-	detailTitle    string
-	detailContent  string
-	detailWorklog  bool
+	overlay           overlay
+	move              *moveState
+	form              *formState
+	planForm          *planFormState
+	planOperation     *planOperationState
+	presetForm        *presetFormState
+	issueForm         *issueFormState
+	epicAssignment    *epicAssignmentState
+	worklogAssignment *worklogAssignmentState
+	presetPicker      *presetPickerState
+	issuePicker       *issuePickerState
+	actions           *actionsState
+	detailViewport    viewport.Model
+	detailTitle       string
+	detailContent     string
+	detailWorklog     bool
 }
 
 type interactionKind int
@@ -563,6 +569,18 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m, nil
 	case movePreviewMsg:
 		return m.applyMovePreview(msg)
+	case worklogAssignmentSuggestionsMsg:
+		if a := m.worklogAssignment; a != nil && a.generation == msg.generation && strings.ToUpper(strings.TrimSpace(a.input.Value())) == msg.query {
+			a.input.SetSuggestions(msg.items)
+			a.title = msg.title
+		}
+		return m, nil
+	case worklogAssignmentLoadedMsg:
+		return m.applyWorklogAssignmentLoaded(msg)
+	case worklogAssignmentResultMsg:
+		return m.applyWorklogAssignmentResult(msg)
+	case worklogMarksCheckedMsg:
+		return m.applyWorklogMarksChecked(msg)
 	case worklogResultMsg:
 		if msg.generation != m.worklogGen || !sameDay(msg.date, m.selectedDate) {
 			return m, nil
@@ -587,7 +605,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			m.form.suggestedStart = suggestedManualStart(m.worklogs, m.selectedDate, m.workspace.cfg.Location)
 		}
 		m.restoreWorklogSelection(selectedID)
-		return m, m.startIssueTotalLoad()
+		return m, tea.Batch(m.startIssueTotalLoad(), m.checkWorklogMarks())
 	case issueTotalResultMsg:
 		selected := m.selectedWorklog()
 		if msg.generation != m.issueTotalGen || selected == nil || msg.issueKey != selected.IssueKey {
@@ -782,6 +800,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		if msg.kind == "plan.reconcile" {
 			if msg.reconcile.Plan == nil {
 				m.setNotice(noticeInfo, "remote and local worklogs already match; no plan was created")
+				if skipped := msg.reconcile.NoPlan; skipped != nil && skipped.SkippedUnassignedCount > 0 {
+					m.setNotice(noticeInfo, fmt.Sprintf("No sync changes · skipped %d unassigned worklogs (%s)", skipped.SkippedUnassignedCount, formatDuration(skipped.SkippedUnassignedSeconds)))
+				}
 				return m, m.startPlanLoad()
 			}
 			m.plan = msg.reconcile.Plan
@@ -790,6 +811,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 				m.openDetails("Plan saved with inspection failures", "Review this saved plan before applying. No worklogs were changed.\n\n"+strings.Join(failures, "\n\n"))
 			} else {
 				m.setNotice(noticeSuccess, "saved reconcile plan created; review it before applying")
+				if p := msg.reconcile.Plan; p != nil && p.SkippedUnassignedCount > 0 {
+					m.setNotice(noticeInfo, fmt.Sprintf("Plan saved · skipped %d unassigned worklogs (%s)", p.SkippedUnassignedCount, formatDuration(p.SkippedUnassignedSeconds)))
+				}
 			}
 			return m, m.startPlanLoad()
 		}
@@ -838,6 +862,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 				if !m.move.saving {
 					cmds = append(cmds, m.loadMove(m.move.preview.Source.Revision))
 				}
+			} else if m.worklogAssignment != nil {
+				m.worklogAssignment.stale = true
+				m.worklogAssignment.err = "Worklogs changed externally; cancel and reopen assignment."
 			} else if m.epicAssignment != nil {
 				m.epicAssignment.stale = true
 				m.epicAssignment.err = "Issues changed externally; cancel and reopen before applying."
@@ -970,10 +997,13 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		if m.actions != nil {
 			return m.updateActions(msg)
 		}
+		if m.overlay == worklogAssignmentOverlay {
+			return m.updateWorklogAssignment(msg)
+		}
 		if m.overlay == epicAssignmentOverlay {
 			return m.updateEpicAssignment(msg)
 		}
-		if m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.worklogView == dayWorklogView && m.interactionState.kind() == interactionIdle {
+		if m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.isWorklogList() && m.interactionState.kind() == interactionIdle {
 			return m.updateWorklogFilter(msg)
 		}
 		if m.interactionState.kind() == interactionIdle && m.activeTab == issuesTab {
@@ -1021,6 +1051,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case interactionHelp:
 		return m.updateActions(msg)
 	case interactionConfirmation:
+		if m.overlay == worklogAssignmentOverlay {
+			return m.updateWorklogAssignment(msg)
+		}
 		if m.overlay == epicAssignmentOverlay {
 			return m.updateEpicAssignment(msg)
 		}
@@ -1042,7 +1075,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 	case interactionWorklogForm:
 		return m.updateForm(msg)
 	}
-	if m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.worklogView == dayWorklogView {
+	if m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.isWorklogList() {
 		return m.updateWorklogFilter(msg)
 	}
 	if m.issueSearch != nil && m.issueSearch.editing && m.activeTab == issuesTab && m.issueView == issueListView {
@@ -1238,6 +1271,7 @@ func (m *model) startWorklogLoad() tea.Cmd {
 	if m.workspace == nil {
 		return nil
 	}
+	m.worklogRange = nil
 	m.clearContextOutsideSelection()
 	m.worklogGen++
 	m.worklogLoading = true
@@ -1249,7 +1283,7 @@ func (m *model) startIssueTotalLoad() tea.Cmd {
 	m.issueTotal = 0
 	m.issueTotalErr = ""
 	selected := m.selectedWorklog()
-	if m.workspace == nil || m.worklogView != dayWorklogView || selected == nil {
+	if m.workspace == nil || m.worklogView != dayWorklogView || selected == nil || selected.IssueKey == "" {
 		m.issueTotalIssue = ""
 		m.issueTotalLoading = false
 		return nil
@@ -1333,7 +1367,16 @@ func (m model) worklogCmd(generation int, date time.Time) tea.Cmd {
 	ctx := m.ctx
 	dateValue := date.Format("2006-01-02")
 	rangeStart, rangeEnd := m.worklogBounds(date)
+	unassigned := m.worklogView == unassignedWorklogView
 	return func() tea.Msg {
+		var backlog []worklogs.LocalWorklog
+		if unassigned {
+			var err error
+			backlog, _, err = ws.worklogs.List(ctx, ws.cfg, worklogs.ListFilters{Unassigned: true})
+			if err != nil {
+				return worklogResultMsg{generation: generation, date: date, err: err}
+			}
+		}
 		result, err := ws.worklogs.Context(ctx, ws.cfg, worklogs.ContextInput{
 			From: rangeStart.Format("2006-01-02"),
 			To:   rangeEnd.Format("2006-01-02"),
@@ -1348,10 +1391,14 @@ func (m model) worklogCmd(generation int, date time.Time) tea.Cmd {
 				break
 			}
 		}
+		items := selectedDay.Worklogs
+		if unassigned {
+			items = backlog
+		}
 		return worklogResultMsg{
 			generation:  generation,
 			date:        date,
-			items:       selectedDay.Worklogs,
+			items:       items,
 			day:         selectedDay,
 			settings:    result.Settings,
 			metadata:    result.Metadata,
@@ -1543,7 +1590,7 @@ func (m model) newForm(editing bool, id string, revision int64, issue, started, 
 	if editing {
 		startPlaceholder = "YYYY-MM-DD HH:MM"
 	}
-	placeholders := []string{"PROJ-123", startPlaceholder, "1h30m", "What was done"}
+	placeholders := []string{"Optional, e.g. PROJ-123", startPlaceholder, "1h30m", "What was done"}
 	var inputs [4]textinput.Model
 	for index := range inputs {
 		input := textinput.New()
@@ -1823,7 +1870,7 @@ func (m *model) schedulePreview() tea.Cmd {
 	if m.form.editing {
 		return m.formMetadataCmd()
 	}
-	if strings.TrimSpace(m.form.inputs[issueInput].Value()) == "" || strings.TrimSpace(m.form.inputs[durationInput].Value()) == "" ||
+	if strings.TrimSpace(m.form.inputs[durationInput].Value()) == "" ||
 		(m.form.placement == manualPlacement && strings.TrimSpace(m.form.inputs[startInput].Value()) == "") {
 		return m.formMetadataCmd()
 	}
@@ -1941,7 +1988,7 @@ func (m model) selectedWorklog() *worklogs.LocalWorklog {
 	if m.worklogSelected < 0 || m.worklogSelected >= len(m.worklogs) {
 		return nil
 	}
-	if m.worklogFilter != nil && m.worklogView == dayWorklogView && !slices.Contains(m.visibleWorklogIndices(), m.worklogSelected) {
+	if m.worklogFilter != nil && m.isWorklogList() && !slices.Contains(m.visibleWorklogIndices(), m.worklogSelected) {
 		return nil
 	}
 	return &m.worklogs[m.worklogSelected]
@@ -1964,7 +2011,7 @@ func (m *model) restoreWorklogSelection(id string) {
 			}
 		}
 	}
-	if m.worklogFilter != nil && m.worklogView == dayWorklogView {
+	if m.worklogFilter != nil && m.isWorklogList() {
 		m.worklogSelected = -1
 		if len(visible) > 0 {
 			m.worklogSelected = visible[0]

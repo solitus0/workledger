@@ -40,7 +40,7 @@ Placement rule:
 - [ ] NFR-016b: Local titles and epic names shall be trimmed, non-empty single-line text when supplied; null shall clear them. Epic filtering shall match the exact trimmed name. CLI estimates shall use Go duration syntax and require positive whole seconds without applying worklog minimum duration or minute rounding; JSON estimates shall be positive integers or null, with no range representation.
 - [ ] NFR-016c: Issues list JSON shall expose `filters`, `items`, `total`, and `summary`; each issue shall expose nullable effective `title`, `manual_title`, `cached_title`, and `epic`, effective `max_estimate_seconds`, `manual_max_estimate_seconds`, `cached_max_estimate_seconds`, `estimate_source` as `manual|jira|none`, exact `logged_seconds`, nullable `remaining_seconds`, `overrun_seconds`, nullable cache provenance and refresh time, and nullable local update time. Summary and epic records shall expose `issue_count`, `estimated_issue_count`, `unestimated_issue_count`, `logged_seconds`, `estimated_seconds`, `remaining_seconds`, and `overrun_seconds`; remaining and estimate sums shall include known estimates only. Issue mutation JSON shall expose `dry_run`, normalized patch `items`, and `total`.
 
-- [ ] NFR-016d: SQLite shall create durable issue identities atomically through active worklog inserts and issue-key updates and cache inserts; deleting a worklog or clearing optional fields shall not remove issue identity. Lifetime budget and group reads shall use service-owned aggregate queries instead of one frontend query per issue.
+- [ ] NFR-016d: SQLite shall create durable nonempty issue identities atomically through assigned active worklog inserts and issue-key updates and cache inserts; deleting a worklog or clearing optional fields shall not remove issue identity. Lifetime budget and group reads shall use service-owned aggregate queries instead of one frontend query per issue.
 
 - [ ] NFR-017: The `saved_plans` table shall include `id`, `created_at`, `plan_direction`, `adapter_family`, `config_fingerprint`, `window_from_utc`, `window_to_utc`, immutable planning status in `aggregate_status`, and terminal-success time in `applied_at`.
 - [ ] NFR-018: The `saved_plan_items` table shall include `id`, `plan_id`, `issue_key`, `target_issue`, `route_profile`, `plan_direction`, `target_adapter_family`, `target_adapter_instance`, `window_from_utc`, `window_to_utc`, `plan_status`, `planned_action`, `comparison_status`, `reason_code`, `reason_detail`, `payload_json`, `inspection_summary_json`, `delivery_key`, `content_hash`, `local_row_count`, `local_total_seconds`, `remote_row_count`, and `remote_total_seconds`; item execution state, time, and message shall not be duplicated outside delivery attempts.
@@ -194,7 +194,7 @@ Placement rule:
 - [ ] NFR-141: A timezone configuration change after planning shall not alter execution for an existing saved plan.
 
 ## Input Validation
-- [ ] NFR-142: Canonical issue keys shall use `<PROJECTKEY>-<NUMBER>` grammar.
+- [ ] NFR-142: Nonempty canonical issue keys shall use `<PROJECTKEY>-<NUMBER>` grammar. Empty worklog and preset keys shall represent unassigned work in SQLite, Go, and JSON and shall never establish issue identities.
 - [ ] NFR-143: `PROJECTKEY` shall start with an uppercase ASCII letter.
 - [ ] NFR-144: `PROJECTKEY` may contain uppercase ASCII letters or digits after the first character.
 - [ ] NFR-145: `NUMBER` shall contain one or more decimal digits.
@@ -210,7 +210,7 @@ Placement rule:
 - [ ] NFR-153: `worklogs search <query>` shall preserve remaining internal query text exactly.
 - [ ] NFR-154: Manual add and update, batch add, presets, and CLI and TUI previews shall round duration and UTC start to the nearest minute before minimum-duration, duplicate, and overlap validation; positive 30-second ties shall round upward and a duration rounded to zero shall fail validation.
 - [ ] NFR-155: `worklogs add` duration shall be greater than or equal to the effective configured minimum local worklog duration in seconds.
-- [ ] NFR-156: `worklogs update` shall preserve the same configured minimum duration rule as `worklogs add`.
+- [ ] NFR-156: Worklog timing and duration edits shall preserve the configured minimum duration rule; key-only assignment or clearing shall preserve retained timing and duration without reapplying creation minimums.
 - [ ] NFR-157: `worklogs apply` payload `duration_seconds` values shall be integers and shall normalize to positive whole-minute durations while retaining the seconds-based JSON field.
 - [ ] NFR-158: `worklogs apply` payload `duration_seconds` values shall satisfy the effective configured minimum local worklog duration.
 - [ ] NFR-159: `worklogs add` description shall trim outer whitespace.
@@ -227,7 +227,7 @@ Placement rule:
 - [ ] NFR-166: `worklogs apply` payload shall be one raw apply payload object.
 - [ ] NFR-167: `worklogs apply` payload shall contain top-level `adds`.
 - [ ] NFR-168: `worklogs apply` payload shall contain at least one add operation.
-- [ ] NFR-169: Each `worklogs apply` `adds` item shall include `issue_key`.
+- [ ] NFR-169: Each `worklogs apply` `adds` item may omit `issue_key` or supply an empty string to create unassigned work; nonempty supplied keys shall pass canonical validation.
 - [ ] NFR-170: Each `worklogs apply` `adds` item shall include exactly one of `started_at` or `started_at_utc`.
 - [ ] NFR-171: Each `worklogs apply` `adds` item shall include `duration_seconds`.
 - [ ] NFR-172: Each `worklogs apply` `adds` item shall include `description`.
@@ -746,3 +746,6 @@ Placement rule:
 - [ ] NFR-570: TUI domain change detection shall advance only for worklog, trash, preset, issue, and issue-cache commits; activity-only commits shall refresh activity without marking drafts stale or recalculating availability.
 - [ ] NFR-571: The TUI shall show an optimistic running activity immediately and correlate asynchronous completion with the same activity ID.
 - [ ] NFR-572: Activity rendering shall fit the existing 100-by-28 minimum viewport, remain usable without color, and shall not add a numbered TUI destination.
+
+## Unassigned backlog scale
+- [ ] NFR-573: The all-dates unassigned workflow shall support at least 10,000 entries and 1,000 explicitly selected IDs, render only visible rows, preserve hidden marks, and use bounded ID queries below SQLite parameter limits. Assignment validation and updates shall share one transaction and prepared updates, with exact counts and no partial commits.

@@ -30,6 +30,10 @@ func (m *model) openIssuePicker() tea.Cmd {
 	}
 	m.issuePicker = &issuePickerState{input: input, mode: worklogs.IssueFindByPrefix}
 	m.resizeIssuePickerInput()
+	if m.worklogAssignment != nil {
+		m.issuePicker.searching = true
+		m.issuePicker.input.Focus()
+	}
 	return m.loadIssuePickerPage(0, false)
 }
 
@@ -146,6 +150,9 @@ func (m *model) loadIssuePickerDetails() tea.Cmd {
 		return nil
 	}
 	m.clearIssuePickerDetails()
+	if m.worklogAssignment != nil {
+		return nil
+	}
 	if picker.loading || picker.selected < 0 || picker.selected >= len(picker.items) {
 		return nil
 	}
@@ -228,6 +235,9 @@ func (m model) updateIssuePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.issuePicker = nil
 		return m, nil
 	case "tab":
+		if m.worklogAssignment != nil {
+			return m, nil
+		}
 		picker.detailFocus = !picker.detailFocus
 		if picker.searching {
 			if picker.detailFocus {
@@ -281,6 +291,12 @@ func (m model) updateIssuePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		issue := picker.items[picker.selected].IssueKey
 		m.issuePicker = nil
+		if m.worklogAssignment != nil {
+			m.worklogAssignment.input.SetValue(issue)
+			m.worklogAssignment.title = picker.items[picker.selected].Title
+			m.worklogAssignment.err = ""
+			return m, nil
+		}
 		m.form.inputs[issueInput].SetValue(issue)
 		m.formError = ""
 		m.invalidateDescriptionSuggestions()

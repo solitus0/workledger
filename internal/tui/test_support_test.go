@@ -148,6 +148,8 @@ func (f *fakeTracker) Poll(context.Context) (bool, error) {
 func (*fakeTracker) Close() error { return nil }
 
 type fakeWorklogState struct {
+	assignInputs    []worklogs.AssignInput
+	assignErr       error
 	movePreview     worklogs.MovePreview
 	moveErr         error
 	moves           []recordedMove
@@ -193,6 +195,29 @@ type usedIssueCall struct {
 }
 
 type fakeWorklogQueries struct{ state *fakeWorklogState }
+
+func (f *fakeWorklogQueries) List(_ context.Context, _ config.EffectiveConfig, filters worklogs.ListFilters) ([]worklogs.LocalWorklog, worklogs.EffectiveFilters, error) {
+	items := []worklogs.LocalWorklog{}
+	for _, item := range f.state.items {
+		if !filters.Unassigned || item.IssueKey == "" {
+			items = append(items, item)
+		}
+	}
+	return items, worklogs.EffectiveFilters{Unassigned: filters.Unassigned}, nil
+}
+
+func (f *fakeWorklogQueries) LookupIDs(_ context.Context, ids []string) ([]worklogs.LocalWorklog, error) {
+	items := []worklogs.LocalWorklog{}
+	for _, id := range ids {
+		for _, item := range f.state.items {
+			if item.ID == id {
+				items = append(items, item)
+				break
+			}
+		}
+	}
+	return items, nil
+}
 
 func (f *fakeWorklogQueries) FindIssuesByWorklogText(_ context.Context, query string) ([]string, error) {
 	keys := []string{}
@@ -311,6 +336,28 @@ type recordedBatchDelete struct {
 }
 
 type fakeWorklogMutations struct{ state *fakeWorklogState }
+
+func (f *fakeWorklogMutations) Assign(_ context.Context, input worklogs.AssignInput, dry bool) (worklogs.AssignResult, error) {
+	f.state.assignInputs = append(f.state.assignInputs, input)
+	if f.state.assignErr != nil {
+		return worklogs.AssignResult{}, f.state.assignErr
+	}
+	result := worklogs.AssignResult{DryRun: dry}
+	for _, id := range input.IDs {
+		for i, item := range f.state.items {
+			if item.ID == id {
+				item.IssueKey = input.IssueKey
+				item.Revision++
+				result.Records = append(result.Records, item)
+				if !dry {
+					f.state.items[i] = item
+				}
+				break
+			}
+		}
+	}
+	return result, nil
+}
 
 func (f *fakeWorklogMutations) Add(_ context.Context, _ config.EffectiveConfig, input worklogs.AddInput) (worklogs.AddResult, error) {
 	f.state.addInputs = append(f.state.addInputs, input)

@@ -107,7 +107,7 @@ func (a *app) configureCompletions(root *cobra.Command) {
 		}
 
 		switch cmd.CommandPath() {
-		case "workledger worklogs update", "workledger worklogs delete":
+		case "workledger worklogs update", "workledger worklogs delete", "workledger worklogs assign":
 			cmd.ValidArgsFunction = a.completeWorklogIDs
 		case "workledger trash restore":
 			cmd.ValidArgsFunction = a.completeTrashIDs
@@ -270,8 +270,8 @@ func sanitizeCompletionText(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
-func (a *app) completeWorklogIDs(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	if len(args) > 0 {
+func (a *app) completeWorklogIDs(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 && cmd.Name() != "assign" {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	effective, service, cleanup, ok := completionWorklogService()
@@ -285,11 +285,18 @@ func (a *app) completeWorklogIDs(_ *cobra.Command, args []string, toComplete str
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	candidates := make([]completionCandidate, 0, len(items))
+	selected := map[string]struct{}{}
+	for _, id := range args {
+		selected[id] = struct{}{}
+	}
 	for _, item := range items {
-		description := fmt.Sprintf("%s · %s · %s", item.IssueKey, item.StartedAtUTC.In(effective.Location).Format("2006-01-02 15:04"), item.Description)
+		if cmd.Name() == "assign" && item.IssueKey != "" {
+			continue
+		}
+		description := fmt.Sprintf("%s · %s · %s", worklogs.DisplayIssueKey(item.IssueKey), item.StartedAtUTC.In(effective.Location).Format("2006-01-02 15:04"), item.Description)
 		candidates = append(candidates, completionCandidate{value: item.ID, description: description})
 	}
-	return renderCompletionCandidates(candidates, toComplete, nil), cobra.ShellCompDirectiveNoFileComp
+	return renderCompletionCandidates(candidates, toComplete, selected), cobra.ShellCompDirectiveNoFileComp
 }
 
 func (a *app) completePlanIDs(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

@@ -35,8 +35,16 @@ func (m model) commandActions() []commandAction {
 	if m.activeTab == worklogsTab && m.workspace != nil {
 		add("a", "a", "Add worklog")
 		add("A", "A", "Add from preset")
-		if m.worklogView == dayWorklogView {
+		if m.isWorklogList() {
 			add("/", "/", "Find local worklogs")
+			add("space", "Space", "Toggle worklog selection and advance")
+			add("v", "v", "Start or finish range selection")
+			add("V", "V", "Start or finish range unselection")
+			add("ctrl+a", "Ctrl+A", "Select all matching worklogs")
+			add("esc", "Esc", "Finish range, clear marks, or clear filter")
+			if len(m.worklogMarks) > 0 && !m.worklogLoading {
+				add("b", "b", "Assign issue to selected worklogs")
+			}
 			if m.selectedWorklog() != nil {
 				add("enter", "Enter", "Worklog details")
 				add("e", "e", "Edit worklog")
@@ -54,6 +62,7 @@ func (m model) commandActions() []commandAction {
 		add("d", "d", "Day view")
 		add("w", "w", "Week view")
 		add("m", "m", "Month view")
+		add("u", "u", "All-dates unassigned worklogs")
 		if m.worklogView == monthWorklogView {
 			add("pgup", "PgUp", "Previous month")
 			add("pgdown", "PgDn", "Next month")
@@ -198,7 +207,10 @@ func (m model) idleHints() (primary []actionHint) {
 			keys = []string{"a", "A", "f", "u", "enter", "r", "esc"}
 		}
 	case worklogsTab:
-		keys = []string{"a", "A", "e", "M", "D", "/", "enter"}
+		keys = []string{"a", "A", "e", "M", "D", "v", "space", "u", "/", "enter"}
+		if len(m.worklogMarks) > 0 {
+			keys = []string{"b", "space", "v", "V", "ctrl+a", "esc", "/"}
+		}
 	}
 	labels := map[string]string{"a": "Add", "e": "Edit", "M": "Move", "D": "Trash", "/": "Find", "enter": "Details", "s": "Scope", "c": "Config", "r": "Refresh", "R": "Restore", "n": "New plan", "A": "Apply", "f": "Retry failed", "u": "Retry uncertain", "esc": "Back"}
 	if m.activeTab == statusTab {
@@ -210,11 +222,12 @@ func (m model) idleHints() (primary []actionHint) {
 			labels["enter"] = "Details"
 		}
 	}
-	if m.activeTab == worklogsTab && m.worklogView != dayWorklogView {
+	if m.activeTab == worklogsTab && !m.isWorklogList() {
 		labels["enter"] = "Open day"
 	}
 	if m.activeTab == worklogsTab {
 		labels["A"] = "Preset"
+		labels["v"], labels["V"], labels["space"], labels["b"], labels["ctrl+a"], labels["u"], labels["esc"] = "Range", "Unselect", "Toggle", "Assign issue", "Select all", "Unassigned", "Clear selection"
 	}
 	if m.activeTab == issuesTab {
 		labels["tab"], labels["ctrl+t"] = "Inspector", "Search mode"

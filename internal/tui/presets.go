@@ -104,7 +104,7 @@ func (m *model) openPresetForm(item *presets.Preset) {
 		values = []string{item.Name, item.IssueKey, item.StartTime, formatDurationInput(item.DurationSeconds), item.Description}
 		state.editing, state.name, state.revision = true, item.Name, item.Revision
 	}
-	placeholders := []string{"daily-standup", "PROJ-123", "09:00", "15m", "Daily standup"}
+	placeholders := []string{"daily-standup", "Optional, e.g. PROJ-123", "09:00", "15m", "Daily standup"}
 	for index := range state.inputs {
 		input := textinput.New()
 		input.Prompt = ""

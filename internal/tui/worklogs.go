@@ -13,13 +13,23 @@ func (m model) updateWorklogs(key string) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "/":
-		if m.worklogView == dayWorklogView {
+		if m.isWorklogList() {
 			return m, m.openWorklogFilter()
 		}
 	case "esc":
+		if m.worklogRange != nil {
+			m.worklogRange = nil
+			return m, nil
+		}
+		if len(m.worklogMarks) > 0 {
+			m.worklogMarks = nil
+			return m, nil
+		}
 		if m.worklogFilter != nil {
 			return m, m.clearWorklogFilter()
 		}
+	case "u":
+		return m.switchWorklogView(unassignedWorklogView)
 	case "d":
 		return m.switchWorklogView(dayWorklogView)
 	case "w":
@@ -62,6 +72,20 @@ func (m model) updateWorklogs(key string) (tea.Model, tea.Cmd) {
 		return m.updateWeek(key)
 	}
 	switch key {
+	case "space", " ":
+		m.toggleWorklogMark()
+		return m, nil
+	case "v", "V":
+		m.toggleWorklogRange(key == "V")
+		return m, nil
+	case "ctrl+a":
+		m.markVisibleWorklogs()
+		return m, nil
+	case "b":
+		return m.openWorklogAssignment()
+	case "home", "end", "pgup", "pgdown":
+		m.navigateWorklogList(key)
+		return m, m.startIssueTotalLoad()
 	case "up", "k":
 		m.moveWorklogSelection(-1)
 		return m, m.startIssueTotalLoad()
@@ -69,9 +93,15 @@ func (m model) updateWorklogs(key string) (tea.Model, tea.Cmd) {
 		m.moveWorklogSelection(1)
 		return m, m.startIssueTotalLoad()
 	case "left", "h":
+		if m.worklogView == unassignedWorklogView {
+			return m, nil
+		}
 		m.selectedDate = m.selectedDate.AddDate(0, 0, -1)
 		return m, m.refreshCmd(refreshDateData)
 	case "right", "l":
+		if m.worklogView == unassignedWorklogView {
+			return m, nil
+		}
 		m.selectedDate = m.selectedDate.AddDate(0, 0, 1)
 		return m, m.refreshCmd(refreshDateData)
 	case "M":
@@ -83,6 +113,10 @@ func (m model) updateWorklogs(key string) (tea.Model, tea.Cmd) {
 	case "e":
 		if selected := m.selectedWorklog(); selected != nil {
 			m.openEditForm(*selected)
+			if m.worklogView == unassignedWorklogView {
+				m.selectedDate = beginningOfDay(selected.StartedAtUTC, m.workspace.cfg.Location)
+				return m, m.startWorklogLoad()
+			}
 		}
 	case "enter":
 		if m.selectedWorklog() != nil {
@@ -132,11 +166,14 @@ func (m *model) selectContextDate(date time.Time) {
 
 func (m model) switchWorklogView(view worklogView) (tea.Model, tea.Cmd) {
 	previous := m.worklogView
+	m.worklogRange = nil
 	m.worklogView = view
 	if view == dayWorklogView {
 		m.restoreWorklogSelection(m.selectedWorklogID())
 	}
-	if (previous == monthWorklogView) != (view == monthWorklogView) {
+	if previous == unassignedWorklogView || view == unassignedWorklogView || (previous == monthWorklogView) != (view == monthWorklogView) {
+		m.worklogs = nil
+		m.contextDays = nil
 		return m, m.startWorklogLoad()
 	}
 	return m, m.startIssueTotalLoad()

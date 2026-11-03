@@ -40,6 +40,13 @@ func IsValidIssueKey(value string) bool {
 	return issueKeyPattern.MatchString(value)
 }
 
+func DisplayIssueKey(value string) string {
+	if value == "" {
+		return "Unassigned"
+	}
+	return value
+}
+
 func IsValidIssuePrefix(value string) bool {
 	return issuePrefixPattern.MatchString(value)
 }
@@ -88,6 +95,7 @@ type DeleteMapping struct {
 }
 
 type ListFilters struct {
+	Unassigned    bool
 	Issue         string
 	IssuePrefix   string
 	Epic          *string
@@ -123,6 +131,7 @@ type SearchInput struct {
 }
 
 type EffectiveFilters struct {
+	Unassigned  bool
 	IssueKey    *string
 	IssuePrefix *string
 	Epic        *string
@@ -261,8 +270,8 @@ func NewService(store *sqlitestore.Store) *Service {
 }
 
 func (s *Service) List(ctx context.Context, cfg config.EffectiveConfig, filters ListFilters) ([]LocalWorklog, EffectiveFilters, error) {
-	if !hasListTimeSelector(filters) && filters.Epic == nil {
-		return nil, EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: "worklogs list requires at least one time selector or --epic"}}}
+	if !hasListTimeSelector(filters) && filters.Epic == nil && !filters.Unassigned {
+		return nil, EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "date", Message: "worklogs list requires at least one time selector, --epic, or --unassigned"}}}
 	}
 
 	effective, err := normalizeListFiltersAt(cfg, filters, false, s.now)
@@ -541,9 +550,19 @@ func (s *Service) Update(ctx context.Context, cfg config.EffectiveConfig, id str
 		input.Description = *patch.Description
 	}
 
-	candidate, err := buildCandidate(cfg, input)
+	// A key-only edit retains historically valid timing even if the operator
+	// has since increased the minimum creation duration.
+	retainedConfig := cfg
+	retainedConfig.MinimumDurationSeconds = 0
+	candidate, err := buildCandidate(retainedConfig, input)
 	if err != nil {
 		return LocalWorklog{}, err
+	}
+	if !candidate.StartedAtUTC.Equal(current.StartedAtUTC) || candidate.DurationSeconds != current.DurationSeconds || candidate.Description != current.Description {
+		candidate, err = buildCandidate(cfg, input)
+		if err != nil {
+			return LocalWorklog{}, err
+		}
 	}
 
 	if err := s.validateConflicts(ctx, cfg, candidate, id, patch.Force); err != nil {
@@ -813,7 +832,7 @@ type AddCandidateInput struct {
 
 func buildCandidate(cfg config.EffectiveConfig, input AddCandidateInput) (LocalWorklog, error) {
 	issues := make([]ValidationIssue, 0)
-	if !issueKeyPattern.MatchString(input.IssueKey) {
+	if input.IssueKey != "" && !issueKeyPattern.MatchString(input.IssueKey) {
 		issues = append(issues, ValidationIssue{Field: "issue", Message: "must match <PROJECTKEY>-<NUMBER>"})
 	}
 
@@ -857,7 +876,7 @@ func buildCandidate(cfg config.EffectiveConfig, input AddCandidateInput) (LocalW
 
 func buildAddBaseCandidate(cfg config.EffectiveConfig, issueKey string, duration string, description string) (LocalWorklog, error) {
 	issues := make([]ValidationIssue, 0)
-	if !issueKeyPattern.MatchString(issueKey) {
+	if issueKey != "" && !issueKeyPattern.MatchString(issueKey) {
 		issues = append(issues, ValidationIssue{Field: "issue", Message: "must match <PROJECTKEY>-<NUMBER>"})
 	}
 
@@ -923,11 +942,15 @@ func hasAutomaticPlacementOnlyAddFlags(input AddInput) bool {
 }
 
 func (s *Service) validateConflicts(ctx context.Context, cfg config.EffectiveConfig, candidate LocalWorklog, excludeID string, force bool) error {
+	return s.validateConflictsWithQueryer(ctx, candidate, excludeID, force, cfg.Location, s.store.DB())
+}
+
+func (s *Service) validateConflictsWithQueryer(ctx context.Context, candidate LocalWorklog, excludeID string, force bool, location *time.Location, queryer sqlQueryer) error {
 	if force {
 		return nil
 	}
 
-	existing, err := s.listActiveOverlappingWithQueryer(ctx, candidate.StartedAtUTC, worklogEnd(candidate), s.store.DB())
+	existing, err := s.listActiveOverlappingWithQueryer(ctx, candidate.StartedAtUTC, worklogEnd(candidate), queryer)
 	if err != nil {
 		return err
 	}
@@ -963,7 +986,7 @@ func (s *Service) validateConflicts(ctx context.Context, cfg config.EffectiveCon
 	return ValidationError{
 		Conflict: &ConflictDetail{
 			Reason:             reason,
-			Attempted:          ToRecordView(candidate, cfg.Location),
+			Attempted:          ToRecordView(candidate, location),
 			ConflictingIDs:     conflictingIDs,
 			ConflictingWindows: conflictingWindows,
 		},
@@ -1151,6 +1174,9 @@ func normalizeListFilters(cfg config.EffectiveConfig, filters ListFilters, allow
 }
 
 func normalizeListFiltersAt(cfg config.EffectiveConfig, filters ListFilters, allowDeleted bool, now func() time.Time) (EffectiveFilters, error) {
+	if filters.Unassigned && (filters.Issue != "" || filters.IssuePrefix != "" || filters.Epic != nil) {
+		return EffectiveFilters{}, ValidationError{Issues: []ValidationIssue{{Field: "unassigned", Message: "cannot be combined with issue, issue-prefix, or epic"}}}
+	}
 	from, to, err := ResolveDateWindowSelectionAt(cfg, DateWindowSelection{
 		Today:         filters.Today,
 		Yesterday:     filters.Yesterday,
@@ -1181,7 +1207,8 @@ func normalizeListFiltersAt(cfg config.EffectiveConfig, filters ListFilters, all
 	}
 
 	effective := EffectiveFilters{
-		Fields: fields,
+		Fields:     fields,
+		Unassigned: filters.Unassigned,
 	}
 
 	if cfg.LocalTimezoneConfig != nil {
@@ -1677,6 +1704,9 @@ func scanWorklog(scanner interface{ Scan(dest ...any) error }) (LocalWorklog, er
 
 func buildWhereClause(filters EffectiveFilters, deleted bool, args *[]any) string {
 	whereParts := make([]string, 0)
+	if filters.Unassigned {
+		whereParts = append(whereParts, "issue_key = ''")
+	}
 	if filters.IssueKey != nil {
 		whereParts = append(whereParts, "issue_key = ?")
 		*args = append(*args, *filters.IssueKey)

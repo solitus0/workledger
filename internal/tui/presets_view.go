@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"github.com/solitus0/workledger/internal/worklogs"
 	"strings"
 	"time"
 
@@ -24,7 +25,7 @@ func (m model) renderPresetWorkspace(width, height int) string {
 		if index == m.presetSelected {
 			prefix = "> "
 		}
-		lines = append(lines, m.selectedRow(fmt.Sprintf("%s%-20s %-12s %s", prefix, truncate(item.Name, 20), truncate(item.IssueKey, 12), formatEstimateDuration(int64(item.DurationSeconds))), listWidth-2, index == m.presetSelected))
+		lines = append(lines, m.selectedRow(fmt.Sprintf("%s%-20s %-12s %s", prefix, truncate(item.Name, 20), truncate(worklogs.DisplayIssueKey(item.IssueKey), 12), formatEstimateDuration(int64(item.DurationSeconds))), listWidth-2, index == m.presetSelected))
 	}
 	if len(m.presets) == 0 {
 		message := "No presets yet."
@@ -44,7 +45,7 @@ func (m model) renderPresetDetail() string {
 		if item.LastUsedAt != nil {
 			lastUsed = item.LastUsedAt.In(m.workspace.cfg.Location).Format("2006-01-02 15:04")
 		}
-		detail = fmt.Sprintf("Preset details\n\nName %s\nIssue %s\nStart time %s\nDuration %s\n\nLast used\n%s\nUpdated\n%s\n\n%s", item.Name, item.IssueKey, item.StartTime, formatDuration(item.DurationSeconds), lastUsed, item.UpdatedAt.In(m.workspace.cfg.Location).Format("2006-01-02 15:04"), item.Description)
+		detail = fmt.Sprintf("Preset details\n\nName %s\nIssue %s\nStart time %s\nDuration %s\n\nLast used\n%s\nUpdated\n%s\n\n%s", item.Name, worklogs.DisplayIssueKey(item.IssueKey), item.StartTime, formatDuration(item.DurationSeconds), lastUsed, item.UpdatedAt.In(m.workspace.cfg.Location).Format("2006-01-02 15:04"), item.Description)
 	}
 	return detail
 }

@@ -8,14 +8,14 @@ Use only current-session evidence: user request, chat or agent transcript, visib
 
 Do not use unrelated conversation search, broad repository mining, remote tracker lookup, prior worklog lookup, or weak issue-key inference. A local metadata title lookup is permitted only for unresolved attribution after the work-evidence and explicit-duration gates.
 
-Minimal-input rule: **explicit duration is the only always-required user input**. After duration is known, ask for only the issue key, and only when explicit selection, an unambiguous session or branch key, and a clear single local metadata title match cannot resolve attribution.
+Minimal-input rule: **explicit duration is the only always-required user input**. Issue keys are optional. After explicit selection, an unambiguous session or branch key, and a clear single local metadata title match cannot resolve attribution, create unassigned worklogs without asking for a key. An explicit request to remain unassigned overrides inference.
 
 Required gate order:
 
 0. **Work evidence.** Before commands or requests for missing fields, verify that the session contains evidence of work performed. An empty thread or one containing only a worklog request, duration, issue key, branch name, or proposed task produces no worklogs. Explain that no work evidence is available; do not ask for a description. Actual analysis, review, investigation, implementation, validation, and unsuccessful attempts qualify without requiring a completed implementation.
 1. **Duration.** If the invocation/request lacks explicit duration, stop before commands and ask for duration only.
 2. **No duration inference.** Never derive duration from elapsed time, timestamps, tool history, commit count, branch age, calendar gaps, or `workledger` context.
-3. **Issue key.** Explicit user selection wins. Otherwise use an unambiguous key in current-session evidence, then run `git branch --show-current` once if unresolved. If neither identifies one key, inspect local `workledger issues list --output json`, optionally filtering with an evidence-supported `--search` title substring or `--issue-prefix`. Choose only one clearly matching title supported by the session's work evidence; ask for the issue key for broad, ambiguous, conflicting, absent, or unavailable matches. Issue estimates, remaining budget, and recency never establish attribution or duration.
+3. **Issue key.** Explicit user selection wins. Otherwise use an unambiguous key in current-session evidence, then run `git branch --show-current` once if unresolved. If neither identifies one key, inspect local `workledger issues list --output json`, optionally filtering with an evidence-supported `--search` title substring or `--issue-prefix`. Choose only one clearly matching title supported by the session's work evidence; create unassigned worklogs for broad, ambiguous, conflicting, absent, or unavailable matches. Never invent a key. Skip inference entirely when the user explicitly requests unassigned work. Issue estimates, remaining budget, and recency never establish attribution or duration.
 4. **Optional user input.** Started time, date/window, log count, split, and description need not be supplied by the user. Never ask for a description, even when supplied text is unusable; generate or repair it from session evidence.
 5. **Default placement.** If no start or date/window is supplied, place the activity with `--fill --today`. If a date/window is supplied without a start, use `--fill DATE_WINDOW`.
 6. **Default count.** If no log count, multiple issues, per-entry durations, split, or payload-shaped evidence is supplied, make one add request for one issue. `--fill` can create multiple fragments around lunch, occupied gaps, or selected dates; it does not promise one persisted worklog. Preserve the normalized total and report the returned fragment count. Handle an explicit log count through the multi-entry path.
@@ -25,7 +25,7 @@ Normalize explicit duration syntax, then round the supplied total once to the ne
 
 ## CLI readiness
 
-After work evidence and explicit duration are established, check `workledger issues list --help` once before running a catalog read, placement read, or write. Require successful help exposing `--search` and `--issue-prefix`; the skill uses the current `issues` catalog and minute-normalized worklog contract. This help probe does not require config or initialized storage.
+After work evidence and explicit duration are established, check `workledger issues list --help` and `workledger worklogs list --help` once each before running a catalog read, placement read, or write. Require successful issues help exposing `--search` and `--issue-prefix`, and worklogs-list help exposing `--unassigned`; the skill uses the current `issues` catalog and minute-normalized worklog contract. This help probe does not require config or initialized storage.
 
 If the executable is missing or the probe fails or lacks those flags, stop and report the incompatible CLI and that no worklog was created. An older executable can exist on PATH while lacking this interface. State that a CLI matching this skill is required; do not automatically install, upgrade, switch to a repository build, or substitute obsolete commands. If an upgrade is deferred, leave the workflow stopped until the user supplies a compatible executable or explicitly requests another execution path.
 
@@ -36,12 +36,13 @@ Allowed command families only:
 ```text
 git branch --show-current
 workledger issues list --help
+workledger worklogs list --help
 workledger issues list [--search TITLE_TEXT] [--issue-prefix PREFIX] --output json
 
-workledger worklogs add --issue KEY (--fill DATE_WINDOW | --fit DATE_WINDOW) [--overtime] --duration DURATION --description "..." --dry --output json
-workledger worklogs add --issue KEY (--fill DATE_WINDOW | --fit DATE_WINDOW) [--overtime] --duration DURATION --description "..." --output json
-workledger worklogs add --issue KEY (--started LOCAL_TIME | --started-utc UTC_TIME) --duration DURATION --description "..." --dry --output json
-workledger worklogs add --issue KEY (--started LOCAL_TIME | --started-utc UTC_TIME) --duration DURATION --description "..." --output json
+workledger worklogs add [--issue KEY] (--fill DATE_WINDOW | --fit DATE_WINDOW) [--overtime] --duration DURATION --description "..." --dry --output json
+workledger worklogs add [--issue KEY] (--fill DATE_WINDOW | --fit DATE_WINDOW) [--overtime] --duration DURATION --description "..." --output json
+workledger worklogs add [--issue KEY] (--started LOCAL_TIME | --started-utc UTC_TIME) --duration DURATION --description "..." --dry --output json
+workledger worklogs add [--issue KEY] (--started LOCAL_TIME | --started-utc UTC_TIME) --duration DURATION --description "..." --output json
 
 workledger worklogs context DATE_WINDOW [--issue KEY] --output json
 
@@ -65,7 +66,7 @@ Prefer stdin for `apply`; use files only for debugging or when requested.
 
 ## Direct add
 
-Use `worklogs add` directly for the default one-issue add after duration and issue key are available.
+Use `worklogs add` directly for the default one-issue add after explicit duration is available; omit `--issue` when attribution is unresolved or explicitly unassigned.
 
 - Unknown exact start and no date/window: use `--fill --today`.
 - Supplied date/window and unknown exact start: use `--fill DATE_WINDOW`.
@@ -87,7 +88,7 @@ Keep input requirements low:
 2. If multiple issues or a log count are supplied without per-entry durations, round the total once, divide its whole minutes evenly, and assign remainder minutes one at a time in input order. Preserve the normalized total and satisfy the effective fragment minimum.
 3. Do not ask for log count, split, started time, or date/window when absent. Never ask for descriptions. Generate an evidence-based description for each entry; splitting one activity across slots may reuse its description without inventing separate activities.
 4. Use `worklogs context DATE_WINDOW --output json` only when placement must account for existing slots or a multi-entry payload needs exact starts.
-5. Bundle by issue when issues are supplied; otherwise use one issue derived from current evidence or branch.
+5. Bundle by issue when issues are supplied; otherwise resolve one issue from current evidence or branch, or leave the entries unassigned.
 6. Prefer primary workday free slots before overtime when exact placement is needed.
 7. Validate one payload with `workledger worklogs apply --stdin --dry --output json`.
 8. Apply the same payload with `workledger worklogs apply --stdin --output json` only after validation succeeds.
@@ -107,7 +108,7 @@ Keep input requirements low:
 }
 ```
 
-Each add requires `issue_key`, positive integer `duration_seconds` in multiples of 60 from the normalized explicit duration, and exactly one timestamp field: `started_at` for local grammar or `started_at_utc` for UTC RFC3339. Every add must include a descriptive, evidence-matched `description`, supplied by the user or generated from current-session work evidence. Do not include extra fields unless the CLI requires them.
+Each add accepts an optional `issue_key` (omitted or empty means unassigned), and requires positive integer `duration_seconds` in multiples of 60 from the normalized explicit duration, and exactly one timestamp field: `started_at` for local grammar or `started_at_utc` for UTC RFC3339. Every add must include a descriptive, evidence-matched `description`, supplied by the user or generated from current-session work evidence. Do not include extra fields unless the CLI requires them.
 
 ## JSON responses
 
@@ -119,7 +120,7 @@ Read the result shape for the command used; manual add, automatic add, and batch
 | `worklogs add --fit` or `--fill` | `records[]` | `records[]` |
 | `worklogs apply` | `items[].record` | `items[].record` |
 
-Records expose `issue_key`, local RFC3339 `started_at`, UTC `started_at_utc`, `duration_seconds`, and `description`; applied records also contain the generated `id`. Add previews omit IDs; batch previews have `items[].id: null` and no saved identity. Batch apply also returns `summary.add_count` and `dry_run`; add returns `dry_run: true` only for previews.
+Records expose `issue_key` as an empty string for unassigned work (display Unassigned, local only), local RFC3339 `started_at`, UTC `started_at_utc`, `duration_seconds`, and `description`; applied records also contain the generated `id`. Add previews omit IDs; batch previews have `items[].id: null` and no saved identity. Batch apply also returns `summary.add_count` and `dry_run`; add returns `dry_run: true` only for previews.
 
 Use preview timing to verify minute normalization and sum the returned durations to check the normalized requested total. After apply, report the actual record count, saved timing, and returned IDs. Count `--fill` fragments from `records[]`, even when one activity was requested; `--fit` returns exactly one record. Never report preview rows as created worklogs.
 
@@ -145,7 +146,7 @@ Repair dry-run failures only when current evidence supports the fix: command sha
 
 If automatic placement fails with `use --overtime to allow placement starting at or after day_end`, report that nothing was created and ask whether to retry with `--overtime`. Do not infer authorization from the original worklog-creation request.
 
-Ask the user only when the fix needs unavailable mandatory information or would change user-provided intent: missing/invalid duration, missing issue key after branch fallback, incompatible timing or split fields, duration change beyond canonical minute rounding, allocation change beyond even whole-minute split, date conflict, or conflict priority.
+Ask the user only when the fix needs unavailable mandatory information or would change user-provided intent: missing/invalid duration, an explicitly supplied invalid issue key, incompatible timing or split fields, duration change beyond canonical minute rounding, allocation change beyond even whole-minute split, date conflict, or conflict priority.
 
 Description failures are never a reason to ask the user for a description or its approval. Generate or repair the text from available work evidence; if no work evidence exists, create nothing.
 

@@ -70,20 +70,22 @@ type Service struct {
 }
 
 type Plan struct {
-	ID                string
-	Direction         string
-	AdapterFamily     string
-	AdapterFamilies   []string
-	TargetInstances   []string
-	ConfigFingerprint string
-	WindowFromUTC     time.Time
-	WindowToUTC       time.Time
-	CreatedAt         time.Time
-	PlanningStatus    string
-	ExecutionState    string
-	AppliedAt         *time.Time
-	Items             []PlanItem
-	Findings          []PlanFinding
+	SkippedUnassignedCount   int
+	SkippedUnassignedSeconds int
+	ID                       string
+	Direction                string
+	AdapterFamily            string
+	AdapterFamilies          []string
+	TargetInstances          []string
+	ConfigFingerprint        string
+	WindowFromUTC            time.Time
+	WindowToUTC              time.Time
+	CreatedAt                time.Time
+	PlanningStatus           string
+	ExecutionState           string
+	AppliedAt                *time.Time
+	Items                    []PlanItem
+	Findings                 []PlanFinding
 }
 
 type PlanItem struct {
@@ -135,22 +137,25 @@ type DeliveryAttempt struct {
 }
 
 type InspectionSummary struct {
-	ProjectName            string         `json:"project_name,omitempty"`
-	ProjectID              string         `json:"project_id,omitempty"`
-	IssueTagName           string         `json:"issue_tag_name,omitempty"`
-	LocalRowCount          int            `json:"local_row_count"`
-	LocalTotalSeconds      int            `json:"local_total_seconds"`
-	RemoteRowCount         int            `json:"remote_row_count"`
-	RemoteTotalSeconds     int            `json:"remote_total_seconds"`
-	MatchedRowCount        int            `json:"matched_row_count"`
-	CreateRowCount         int            `json:"create_row_count"`
-	DeleteRowCount         int            `json:"delete_row_count"`
-	RequiresTagCreate      bool           `json:"requires_tag_create,omitempty"`
-	SourceIssueKeys        []string       `json:"source_issue_keys,omitempty"`
-	PerSourceTotals        map[string]int `json:"per_source_totals,omitempty"`
-	ResolvedTargetInstance string         `json:"resolved_target_instance,omitempty"`
-	ResolvedTargetIssue    string         `json:"resolved_target_issue,omitempty"`
-	ForeignAuthorPresent   bool           `json:"foreign_author_present,omitempty"`
+	SourceSnapshot           *PushSourceSnapshot `json:"source_snapshot,omitempty"`
+	SkippedUnassignedCount   int                 `json:"skipped_unassigned_count,omitempty"`
+	SkippedUnassignedSeconds int                 `json:"skipped_unassigned_seconds,omitempty"`
+	ProjectName              string              `json:"project_name,omitempty"`
+	ProjectID                string              `json:"project_id,omitempty"`
+	IssueTagName             string              `json:"issue_tag_name,omitempty"`
+	LocalRowCount            int                 `json:"local_row_count"`
+	LocalTotalSeconds        int                 `json:"local_total_seconds"`
+	RemoteRowCount           int                 `json:"remote_row_count"`
+	RemoteTotalSeconds       int                 `json:"remote_total_seconds"`
+	MatchedRowCount          int                 `json:"matched_row_count"`
+	CreateRowCount           int                 `json:"create_row_count"`
+	DeleteRowCount           int                 `json:"delete_row_count"`
+	RequiresTagCreate        bool                `json:"requires_tag_create,omitempty"`
+	SourceIssueKeys          []string            `json:"source_issue_keys,omitempty"`
+	PerSourceTotals          map[string]int      `json:"per_source_totals,omitempty"`
+	ResolvedTargetInstance   string              `json:"resolved_target_instance,omitempty"`
+	ResolvedTargetIssue      string              `json:"resolved_target_issue,omitempty"`
+	ForeignAuthorPresent     bool                `json:"foreign_author_present,omitempty"`
 }
 
 type reportingScopeGroup struct {
@@ -238,17 +243,19 @@ type ReconcileRequest struct {
 }
 
 type ReconcileNoPlanResult struct {
-	PlanCreated             bool
-	AdapterFamily           string
-	AdapterFamilies         []string
-	RouteProfile            string
-	WindowFromUTC           time.Time
-	WindowToUTC             time.Time
-	ResolvedTargetInstances []string
-	MatchedScopeCount       int
-	ActionableScopeCount    int
-	Reason                  string
-	ProfileSummaries        []ReconcileProfileSummary
+	SkippedUnassignedCount   int
+	SkippedUnassignedSeconds int
+	PlanCreated              bool
+	AdapterFamily            string
+	AdapterFamilies          []string
+	RouteProfile             string
+	WindowFromUTC            time.Time
+	WindowToUTC              time.Time
+	ResolvedTargetInstances  []string
+	MatchedScopeCount        int
+	ActionableScopeCount     int
+	Reason                   string
+	ProfileSummaries         []ReconcileProfileSummary
 }
 
 type ReconcileProfileSummary struct {
@@ -327,6 +334,25 @@ func (s *Service) Reconcile(ctx context.Context, cfg config.EffectiveConfig, req
 	if err != nil {
 		return result, err
 	}
+	rows, countErr := s.listActiveWindowContext(ctx, request.WindowFrom, request.WindowTo)
+	if countErr != nil {
+		return result, countErr
+	}
+	count, seconds := 0, 0
+	for _, row := range rows {
+		if row.IssueKey == "" {
+			count++
+			seconds += row.DurationSeconds
+		}
+	}
+	if planned.Plan != nil {
+		planned.Plan.SkippedUnassignedCount = count
+		planned.Plan.SkippedUnassignedSeconds = seconds
+	}
+	if planned.NoPlan != nil {
+		planned.NoPlan.SkippedUnassignedCount = count
+		planned.NoPlan.SkippedUnassignedSeconds = seconds
+	}
 	planned.Targets = result.Targets
 	planned.SkippedTargets = result.SkippedTargets
 	return planned, nil
@@ -339,6 +365,10 @@ type ReconcileScope struct {
 func normalizePlanSummary(plan *Plan) {
 	if plan == nil {
 		return
+	}
+	for _, item := range plan.Items {
+		plan.SkippedUnassignedCount = max(plan.SkippedUnassignedCount, item.InspectionSummary.SkippedUnassignedCount)
+		plan.SkippedUnassignedSeconds = max(plan.SkippedUnassignedSeconds, item.InspectionSummary.SkippedUnassignedSeconds)
 	}
 	plan.ExecutionState = derivePlanExecutionState(plan.Items)
 	if len(plan.AdapterFamilies) == 0 {
@@ -1365,7 +1395,7 @@ func (s *Service) CreateClockifyPushPlan(ctx context.Context, cfg config.Effecti
 	return plan, nil
 }
 
-func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.EffectiveConfig, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) (Plan, error) {
+func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.EffectiveConfig, windowFrom, windowTo time.Time, onlyDeleted bool, options ...PlanOptions) (plan Plan, err error) {
 	opts := resolvePlanOptions(options)
 	fingerprint, err := config.FingerprintEffective(cfg)
 	if err != nil {
@@ -1376,7 +1406,7 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 		return Plan{}, err
 	}
 
-	plan := Plan{
+	plan = Plan{
 		ID:                uuid.NewString(),
 		Direction:         "push",
 		AdapterFamily:     "clockify",
@@ -1412,6 +1442,11 @@ func (s *Service) buildClockifyPushPlan(ctx context.Context, cfg config.Effectiv
 	if err != nil {
 		return Plan{}, err
 	}
+	defer func() {
+		if err == nil {
+			sealPushSnapshot(&plan, localRows, jiraRouteProfile{})
+		}
+	}()
 	activeRows := worklogsToRows(localRows)
 	remoteOwnedIssues := make(map[string]bool)
 	validRemoteRows, _ := clockify.NormalizeEntries(entries, tagsByID)
@@ -2637,7 +2672,11 @@ func (s *Service) listLocalScope(issueKey string, windowFrom, windowTo time.Time
 }
 
 func (s *Service) listActiveWindow(windowFrom, windowTo time.Time) ([]worklogs.LocalWorklog, error) {
-	rows, err := s.store.DB().Query(
+	return s.listActiveWindowContext(context.Background(), windowFrom, windowTo)
+}
+
+func (s *Service) listActiveWindowContext(ctx context.Context, windowFrom, windowTo time.Time) ([]worklogs.LocalWorklog, error) {
+	rows, err := s.store.DB().QueryContext(ctx,
 		`SELECT id, issue_key, started_at_utc, duration_seconds, description, revision FROM worklogs WHERE started_at_utc >= ? AND started_at_utc <= ? ORDER BY issue_key ASC, started_at_utc ASC, id ASC`,
 		sqlitestore.RFC3339UTC(windowFrom.UTC()),
 		sqlitestore.RFC3339UTC(windowTo.UTC()),
@@ -2674,6 +2713,9 @@ func localToRows(items []worklogs.LocalWorklog) []model.Row {
 func worklogsToRows(items []worklogs.LocalWorklog) map[string][]model.Row {
 	grouped := map[string][]model.Row{}
 	for _, item := range items {
+		if item.IssueKey == "" {
+			continue
+		}
 		grouped[item.IssueKey] = append(grouped[item.IssueKey], model.Row{
 			IssueKey:        item.IssueKey,
 			StartedAtUTC:    item.StartedAtUTC.UTC(),

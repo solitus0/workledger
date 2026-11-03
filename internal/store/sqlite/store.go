@@ -257,10 +257,10 @@ var schemaStatements = []string{
 	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_insert AFTER INSERT ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_update AFTER UPDATE ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_activity_delete AFTER DELETE ON worklogs BEGIN UPDATE domain_change_state SET revision = revision + 1 WHERE id = 1; END`,
-	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_issue_insert AFTER INSERT ON worklogs BEGIN
+	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_assigned_issue_insert AFTER INSERT ON worklogs WHEN NEW.issue_key <> '' BEGIN
 		INSERT INTO issues(issue_key, created_at, updated_at) VALUES(NEW.issue_key, NEW.created_at, NEW.created_at) ON CONFLICT(issue_key) DO NOTHING;
 	END`,
-	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_issue_update AFTER UPDATE OF issue_key ON worklogs BEGIN
+	`CREATE TRIGGER IF NOT EXISTS trg_worklogs_assigned_issue_update AFTER UPDATE OF issue_key ON worklogs WHEN NEW.issue_key <> '' BEGIN
 		INSERT INTO issues(issue_key, created_at, updated_at) VALUES(NEW.issue_key, NEW.updated_at, NEW.updated_at) ON CONFLICT(issue_key) DO NOTHING;
 	END`,
 	`CREATE TRIGGER IF NOT EXISTS trg_metadata_issue_insert AFTER INSERT ON issue_metadata BEGIN
@@ -790,7 +790,7 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 	}
 
 	// Explicit initialization installs the current identity and duration guards.
-	for _, name := range []string{"trg_worklogs_issue_insert", "trg_worklogs_issue_update", "trg_metadata_issue_insert", "trg_presets_minutes_update"} {
+	for _, name := range []string{"trg_worklogs_issue_insert", "trg_worklogs_issue_update", "trg_worklogs_assigned_issue_insert", "trg_worklogs_assigned_issue_update", "trg_metadata_issue_insert", "trg_presets_minutes_update"} {
 		if _, err := tx.ExecContext(ctx, `DROP TRIGGER IF EXISTS `+name); err != nil {
 			_ = tx.Rollback()
 			return err
@@ -868,7 +868,7 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 		UNION ALL SELECT issue_key, source_created_at, NULL FROM trashed_worklogs
 		WHERE storage_scope = 'local' AND source_created_at IS NOT NULL
 	) INSERT INTO issues(issue_key, created_at, updated_at)
-		SELECT issue_key, MIN(known_at), MAX(recent_at) FROM known
+		SELECT issue_key, MIN(known_at), MAX(recent_at) FROM known WHERE issue_key <> ''
 		GROUP BY issue_key HAVING MAX(recent_at) IS NOT NULL
 		ON CONFLICT(issue_key) DO NOTHING`); err != nil {
 		_ = tx.Rollback()
@@ -1283,7 +1283,7 @@ func (s *Store) validateSchemaCompatibility() error {
 	}
 	for _, name := range []string{
 		"trg_worklogs_minutes_insert", "trg_worklogs_minutes_update", "trg_presets_minutes_insert", "trg_presets_minutes_duration_update",
-		"trg_worklogs_issue_insert", "trg_worklogs_issue_update", "trg_metadata_issue_insert",
+		"trg_worklogs_assigned_issue_insert", "trg_worklogs_assigned_issue_update", "trg_metadata_issue_insert",
 	} {
 		var count int
 		if err := s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name=?`, name).Scan(&count); err != nil {

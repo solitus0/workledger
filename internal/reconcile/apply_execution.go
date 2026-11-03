@@ -109,13 +109,17 @@ func (s *Service) executeSavedPushGroups(ctx context.Context, cfg config.Effecti
 	}
 
 	groups := selectedGroups
+	sourceErrors := make(map[string]error, len(groups))
+	for _, group := range groups {
+		sourceErrors[group.key] = s.validatePushSources(ctx, fullGroupByKey[group.key])
+	}
 	// Dispatch independent adapters before workers can wait on shared Clockify preparation.
 	sort.SliceStable(groups, func(i, j int) bool {
 		return groups[i].items[0].TargetAdapterFamily != "clockify" && groups[j].items[0].TargetAdapterFamily == "clockify"
 	})
 	var clockifyItems []PlanItem
 	for _, group := range groups {
-		if len(group.items) > 0 && group.items[0].TargetAdapterFamily == "clockify" {
+		if len(group.items) > 0 && group.items[0].TargetAdapterFamily == "clockify" && sourceErrors[group.key] == nil && retryScope != "uncertain" {
 			clockifyItems = append(clockifyItems, group.items...)
 		}
 	}
@@ -146,8 +150,39 @@ func (s *Service) executeSavedPushGroups(ctx context.Context, cfg config.Effecti
 					}
 					continue
 				}
+				// Verification of an uncertain outcome is read-only and remains
+				// useful even after local edits invalidate mutation of this plan.
+				if retryScope == "uncertain" {
+					merged := mergePushGroupItem(group.items)
+					state, message, err := s.reconcileUncertainPushItem(itemCtx, cfg, merged)
+					if err == nil && state == "succeeded" {
+						results <- pushGroupResult{outcomes: finalizePartialPushRetrySuccess(group.items, message)}
+						continue
+					}
+					if err != nil || state == "uncertain" {
+						if err == nil {
+							err = errors.New(message)
+						}
+						results <- pushGroupResult{outcomes: preparationFailureOutcomes(group.items, err, retryScope)}
+						continue
+					}
+				}
+				if err := sourceErrors[group.key]; err != nil {
+					results <- pushGroupResult{outcomes: preparationFailureOutcomes(group.items, err, retryScope)}
+					continue
+				}
+				if err := s.validatePushSources(itemCtx, fullGroupByKey[group.key]); err != nil {
+					results <- pushGroupResult{outcomes: preparationFailureOutcomes(group.items, err, retryScope)}
+					continue
+				}
 				if group.items[0].TargetAdapterFamily == "clockify" {
-					deps, err := prepareClockify()
+					var deps *clockifyPushDeps
+					var err error
+					if retryScope == "uncertain" {
+						deps, err = s.prepareClockifyPushDeps(itemCtx, cfg, group.items)
+					} else {
+						deps, err = prepareClockify()
+					}
 					if err == nil {
 						err = deps.tagErrors[group.items[0].TargetIssue]
 					}
@@ -159,6 +194,10 @@ func (s *Service) executeSavedPushGroups(ctx context.Context, cfg config.Effecti
 						continue
 					}
 					itemCtx = withClockifyDeps(itemCtx, deps)
+				}
+				if err := s.validatePushSources(itemCtx, fullGroupByKey[group.key]); err != nil {
+					results <- pushGroupResult{outcomes: preparationFailureOutcomes(group.items, err, retryScope)}
+					continue
 				}
 				if err := s.recordPendingGroup(itemCtx, group.items); err != nil {
 					cancel()

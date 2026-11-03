@@ -43,6 +43,9 @@ func (m *model) restyleSearchInputs() {
 }
 
 func (m *model) resizeSearchInputs() {
+	if m.worklogAssignment != nil {
+		m.worklogAssignment.input.SetWidth(max(12, min(64, m.width-navigationWidth-12)))
+	}
 	if m.actions != nil {
 		m.actions.input.SetWidth(min(64, max(20, m.width-navigationWidth-12)))
 	}
@@ -59,6 +62,9 @@ func (m *model) searchInputs() []*textinput.Model {
 	}
 	if m.worklogFilter != nil {
 		inputs = append(inputs, &m.worklogFilter.input)
+	}
+	if m.worklogAssignment != nil {
+		inputs = append(inputs, &m.worklogAssignment.input)
 	}
 	return inputs
 }
@@ -192,6 +198,7 @@ func (m model) updateWorklogFilter(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.worklogFilter.input.Value() == query {
 		return m, cmd
 	}
+	m.worklogRange = nil
 	m.restoreWorklogSelection(id)
 	if m.selectedWorklogID() == id {
 		return m, cmd
@@ -201,7 +208,7 @@ func (m model) updateWorklogFilter(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) visibleWorklogIndices() []int {
 	query := ""
-	if m.worklogFilter != nil && m.worklogView == dayWorklogView {
+	if m.worklogFilter != nil && m.isWorklogList() {
 		query = strings.ToLower(strings.TrimSpace(m.worklogFilter.input.Value()))
 	}
 	indices := make([]int, 0, len(m.worklogs))
@@ -222,6 +229,7 @@ func (m *model) moveWorklogSelection(direction int) {
 	position := slices.Index(indices, m.worklogSelected)
 	position = max(0, min(len(indices)-1, position+direction))
 	m.worklogSelected = indices[position]
+	m.updateWorklogRange()
 }
 
 func (m model) renderActions(width, height int) string {

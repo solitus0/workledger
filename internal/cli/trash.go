@@ -196,7 +196,7 @@ func (a *app) renderTrashRestoreBatchJSON(raw worklogs.ListFilters, result workl
 func trashRestoreRows(items []worklogs.TrashRestoreItem, location *time.Location) [][]string {
 	rows := make([][]string, 0, len(items))
 	for _, item := range items {
-		rows = append(rows, []string{item.TrashID, item.Record.ID, item.Record.IssueKey, localizedWorklogWindow(item.Record.StartedAtUTC, item.Record.DurationSeconds, location)})
+		rows = append(rows, []string{item.TrashID, item.Record.ID, worklogs.DisplayIssueKey(item.Record.IssueKey), localizedWorklogWindow(item.Record.StartedAtUTC, item.Record.DurationSeconds, location)})
 	}
 	return rows
 }
@@ -602,7 +602,7 @@ func trashRows(items []worklogs.TrashRecord, location *time.Location) [][]string
 		rows = append(rows, []string{
 			item.ID,
 			item.StorageScope,
-			item.IssueKey,
+			worklogs.DisplayIssueKey(item.IssueKey),
 			localizedWorklogWindow(item.StartedAtUTC, item.DurationSeconds, location),
 			tableDurationMinutes(item.DurationSeconds),
 			formatActiveRowValue("description", item.Description, listDescriptionMaxWidth),
@@ -617,7 +617,7 @@ func trashShowRows(item worklogs.TrashRecord, location *time.Location) [][]strin
 	rows := [][]string{
 		{"ID", item.ID},
 		{"SCOPE", item.StorageScope},
-		{"ISSUE", item.IssueKey},
+		{"ISSUE", worklogs.DisplayIssueKey(item.IssueKey)},
 		{"WINDOW", localizedWorklogWindow(item.StartedAtUTC, item.DurationSeconds, location)},
 		{"DURATION", tableDurationMinutes(item.DurationSeconds)},
 		{"DESCRIPTION", item.Description},

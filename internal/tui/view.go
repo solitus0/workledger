@@ -195,6 +195,8 @@ func (m model) renderWorkspace(width, height int) string {
 			text = m.renderActions(modalWidth, height-2)
 		case m.overlay == issueSortOverlay:
 			text = m.renderIssueSortMenu(modalWidth - 4)
+		case m.overlay == worklogAssignmentOverlay:
+			text = m.renderWorklogAssignment(modalWidth-4, height-4)
 		case m.overlay == epicAssignmentOverlay:
 			text = m.renderEpicAssignment(modalWidth-4, height-4)
 		case m.overlay == detailsOverlay:
@@ -346,6 +348,12 @@ func (m model) renderFooter(width int) string {
 	case m.overlay == issueSortOverlay:
 		primary = []actionHint{{"↑/↓", "Select sort"}, {"Enter", "Apply"}, {"Esc", "Cancel"}}
 		secondary = nil
+	case m.overlay == worklogAssignmentOverlay:
+		primary = []actionHint{{"Ctrl+K", "Find issue"}, {"Tab", "Accept suggestion"}, {"Enter", "Assign"}, {"Esc", "Cancel"}}
+		if m.issuePicker != nil {
+			primary = []actionHint{{"Ctrl+T", "Search mode"}, {"↑/↓", "Choose"}, {"PgUp/PgDn", "Page"}, {"Enter", "Use issue"}, {"Esc", "Back"}}
+		}
+		secondary = nil
 	case m.overlay == epicAssignmentOverlay:
 		primary = []actionHint{{"↑/↓", "Destination"}, {"Enter", "Apply"}, {"Esc", "Cancel"}}
 		secondary = []actionHint{{"Type", "Find or create epic"}}
@@ -425,7 +433,7 @@ func (m model) renderFooter(width int) string {
 		if m.form.focus == issueField && !m.form.editing {
 			secondary = append(secondary, actionHint{"Ctrl+K", "Issues"})
 		}
-	case m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.worklogView == dayWorklogView:
+	case m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.isWorklogList():
 		primary = []actionHint{{"Type", "Filter worklogs"}, {"↑/↓", "Select"}, {"Enter", "Browse results"}, {"Esc", "Clear filter"}}
 		secondary = nil
 	case m.issueSearch != nil && m.issueSearch.editing && m.activeTab == issuesTab && m.issueView == issueListView:
@@ -485,7 +493,7 @@ func (m model) renderFooter(width int) string {
 		tail := m.renderHints(primary[len(primary)-2:], width-2)
 		first = m.renderHints(primary[:len(primary)-2], width-4-lipgloss.Width(tail)) + "  " + tail
 	}
-	if m.interactionState.kind() == interactionIdle && m.activeTab == worklogsTab && m.worklogView == dayWorklogView && m.selectedWorklog() != nil {
+	if m.interactionState.kind() == interactionIdle && m.activeTab == worklogsTab && m.isWorklogList() && m.selectedWorklog() != nil {
 		indices := m.visibleWorklogIndices()
 		context := fmt.Sprintf("%d of %d", slices.Index(indices, m.worklogSelected)+1, len(indices))
 		if width-2-lipgloss.Width(first) >= lipgloss.Width(context)+4 {
@@ -619,7 +627,7 @@ func (m model) railTitle(label string, active bool) string {
 }
 
 func (m model) confirmationOverlayOpen() bool {
-	return m.overlay != noOverlay && m.overlay != detailsOverlay && m.overlay != issueSortOverlay && m.overlay != epicAssignmentOverlay
+	return m.overlay != noOverlay && m.overlay != detailsOverlay && m.overlay != issueSortOverlay && m.overlay != epicAssignmentOverlay && m.overlay != worklogAssignmentOverlay
 }
 
 func (m model) confirmationAction() string {

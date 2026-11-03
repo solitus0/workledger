@@ -73,6 +73,16 @@ func (s *Service) prepareClockifyPushDeps(ctx context.Context, cfg config.Effect
 		}
 		tag, tagExists := findTagByName(tagsByID, issueKey)
 		if !tagExists {
+			var shared []PlanItem
+			for _, candidate := range items {
+				if candidate.TargetIssue == issueKey {
+					shared = append(shared, candidate)
+				}
+			}
+			if err := s.validatePushSources(ctx, shared); err != nil {
+				deps.tagErrors[issueKey] = err
+				continue
+			}
 			if !clockifyCreateIssueTagIfMissing(clockifyCfg) {
 				deps.tagErrors[issueKey] = fmt.Errorf("issue tag %q is missing and config forbids creating it", issueKey)
 				continue

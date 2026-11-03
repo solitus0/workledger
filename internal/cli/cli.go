@@ -508,12 +508,14 @@ func (a *app) newWorklogsCommand() *cobra.Command {
 	worklogsCmd.AddCommand(a.newWorklogsApplyCommand())
 	worklogsCmd.AddCommand(a.newWorklogsAddCommand())
 	worklogsCmd.AddCommand(a.newWorklogsUpdateCommand())
+	worklogsCmd.AddCommand(a.newWorklogsAssignCommand())
 	worklogsCmd.AddCommand(a.newWorklogsDeleteCommand())
 
 	return worklogsCmd
 }
 
 func (a *app) newWorklogsListCommand() *cobra.Command {
+	var unassigned bool
 	var issue string
 	var issuePrefix string
 	var epic string
@@ -539,7 +541,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   "List local worklogs",
-		Example: "  workledger worklogs list --today\n  workledger worklogs list --epic \"SBA-october-work\"\n  workledger worklogs list --epic \"SBA-october-work\" --current-month\n  workledger worklogs list --from 2026-05-14 --to 2026-05-16\n  workledger worklogs list --mon --week-offset -1",
+		Example: "  workledger worklogs list --today\n  workledger worklogs list --unassigned\n  workledger worklogs list --epic \"SBA-october-work\"\n  workledger worklogs list --epic \"SBA-october-work\" --current-month\n  workledger worklogs list --from 2026-05-14 --to 2026-05-16\n  workledger worklogs list --mon --week-offset -1",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, false, "")
@@ -551,6 +553,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 			fieldList := splitFields(fields)
 			weekOffsetSet := cmd.Flags().Changed("week-offset")
 			raw := worklogs.ListFilters{
+				Unassigned:    unassigned,
 				Issue:         issue,
 				IssuePrefix:   issuePrefix,
 				Today:         today,
@@ -596,6 +599,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 		},
 	}
 
+	cmd.Flags().BoolVar(&unassigned, "unassigned", false, "List worklogs without an issue key; includes all dates unless date selectors are supplied")
 	cmd.Flags().StringVar(&issue, "issue", "", "Filter by issue key")
 	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Filter by issue prefix")
 	cmd.Flags().StringVar(&epic, "epic", "", "Filter by exact local epic name; includes all dates unless date selectors are supplied")
@@ -1156,7 +1160,7 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
+	cmd.Flags().StringVar(&issue, "issue", "", "Issue key (optional; empty clears assignment)")
 	cmd.Flags().StringVar(&started, "started", "", localTimestampHelp)
 	cmd.Flags().StringVar(&startedUTC, "started-utc", "", utcTimestampHelp)
 	cmd.Flags().BoolVar(&fit, "fit", false, "Place the full duration in the earliest continuous free slot")
@@ -1247,7 +1251,7 @@ func (a *app) newWorklogsUpdateCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
+	cmd.Flags().StringVar(&issue, "issue", "", "Issue key (optional; empty clears assignment)")
 	cmd.Flags().StringVar(&started, "started", "", localTimestampHelp)
 	cmd.Flags().StringVar(&startedUTC, "started-utc", "", utcTimestampHelp)
 	cmd.Flags().StringVar(&duration, "duration", "", "Worklog duration")
@@ -1369,7 +1373,7 @@ func (a *app) newWorklogsDeleteCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
+	cmd.Flags().StringVar(&issue, "issue", "", "Issue key (optional; empty clears assignment)")
 	cmd.Flags().StringVar(&issuePrefix, "issue-prefix", "", "Issue prefix")
 	cmd.Flags().StringVar(&createdWithin, "created-within", "", "Filter by local-ledger creation age (Go duration)")
 	addDateWindowFlags(cmd, dateWindowFlagValues{
@@ -2220,6 +2224,9 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 						return err
 					}
 				} else {
+					if result.NoPlan.SkippedUnassignedCount > 0 {
+						fmt.Fprintf(a.stdout, "Skipped %d unassigned worklogs (%s); local only.\n", result.NoPlan.SkippedUnassignedCount, tableDurationMinutes(result.NoPlan.SkippedUnassignedSeconds))
+					}
 					if err := renderReconcileNoPlanTable(a.stdout, *result.NoPlan, effective.Location); err != nil {
 						return err
 					}
@@ -2234,6 +2241,9 @@ func (a *app) newPlanReconcileCommand() *cobra.Command {
 			}
 
 			plan := *result.Plan
+			if mode != "json" && plan.SkippedUnassignedCount > 0 {
+				fmt.Fprintf(a.stdout, "Skipped %d unassigned worklogs (%s); local only.\n", plan.SkippedUnassignedCount, tableDurationMinutes(plan.SkippedUnassignedSeconds))
+			}
 			if mode == "json" {
 				if err := a.writeJSON(planJSON(plan, result.SkippedTargets, result.ProfileSummaries)); err != nil {
 					return err
@@ -2899,22 +2909,24 @@ func planJSON(plan reconcile.Plan, skippedTargets []reconcile.SkippedTarget, pro
 	}
 
 	result := map[string]any{
-		"plan_id":            plan.ID,
-		"plan_direction":     plan.Direction,
-		"adapter_family":     plan.AdapterFamily,
-		"adapter_families":   plan.AdapterFamilies,
-		"target_instances":   plan.TargetInstances,
-		"config_fingerprint": plan.ConfigFingerprint,
-		"window_from_utc":    plan.WindowFromUTC.Format(time.RFC3339),
-		"window_to_utc":      plan.WindowToUTC.Format(time.RFC3339),
-		"created_at":         plan.CreatedAt.Format(time.RFC3339),
-		"planning_status":    plan.PlanningStatus,
-		"execution_state":    plan.ExecutionState,
-		"applied_at":         plan.AppliedAt,
-		"summary":            map[string]any{"total_items": len(plan.Items), "actionable_items": countPlanItemsByStatus(plan.Items, "ready"), "open_items": countOpenPlanItems(plan.Items), "succeeded_items": countPlanItemsByExecutionState(plan.Items, "succeeded"), "skipped_items": countPlanItemsByStatus(plan.Items, "skipped"), "invalid_findings": len(plan.Findings)},
-		"skipped_targets":    reconcileSkippedTargetsDetails(skippedTargets),
-		"items":              items,
-		"findings":           findings,
+		"plan_id":                    plan.ID,
+		"plan_direction":             plan.Direction,
+		"adapter_family":             plan.AdapterFamily,
+		"adapter_families":           plan.AdapterFamilies,
+		"target_instances":           plan.TargetInstances,
+		"config_fingerprint":         plan.ConfigFingerprint,
+		"window_from_utc":            plan.WindowFromUTC.Format(time.RFC3339),
+		"window_to_utc":              plan.WindowToUTC.Format(time.RFC3339),
+		"created_at":                 plan.CreatedAt.Format(time.RFC3339),
+		"planning_status":            plan.PlanningStatus,
+		"execution_state":            plan.ExecutionState,
+		"applied_at":                 plan.AppliedAt,
+		"skipped_unassigned_count":   plan.SkippedUnassignedCount,
+		"skipped_unassigned_seconds": plan.SkippedUnassignedSeconds,
+		"summary":                    map[string]any{"total_items": len(plan.Items), "actionable_items": countPlanItemsByStatus(plan.Items, "ready"), "open_items": countOpenPlanItems(plan.Items), "succeeded_items": countPlanItemsByExecutionState(plan.Items, "succeeded"), "skipped_items": countPlanItemsByStatus(plan.Items, "skipped"), "invalid_findings": len(plan.Findings)},
+		"skipped_targets":            reconcileSkippedTargetsDetails(skippedTargets),
+		"items":                      items,
+		"findings":                   findings,
 	}
 	if len(profileSummaries) > 0 {
 		result["profile_breakdown"] = reconcileProfileBreakdownJSON(profileSummaries)
@@ -2957,17 +2969,19 @@ func reconcileSkippedTargetsDetails(skippedTargets []reconcile.SkippedTarget) []
 
 func reconcileNoPlanJSON(result reconcile.ReconcileNoPlanResult, skippedTargets []reconcile.SkippedTarget) map[string]any {
 	payload := map[string]any{
-		"plan_created":              false,
-		"reason":                    result.Reason,
-		"adapter_family":            result.AdapterFamily,
-		"adapter_families":          result.AdapterFamilies,
-		"route_profile":             emptyToNil(result.RouteProfile),
-		"window_from_utc":           result.WindowFromUTC.Format(time.RFC3339),
-		"window_to_utc":             result.WindowToUTC.Format(time.RFC3339),
-		"resolved_target_instances": result.ResolvedTargetInstances,
-		"matched_scope_count":       result.MatchedScopeCount,
-		"actionable_scope_count":    result.ActionableScopeCount,
-		"skipped_targets":           reconcileSkippedTargetsDetails(skippedTargets),
+		"skipped_unassigned_count":   result.SkippedUnassignedCount,
+		"skipped_unassigned_seconds": result.SkippedUnassignedSeconds,
+		"plan_created":               false,
+		"reason":                     result.Reason,
+		"adapter_family":             result.AdapterFamily,
+		"adapter_families":           result.AdapterFamilies,
+		"route_profile":              emptyToNil(result.RouteProfile),
+		"window_from_utc":            result.WindowFromUTC.Format(time.RFC3339),
+		"window_to_utc":              result.WindowToUTC.Format(time.RFC3339),
+		"resolved_target_instances":  result.ResolvedTargetInstances,
+		"matched_scope_count":        result.MatchedScopeCount,
+		"actionable_scope_count":     result.ActionableScopeCount,
+		"skipped_targets":            reconcileSkippedTargetsDetails(skippedTargets),
 	}
 	if len(result.ProfileSummaries) > 0 {
 		payload["profile_breakdown"] = reconcileProfileBreakdownJSON(result.ProfileSummaries)
@@ -3485,6 +3499,7 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 	payload := map[string]any{
 		"filters": map[string]any{
 			"raw": map[string]any{
+				"unassigned":    raw.Unassigned,
 				"issue":         emptyToNil(raw.Issue),
 				"issue_prefix":  emptyToNil(raw.IssuePrefix),
 				"epic":          raw.Epic,
@@ -3508,8 +3523,9 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 				"fields":        raw.Fields,
 			},
 			"effective": map[string]any{
-				"fields":   nilIfEmpty(effective.Fields),
-				"timezone": effective.Timezone,
+				"unassigned": effective.Unassigned,
+				"fields":     nilIfEmpty(effective.Fields),
+				"timezone":   effective.Timezone,
 			},
 		},
 	}
@@ -4087,7 +4103,7 @@ func worklogRecordJSON(item worklogs.LocalWorklog, location *time.Location) map[
 func worklogTableRecord(item worklogs.LocalWorklog, location *time.Location) map[string]any {
 	return map[string]any{
 		"id":               item.ID,
-		"issue_key":        item.IssueKey,
+		"issue_key":        worklogs.DisplayIssueKey(item.IssueKey),
 		"created_at":       item.CreatedAt.UTC().Format(time.RFC3339),
 		"started_at":       localizedWorklogWindow(item.StartedAtUTC, item.DurationSeconds, location),
 		"started_at_utc":   item.StartedAtUTC.UTC().Format(time.RFC3339),
@@ -4205,7 +4221,7 @@ func shiftPreviewRows(items []worklogs.ShiftPreviewItem, location *time.Location
 	for _, item := range items {
 		rows = append(rows, []string{
 			item.ID,
-			item.IssueKey,
+			worklogs.DisplayIssueKey(item.IssueKey),
 			localizedWorklogWindow(item.StartedAtUTCBefore, item.DurationSeconds, location),
 			localizedWorklogWindow(item.StartedAtUTCAfter, item.DurationSeconds, location),
 			tableDurationMinutes(item.DurationSeconds),
@@ -4221,7 +4237,7 @@ func deleteResultRows(items []worklogs.DeleteResult) [][]string {
 		rows = append(rows, []string{
 			item.ID,
 			item.TrashID,
-			item.IssueKey,
+			worklogs.DisplayIssueKey(item.IssueKey),
 			item.DeletedAt.UTC().Format(time.RFC3339),
 		})
 	}
@@ -4348,6 +4364,9 @@ func issueKeys(items []worklogs.LocalWorklog) []string {
 	keys := make([]string, 0, len(items))
 	seen := make(map[string]struct{}, len(items))
 	for _, item := range items {
+		if item.IssueKey == "" {
+			continue
+		}
 		if _, ok := seen[item.IssueKey]; ok {
 			continue
 		}

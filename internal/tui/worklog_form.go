@@ -107,7 +107,7 @@ func (m model) beginFormSubmit() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if len(m.form.previewRecords) == 0 {
-			m.formError = firstText(m.form.previewError, "enter a valid issue and duration to preview placement")
+			m.formError = firstText(m.form.previewError, "enter a valid duration to preview placement")
 			return m, nil
 		}
 	}

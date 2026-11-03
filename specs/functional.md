@@ -150,13 +150,15 @@ Placement rule:
 - [ ] FUNC-111: Planning issue selectors shall preserve operator-supplied issue order.
 
 ## Worklog Listing
-- [ ] FUNC-112: `workledger worklogs list` shall require at least one explicit time selector from the shared date-window selector family unless `--epic` is supplied; an epic without time selectors shall include all stored dates.
+- [ ] FUNC-112: `workledger worklogs list` shall require an explicit time selector unless `--epic` or `--unassigned` is supplied; those filters without time selectors shall include all stored dates.
 - [ ] FUNC-113: `workledger worklogs list` shall render active local worklogs within the selected time scope, excluding trash and additional remote rows.
 - [ ] FUNC-115: `workledger worklogs list` shall support active-worklog selectors.
 - [ ] FUNC-115a: `workledger worklogs list --epic <NAME>` shall match the exact trimmed, case-sensitive local epic name through each issue's current catalog membership, intersect with supplied issue, issue-prefix, and date selectors, and return an empty successful result for an unknown or unused epic. Blank or non-single-line names shall fail validation.
 - [ ] FUNC-117: `workledger worklogs list` shall support the field selector.
 - [ ] FUNC-118: `workledger worklogs list` shall return the full filtered result set without pagination.
 - [ ] FUNC-119: `workledger worklogs list` shall expose active worklog JSON items using the default active-worklog record shape when `--fields` is not set.
+
+- [ ] FUNC-115b: `worklogs list --unassigned` shall select only active empty-key records, intersect optional date selectors, order by UTC start then ID ascending, and reject issue, issue-prefix, and epic filters. JSON shall retain an empty `issue_key`; human output shall show `Unassigned`.
 
 ## Worklog Search
 - [ ] FUNC-121: `workledger worklogs search <query>` shall require one positional `<query>` argument.
@@ -169,7 +171,7 @@ Placement rule:
 - [ ] FUNC-130: `workledger worklogs search <query>` shall return exit code `0` when zero matches are found.
 
 ## Worklog Creation
-- [ ] FUNC-136: `workledger worklogs add` shall require `--issue <KEY>`.
+- [ ] FUNC-136: `workledger worklogs add` shall accept optional `--issue <KEY>`; omitted or empty keys shall create independent unassigned local worklogs, while supplied nonempty keys shall pass canonical validation.
 - [ ] FUNC-137: `workledger worklogs add` shall require exactly one of `--started <LocalTimestamp>`, `--started-utc <RFC3339UTC>`, `--fit`, or `--fill`.
 - [ ] FUNC-138: `workledger worklogs add` shall require `--duration <GoDuration>`.
 - [ ] FUNC-139: `workledger worklogs add` shall require `--description <text>`.
@@ -197,7 +199,7 @@ Placement rule:
 - [ ] FUNC-143b: automatic `workledger worklogs add --fit` and `workledger worklogs add --fill` success output shall return one `records` item per created worklog.
 
 ## Worklog Update
-- [ ] FUNC-144: `workledger worklogs update <id>` shall use patch-style flags `--issue`, `--started`, `--started-utc`, `--duration`, and `--description`.
+- [ ] FUNC-144: `workledger worklogs update <id>` shall use patch-style flags `--issue`, `--started`, `--started-utc`, `--duration`, and `--description`; explicit `--issue ""` shall clear assignment while an omitted flag shall retain it.
 - [ ] FUNC-145: `workledger worklogs update <id>` shall require at least one patch flag.
 - [ ] FUNC-146: `workledger worklogs update <id>` shall reject an invocation that supplies both `--started` and `--started-utc`.
 - [ ] FUNC-147: `workledger worklogs update <id>` shall validate the full resulting record after patching.
@@ -208,7 +210,7 @@ Placement rule:
 
 ## Worklog Presets
 - [ ] FUNC-151a: `workledger presets` shall provide `add`, `list`, `show`, `update`, `delete`, and `apply` subcommands for operator-local reusable worklog presets.
-- [ ] FUNC-151b: A preset shall contain a unique lowercase slug, issue key, local `HH:MM` start time, duration, and description.
+- [ ] FUNC-151b: A preset shall contain a unique lowercase slug, optional issue key, local `HH:MM` start time, duration, and description; a keyless preset shall create independent unassigned worklogs.
 - [ ] FUNC-151c: `workledger presets update <slug>` shall support patch-style `--name`, `--issue`, `--start`, `--duration`, and `--description` flags and require at least one field.
 - [ ] FUNC-151d: `workledger presets apply <slug> --date <value>` shall create exactly one canonical local worklog by combining the selected local date with the preset start time.
 - [ ] FUNC-151e: Preset application shall accept one-off `--issue`, `--start`, `--duration`, and `--description` overrides without mutating the preset.
@@ -217,6 +219,11 @@ Placement rule:
 - [ ] FUNC-151h: Non-dry preset application shall atomically create the worklog and update preset recency without changing the preset content revision; a stale selected preset shall create neither change, and dry application shall remain read-only.
 - [ ] FUNC-151i: Renaming or deleting a preset shall not mutate worklogs previously created from it.
 - [ ] FUNC-151j: Shell completion shall suggest bounded, recency-ordered local preset slugs for preset show, update, delete, and apply commands.
+
+## Worklog assignment
+- [ ] FUNC-151k: `worklogs assign <id>... --issue <KEY> [--dry]` shall require unique explicit IDs and a valid nonempty destination, and assign only currently unassigned records. The entire validated batch shall commit atomically; missing, already assigned, stale expected revisions, or duplicate/overlap conflicts shall change no worklogs or issue identities. Dry runs shall preview the destination without writing.
+- [ ] FUNC-151l: Assignment and clearing shall preserve worklog identity, creation time, timing, duration, and description, changing only the issue and mutation metadata. Key-only edits, including TUI submissions with unchanged timing fields, shall retain historically valid duration without reapplying the current creation minimum. Timing or duration edits shall retain existing validation.
+- [ ] FUNC-151m: Assignment conflicts shall identify conflicting local IDs and time windows and direct operators to existing show, update, or delete commands for manual resolution. Pulling overlapping keyed remote work shall retain current pull behavior; later assignment shall not automatically merge or delete either record.
 
 ## Batch Shift
 - [ ] FUNC-152: `workledger worklogs shift` shall shift selected active local worklogs by one signed duration delta.
@@ -305,9 +312,9 @@ Placement rule:
 - [ ] FUNC-228b: `workledger issues apply --file <FILE>|--stdin` shall accept one non-empty JSON array of `{issue_key, title, max_estimate_seconds, epic}` patches; optional fields may be omitted to create a key-only issue, omitted fields shall remain unchanged, null shall clear a local field, unknown fields and duplicate keys shall fail validation, and the validated batch shall persist atomically. `--dry` shall validate without writing issues.
 - [ ] FUNC-228c: Local maximum estimates shall override positive cached Jira estimates; clearing the override shall reveal the cache. Jira refresh shall update only cache fields and shall preserve local title, estimate, and epic fields. Clearing all optional local fields shall retain the issue identity without changing worklogs or cache.
 - [ ] FUNC-228d: Issues list shall support `--issue-prefix` at the exact project boundary and `--search` for case-insensitive issue-key, title, or epic substrings, including in date-selected scopes; list ordering shall use project prefix followed by the issue number. Table output shall show readable estimate, logged, remaining, and overrun durations, epic, and estimate source; JSON shall preserve exact seconds and cache provenance.
-- [ ] FUNC-228e: Session-worklog agents shall prefer explicit user issue selection, then an unambiguous current-session or branch key; after the work-evidence and explicit-duration gates, unresolved selection may inspect local issue metadata and choose only a clear single title match. Ambiguous or absent matches shall require an issue key; estimates shall never determine attribution or duration. After those gates and before domain commands, agents shall verify `issues list --help` exposes the required catalog search flags; an unavailable or incompatible CLI shall stop creation without automatic installation, upgrade, or execution-path substitution. Default creation shall use one issue and activity with `--fill --today`, preserve its normalized total across any placement fragments, and report the actual created count.
+- [ ] FUNC-228e: Session-worklog agents shall retain work-evidence and explicit-duration gates; explicit attribution, including an explicit request to remain unassigned, shall win. Otherwise use an unambiguous session or branch key, then a clear single local title match; unresolved attribution shall create unassigned worklogs without requesting a key. Estimates shall not determine attribution or duration. Before domain commands, verify issues-list help exposes `--search` and `--issue-prefix` and worklogs-list help exposes `--unassigned`; an unavailable or incompatible CLI shall stop creation without installation, upgrade, or execution-path substitution. Default creation shall use one activity with `--fill --today`, preserve its normalized total across fragments, and report actual count and unassigned local-only status when applicable.
 
-- [ ] FUNC-228f: Every successful active local worklog insertion or issue-key change shall create a missing local issue in the same transaction, including batch, preset, restore, and pulled worklogs; dry runs and failed writes shall create no issues, and this shall never create a remote issue.
+- [ ] FUNC-228f: Successful active worklog insertion or key changes shall create a missing local issue in the same transaction only for a nonempty key, including batch, preset, restore, and pulled worklogs. Unassigned records, dry runs, and failed writes shall create no issue identities; local issue creation shall never create a remote issue.
 - [ ] FUNC-228g: Epics shall be optional named local groups with at most one group per issue; they shall require no separate entity creation, remote lookup, or Jira hierarchy.
 - [ ] FUNC-228h: Issue logged duration shall sum lifetime active local worklogs only, excluding trash and additional remote rows. A missing effective estimate shall produce unknown remaining duration; estimated issues shall expose `max(estimate - logged, 0)` remaining and `max(logged - estimate, 0)` overrun. Estimates shall remain informational and shall not restrict worklog creation.
 - [ ] FUNC-228i: `workledger issues epics` shall group issues by local epic, include an ungrouped bucket when populated, support member `--issue-prefix` and case-insensitive group-name `--search`, and order named groups by name with ungrouped last. Group and list summaries shall sum per-issue known estimates, clamped remaining, and separate overruns, show estimated and unestimated issue counts, and identify unknown or partial remaining values without treating unestimated issues as zero estimates.
@@ -350,6 +357,9 @@ Placement rule:
 - [ ] FUNC-244a: human-readable `workledger plan reconcile` output shall include next-step commands for `plan show <plan-id>` and, when the saved plan contains one or more `ready` items, `plan apply <plan-id>`.
 - [ ] FUNC-244b: human-readable `workledger plan reconcile` push output shall render a per-adapter summary breakdown for selected push targets, including adapter family, route profile when applicable, resolved target instances, scope count, actionable count, plan-created state, and reason when present; Jira targets shall use route-profile rows and Clockify shall use one non-profiled row.
 - [ ] FUNC-244c: Saved-plan profile breakdown rows shall populate `reason`/`REASON` with a stable reason code when the profile has no actionable scopes or contains `check_failed` scopes; multiple reason codes shall render as `mixed`.
+
+- [ ] FUNC-243g: Push planning shall exclude unassigned local rows before routing or payload construction for all adapters and report their count and duration as skipped local-only work without blocked items. Existing remote-owned cleanup discovery shall continue, including scopes with no assigned local rows. Overall local and Clockify comparison totals shall include unassigned time; Jira instance and profile comparisons shall retain prefix-based scoping.
+- [ ] FUNC-243h: Push inspection JSON shall save exact source worklog IDs and revisions, including empty scopes and every source contributing to reporting targets. Before tag creation and delivery, and before mutation-capable retries, validate complete execution groups against current source membership and revisions. Missing snapshots or changed sources shall require fresh reconcile for that group while unrelated groups continue. Uncertain outcomes may be verified read-only and recorded succeeded when the saved remote outcome already exists; stale plans shall never resume writes. In-flight requests shall retain existing cancellation and uncertainty semantics without a SQLite write transaction spanning network calls. Pull planning and execution shall retain their current issue/window matching and saved-payload semantics.
 
 ## Plan Review
 - [ ] FUNC-246: `workledger plan show` shall load a saved plan by requested plan ID when provided.
@@ -467,6 +477,10 @@ Placement rule:
 - [ ] FUNC-319g: `workledger activity list` shall exclude its own running entry from the current result while retaining its completed entry for later reads.
 
 ## TUI
+- [ ] FUNC-303naa: Worklogs shall provide an all-dates oldest-first Unassigned list alongside Day, Week, and Month. Day and Unassigned lists shall distinguish focus from marked records; Space shall toggle and advance, `v` and `V` shall select and unselect contiguous ranges with reversible shrinking, Ctrl+A shall mark all current matches, and Esc shall finish a range before clearing marks and then filters. Navigation shall include arrows, paging, Home, and End; search editing shall retain text-input behavior.
+- [ ] FUNC-303nab: Marks shall follow worklog IDs across dates, filtering, views, refresh, and resize. Show total count and count outside the current view. Finish ranges when order or scope changes; prune only storage-confirmed unavailable IDs with feedback, never records merely absent from a loaded day. The marked batch shall include hidden selections.
+- [ ] FUNC-303nac: Worklogs `b` shall open an assignment modal for the frozen marked batch, displaying selected count without enumerating worklogs. Accept a valid key with completion; Ctrl+K shall open the creation flow's Key, Description, and Title issue search modes, switched by Ctrl+T, displaying matching issues without history. Choosing an issue shall return to the assignment field before saving. Success shall clear submitted marks and refresh local data; cancel and failure shall retain selection and destination. External changes shall block stale application, saving shall block duplicate submissions, and errors and controls shall remain available in the supported viewport with and without color.
+
 - [ ] FUNC-303: `workledger tui` shall open the alternate-screen interactive frontend only when stdin and stdout are terminals and shall reject positional arguments and explicit `--output` selection.
 - [ ] FUNC-303a: The TUI shall expose six destinations labeled `1 Status`, `2 Worklogs`, `3 Plans`, `4 Presets`, `5 Trash`, and `6 Issues` in the destination rail; the action bar shall not repeat those destination shortcuts.
 - [ ] FUNC-303b: Healthy startup shall open Worklogs for today while Status diagnostics load in the background; invalid configuration or unavailable or incompatible local storage shall open a diagnostics-only Status view.

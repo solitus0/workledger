@@ -97,7 +97,7 @@ workledger issues set --issue SBAH-2 --clear-epic
 
 Each issue belongs to at most one named local epic. Groups need no separate creation and do not change Jira hierarchy. `issues list --search` matches issue keys, titles, and epic names; `issues epics --search` matches group names.
 
-`worklogs list --epic "Product documents"` lists all active local worklogs for the epic across all dates. The name matches exactly after trimming, including case, using the issues' current epic assignments. Add a date selector, `--issue`, or `--issue-prefix` to narrow the results. Without `--epic`, `worklogs list` requires a date selector. Use `--output json` for records with raw and effective filters, or `--fields` to select record fields.
+`worklogs list --epic "Product documents"` lists all active local worklogs for the epic across all dates. The name matches exactly after trimming, including case, using the issues' current epic assignments. Add a date selector, `--issue`, or `--issue-prefix` to narrow the results. Without `--epic` or `--unassigned`, `worklogs list` requires a date selector. Use `--output json` for records with raw and effective filters, or `--fields` to select record fields.
 
 Tables show readable estimate, logged, remaining, and overrun durations. Budgets use all active local worklogs across all dates; date selectors choose issues without reducing their lifetime logged totals. Trash and additional remote rows are excluded. The local total is only as complete as the history available locally.
 
@@ -125,9 +125,27 @@ In Issues and epic member lists, press **Shift+R** to pull Jira titles and origi
 
 In Issues or Epics, press `s` to choose a sort, Enter to apply, or Esc to cancel. Issues show logged time alongside remaining time and offer created at (newest first), natural key, remaining, overrun, title, and logged order; Epics show logged totals and offer name, remaining, overrun, and logged order. Issues default to Created at descending; choices last for the session and preserve selection across refresh and group drilldown. Creation means when an issue first entered the local catalog, and metadata edits or epic assignments do not change it. Run `workledger init` once to migrate an older catalog; existing creation dates use the earliest surviving local timestamp and are approximate. Missing estimates and titles sort last; logged time remains available for unestimated issues. `PgUp`/`PgDn` jump one visible page with one item of overlap, accounting for search, Activity, and wrapped epic rows; `Home`/`End` jump to the first/last matching item while browsing. In a search field those keys move the text cursor, and expanded details retain their own scrolling.
 
-Agents may use local titles to resolve a missing issue key only when session evidence clearly matches one title. Explicit user selection takes priority, followed by an unambiguous session or branch key; ambiguous matches require clarification. Estimates and remaining budget never determine attribution or duration.
+Agents may use local titles to resolve a missing issue key only when session evidence clearly matches one title. Explicit user selection takes priority, followed by an unambiguous session or branch key; unresolved or ambiguous matches are logged unassigned without requesting a key. Estimates and remaining budget never determine attribution or duration.
 
 Use `/` to start Find in worklog and issue lists, epic lists, and preset or issue pickers. In the issue picker, `Ctrl+T` cycles search by key, worklog description, or title; `/` from its history pane returns focus to Find. Once typing in a search field, `/` is normal query text. Press `?` from any view, form, picker, confirmation, or running operation for contextual Actions. Esc or `?` closes help and returns to the same draft, input cursor, selection, and dialog. Choosing an action runs its normal guarded shortcut in that window. `?` is reserved for help during typing; paste it when literal text is needed and paste is supported.
+
+## Work before an issue exists
+
+Issue keys are optional for worklogs and presets. Capture time now and assign an issue later:
+
+```sh
+workledger worklogs add --fill --today --duration 1h --description "Investigate payment retry"
+workledger worklogs list --unassigned
+workledger worklogs assign <id> <id> --issue PROJ-123 --dry
+workledger worklogs assign <id> <id> --issue PROJ-123
+workledger worklogs update <id> --issue ""
+```
+
+The Unassigned list includes all dates, oldest first; add date selectors to narrow it. Assignment changes only explicitly selected unassigned entries and commits the whole batch together. Unassigned time counts toward local totals, quota, and occupied slots, but push skips it. Pull retains its existing issue-scoped replacement behavior: an imported keyed row can coexist with overlapping unassigned work. If later assignment conflicts, inspect the reported IDs and resolve the duplicate with existing show, update, or delete commands.
+
+In the TUI, `u` opens Unassigned. Day and Unassigned lists support Space, `v`/`V`, and Ctrl+A selection; `b` assigns a key to the marked batch, including explicitly selected entries outside the view. The count-only dialog supports Ctrl+K issue search and Ctrl+T Key, Description, and Title modes. Enter chooses an issue back into the dialog before a separate save.
+
+After upgrading, run `workledger init` if storage readiness reports outdated issue guards. Existing worklogs and issue metadata are retained. Saved push plans without current source snapshots require fresh reconciliation; clearing a key does not undo an already in-flight remote request.
 
 ## Daily workflow
 

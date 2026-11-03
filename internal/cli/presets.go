@@ -9,6 +9,7 @@ import (
 
 	"github.com/solitus0/workledger/internal/config"
 	"github.com/solitus0/workledger/internal/presets"
+	"github.com/solitus0/workledger/internal/worklogs"
 )
 
 func (a *app) newPresetsCommand() *cobra.Command {
@@ -36,7 +37,7 @@ func (a *app) newPresetAddCommand() *cobra.Command {
 			return a.renderPreset(mode, item)
 		},
 	}
-	cmd.Flags().StringVar(&issue, "issue", "", "Issue key")
+	cmd.Flags().StringVar(&issue, "issue", "", "Issue key (optional; empty means unassigned)")
 	cmd.Flags().StringVar(&start, "start", "", "Local start time in HH:MM form, e.g. 09:00")
 	cmd.Flags().StringVar(&duration, "duration", "", "Worklog duration")
 	cmd.Flags().StringVar(&description, "description", "", "Description")
@@ -234,7 +235,7 @@ func presetRow(item presets.Preset) []string {
 	if item.LastUsedAt != nil {
 		lastUsed = item.LastUsedAt.Format(time.RFC3339)
 	}
-	return []string{item.Name, item.IssueKey, item.StartTime, humanDuration(item.DurationSeconds), item.Description, lastUsed}
+	return []string{item.Name, worklogs.DisplayIssueKey(item.IssueKey), item.StartTime, humanDuration(item.DurationSeconds), item.Description, lastUsed}
 }
 
 func presetJSON(item presets.Preset) map[string]any {
@@ -249,5 +250,5 @@ func presetJSON(item presets.Preset) map[string]any {
 }
 
 func formatPresetSummary(item presets.Preset) string {
-	return fmt.Sprintf("%s · %s · %s · %s", item.IssueKey, item.StartTime, humanDuration(item.DurationSeconds), item.Description)
+	return fmt.Sprintf("%s · %s · %s · %s", worklogs.DisplayIssueKey(item.IssueKey), item.StartTime, humanDuration(item.DurationSeconds), item.Description)
 }

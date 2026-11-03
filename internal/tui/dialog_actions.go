@@ -58,6 +58,24 @@ func (m model) dialogActions() (string, []commandAction) {
 		add("enter", "Enter", "Apply sort")
 		add("esc", "Esc", "Cancel")
 		return "Sort", actions
+	case m.overlay == worklogAssignmentOverlay:
+		if m.worklogAssignment != nil && !m.worklogAssignment.saving {
+			if m.issuePicker != nil {
+				rows()
+				pages()
+				add("ctrl+t", "Ctrl+T", "Cycle key, description, or title search")
+				add("enter", "Enter", "Use selected issue")
+				add("esc", "Esc", "Clear search or return to assignment")
+			} else {
+				add("ctrl+k", "Ctrl+K", "Find issue")
+				add("tab", "Tab", "Accept suggestion")
+				if !m.worklogAssignment.stale {
+					add("enter", "Enter", "Assign issue")
+				}
+				add("esc", "Esc", "Cancel")
+			}
+		}
+		return "Assign issue", actions
 	case m.overlay == epicAssignmentOverlay:
 		if m.epicAssignment != nil && !m.epicAssignment.saving {
 			rows()
@@ -160,7 +178,7 @@ func (m model) dialogActions() (string, []commandAction) {
 			}
 		}
 		return "Worklog editor", actions
-	case m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.worklogView == dayWorklogView:
+	case m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.isWorklogList():
 		rows()
 		add("enter", "Enter", "Browse filtered worklogs")
 		add("esc", "Esc", "Clear filter")

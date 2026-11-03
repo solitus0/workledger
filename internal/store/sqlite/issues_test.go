@@ -5,6 +5,43 @@ import (
 	"testing"
 )
 
+func TestInitializationUpgradesAssignedIssueGuardsWithoutLosingWork(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "worklogs.db")
+	store, _, err := Bootstrap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`INSERT INTO worklogs(id,issue_key,started_at_utc,duration_seconds,description,created_at,updated_at) VALUES('retained','APP-1','2026-05-01T09:00:00Z',900,'Retain work','2026-05-01T09:00:00Z','2026-05-01T09:00:00Z')`,
+		`DROP TRIGGER trg_worklogs_assigned_issue_insert`,
+		`CREATE TRIGGER trg_worklogs_issue_insert AFTER INSERT ON worklogs BEGIN INSERT INTO issues(issue_key,created_at,updated_at) VALUES(NEW.issue_key,NEW.created_at,NEW.created_at) ON CONFLICT(issue_key) DO NOTHING; END`,
+	} {
+		if _, err := store.DB().Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store.Close()
+	if opened, err := OpenExistingReadOnly(path); err == nil {
+		opened.Close()
+		t.Fatal("ordinary read accepted outdated identity guard")
+	}
+	store, _, err = Bootstrap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.DB().Exec(`INSERT INTO worklogs(id,issue_key,started_at_utc,duration_seconds,description,created_at,updated_at) VALUES('pending','','2026-05-01T10:00:00Z',900,'Pending work','2026-05-01T10:00:00Z','2026-05-01T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := store.DB().QueryRow(`SELECT count(*) FROM worklogs`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("worklogs=%d err=%v", count, err)
+	}
+	if err := store.DB().QueryRow(`SELECT count(*) FROM issues WHERE issue_key=''`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("empty issue=%d err=%v", count, err)
+	}
+}
+
 func TestBootstrapAddsCachedTitleWithoutChangingIssueData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "issues.db")
 	store, _, err := Bootstrap(path)
@@ -47,8 +84,8 @@ func TestBootstrapReplacesDecorationsAndBackfillsIssueIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
-		`DROP TRIGGER trg_worklogs_issue_insert`,
-		`DROP TRIGGER trg_worklogs_issue_update`,
+		`DROP TRIGGER trg_worklogs_assigned_issue_insert`,
+		`DROP TRIGGER trg_worklogs_assigned_issue_update`,
 		`DROP TRIGGER trg_metadata_issue_insert`,
 		`DROP TABLE issues`,
 		`CREATE TABLE issue_decorations(issue_key TEXT PRIMARY KEY, title TEXT NULL, max_estimate_seconds INTEGER NULL, updated_at TEXT NOT NULL)`,
@@ -133,7 +170,7 @@ func TestWorklogIssueIdentityTriggersAreAtomicAndDurable(t *testing.T) {
 }
 
 func TestIssueIdentityGuardsAreRequiredAndInitializationRepairsThem(t *testing.T) {
-	for _, trigger := range []string{"trg_worklogs_issue_insert", "trg_worklogs_issue_update", "trg_metadata_issue_insert"} {
+	for _, trigger := range []string{"trg_worklogs_assigned_issue_insert", "trg_worklogs_assigned_issue_update", "trg_metadata_issue_insert"} {
 		t.Run(trigger, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "worklogs.db")
 			store, _, err := Bootstrap(path)
@@ -173,7 +210,7 @@ func TestIssueCreationMigrationRetainsEarliestEvidenceAndMetadata(t *testing.T) 
 		`INSERT INTO worklogs(id,issue_key,started_at_utc,duration_seconds,description,created_at,updated_at) VALUES('first','APP-1','2025-12-01T09:00:00Z',900,'First','2026-01-01T00:00:00Z','2026-03-01T00:00:00Z'),('second','APP-1','2026-02-01T09:00:00Z',900,'Second','2026-02-01T00:00:00Z','2026-03-01T00:00:00Z')`,
 		`INSERT INTO issue_metadata(issue_key,max_estimate_seconds,source_adapter_family,source_adapter_instance,refreshed_at) VALUES('APP-1',3600,'jira-cloud','main','2026-01-10T00:00:00Z')`,
 		`INSERT INTO trashed_worklogs(id,storage_scope,issue_key,started_at_utc,duration_seconds,description,trashed_at,reason_code,reason_detail,plan_direction,source_created_at) VALUES('archived','local','APP-1','2025-12-01T00:00:00Z',900,'Archived','2026-01-01T00:00:00Z','user_deleted','','local','2025-12-15T00:00:00Z')`,
-		`DROP TRIGGER trg_worklogs_issue_insert`, `DROP TRIGGER trg_worklogs_issue_update`, `DROP TRIGGER trg_metadata_issue_insert`,
+		`DROP TRIGGER trg_worklogs_assigned_issue_insert`, `DROP TRIGGER trg_worklogs_assigned_issue_update`, `DROP TRIGGER trg_metadata_issue_insert`,
 		`ALTER TABLE issues DROP COLUMN created_at`,
 	}
 	for _, statement := range statements {
@@ -230,7 +267,7 @@ func TestCatalogCreationUsesArchivedEvidenceWithoutAddingTrashOnlyIssues(t *test
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
-		`DROP TRIGGER trg_worklogs_issue_insert`, `DROP TRIGGER trg_worklogs_issue_update`, `DROP TRIGGER trg_metadata_issue_insert`,
+		`DROP TRIGGER trg_worklogs_assigned_issue_insert`, `DROP TRIGGER trg_worklogs_assigned_issue_update`, `DROP TRIGGER trg_metadata_issue_insert`,
 		`DROP TABLE issues`,
 		`INSERT INTO worklogs(id,issue_key,started_at_utc,duration_seconds,description,created_at,updated_at) VALUES('current','APP-1','2026-05-01T08:00:00Z',900,'Current','2026-05-01T00:00:00Z','2026-05-01T00:00:00Z')`,
 		`INSERT INTO issue_metadata(issue_key,max_estimate_seconds,source_adapter_family,source_adapter_instance,refreshed_at) VALUES('APP-2',3600,'jira-cloud','main','2026-04-01T00:00:00Z')`,

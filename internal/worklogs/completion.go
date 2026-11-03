@@ -103,7 +103,7 @@ type IssueWorklogDescription struct {
 // the date window and the pages loaded by a history preview.
 func (s *Service) FindIssuesByWorklogText(ctx context.Context, query string) ([]string, error) {
 	rows, err := s.store.DB().QueryContext(ctx, `SELECT DISTINCT issue_key FROM worklogs
-		WHERE instr(workledger_lower(description), ?) > 0 ORDER BY issue_key`, strings.ToLower(strings.TrimSpace(query)))
+		WHERE issue_key <> '' AND instr(workledger_lower(description), ?) > 0 ORDER BY issue_key`, strings.ToLower(strings.TrimSpace(query)))
 	if err != nil {
 		return nil, err
 	}

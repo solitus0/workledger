@@ -68,7 +68,7 @@ func (m model) trashRows(width, height int) []string {
 		if index == m.trashSelected {
 			prefix = "> "
 		}
-		row := fmt.Sprintf("%s%-5s %-6s %-12s %s", prefix, item.StartedAtUTC.In(m.workspace.cfg.Location).Format("15:04"), item.StorageScope, truncate(item.IssueKey, 12), item.ReasonCode)
+		row := fmt.Sprintf("%s%-5s %-6s %-12s %s", prefix, item.StartedAtUTC.In(m.workspace.cfg.Location).Format("15:04"), item.StorageScope, truncate(worklogs.DisplayIssueKey(item.IssueKey), 12), item.ReasonCode)
 		rows = append(rows, m.selectedRow(row, width, index == m.trashSelected))
 	}
 	return rows
@@ -117,5 +117,5 @@ func (m model) renderTrashDetail() string {
 	} else if item.SourceWorklogID == nil {
 		restoreState = m.paint("Not restorable; original identity is unavailable", m.colors.Destructive)
 	}
-	return fmt.Sprintf("%s\n\nIssue       %s\nStart       %s\nDuration    %s\nScope       %s\nReason      %s\nOriginal ID %s\nTrash ID    %s\n\n%s", restoreState, item.IssueKey, item.StartedAtUTC.In(m.workspace.cfg.Location).Format("2006-01-02 15:04"), formatDuration(item.DurationSeconds), item.StorageScope, item.ReasonCode, original, item.ID, item.Description)
+	return fmt.Sprintf("%s\n\nIssue       %s\nStart       %s\nDuration    %s\nScope       %s\nReason      %s\nOriginal ID %s\nTrash ID    %s\n\n%s", restoreState, worklogs.DisplayIssueKey(item.IssueKey), item.StartedAtUTC.In(m.workspace.cfg.Location).Format("2006-01-02 15:04"), formatDuration(item.DurationSeconds), item.StorageScope, item.ReasonCode, original, item.ID, item.Description)
 }
