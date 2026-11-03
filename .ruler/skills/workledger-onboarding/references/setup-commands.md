@@ -12,6 +12,8 @@ workledger status
 
 `workledger config` validates the effective config. `workledger status` checks config, local storage, env vars, routing, and adapter connectivity.
 
+Clockify is optional. Status diagnostics report Clockify project-mapping warnings only when an active `clockify` configuration block exists. Jira routing without Clockify configured does not require Clockify mappings.
+
 ## Shell completion
 
 Workledger generates completion scripts for Bash, Zsh, and Fish. PowerShell is unsupported. Completion generation writes to stdout and does not require valid config or initialized SQLite storage.

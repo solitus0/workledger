@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -67,6 +68,64 @@ func TestCheckSkipsDependentChecksForInvalidConfig(t *testing.T) {
 	}
 	if report.ConfigSummary != nil || len(report.ConfigIssues) != 1 || report.ConfigIssues[0].Field != "timezone" {
 		t.Fatalf("unexpected invalid config snapshot summary=%#v issues=%#v", report.ConfigSummary, report.ConfigIssues)
+	}
+}
+
+func TestCheckClockifyMappingWarningsRequireConfiguredClockify(t *testing.T) {
+	rules := Item{Category: "routing", Target: "rules", Status: "ok", Message: "2 routing rules configured"}
+	missingCloud := Item{Category: "routing", Target: "APP", Status: "warning", Message: "routed prefix has no Clockify project mapping"}
+	missingData := Item{Category: "routing", Target: "OPS", Status: "warning", Message: "routed prefix has no Clockify project mapping"}
+	orphan := Item{Category: "routing", Target: "OTHER", Status: "warning", Message: "Clockify project mapping is not referenced by Jira routing"}
+	for _, tc := range []struct {
+		name     string
+		clockify *config.ClockifyConfig
+		want     []Item
+	}{
+		{name: "not configured", want: []Item{rules}},
+		{name: "configured without mappings", clockify: &config.ClockifyConfig{}, want: []Item{rules, missingCloud, missingData}},
+		{
+			name: "configured with missing and orphaned mappings",
+			clockify: &config.ClockifyConfig{ProjectMapping: &config.ClockifyProjectConfig{
+				IssuePrefixes: map[string]string{"APP": "Engineering", "OTHER": "Other"},
+			}},
+			want: []Item{rules, missingData, orphan},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.EffectiveConfig{Location: time.UTC, File: config.FileConfig{
+				Clockify: tc.clockify,
+				JiraCloud: &config.JiraCloudConfig{Instances: map[string]config.JiraCloudInstance{
+					"cloud": {Routing: &config.JiraInstanceRoutes{Profiles: map[string]config.JiraRouteProfile{
+						"default": {IssuePrefixes: []string{"APP"}},
+					}}},
+				}},
+				JiraData: &config.JiraDataCenterConfig{Instances: map[string]config.JiraDataCenterInstance{
+					"data": {Routing: &config.JiraInstanceRoutes{Profiles: map[string]config.JiraRouteProfile{
+						"default": {IssuePrefixes: []string{"OPS"}},
+					}}},
+				}},
+			}}
+			service := NewServiceWith(Dependencies{
+				ValidateConfig: func() (config.EffectiveConfig, []config.ValidationIssue, error) {
+					return cfg, nil, nil
+				},
+				CheckStorage:      func(string, string) error { return nil },
+				CheckConnectivity: func(context.Context, config.EffectiveConfig) []Item { return nil },
+			})
+			report, err := service.Check(context.Background())
+			if err != nil {
+				t.Fatalf("Check failed: %v", err)
+			}
+			var routing []Item
+			for _, item := range report.Items {
+				if item.Category == "routing" {
+					routing = append(routing, item)
+				}
+			}
+			if !slices.Equal(routing, tc.want) {
+				t.Fatalf("routing diagnostics = %#v, want %#v", routing, tc.want)
+			}
+		})
 	}
 }
 

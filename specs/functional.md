@@ -92,6 +92,7 @@ Placement rule:
 - [ ] FUNC-059: `workledger setup clockify` shall write `clockify.auth.api_key_env`.
 - [ ] FUNC-060: `workledger setup clockify` may write `clockify.project_mapping.issue_prefixes`.
 - [ ] FUNC-061: `workledger status` shall run local config validation, env-var checks, routing checks, and adapter connectivity checks by default.
+- [ ] FUNC-061a: Status diagnostics shall emit Clockify project-mapping warnings only when an active `clockify` configuration block exists.
 - [ ] FUNC-070a: Local `status` checks shall validate the effective `storage.sqlite_path`, including DB-file writability when present, parent-directory writability, and whether SQLite sidecar files can be created.
 - [ ] FUNC-070b: Bare `workledger status` shall include the local storage writability check.
 

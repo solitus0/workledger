@@ -139,12 +139,14 @@ func (s *Service) Check(ctx context.Context) (Report, error) {
 			message = fmt.Sprintf("%d routing rules configured", len(rules))
 		}
 		items = append(items, Item{Category: "routing", Target: "rules", Status: "ok", Message: message})
-		audit := config.AuditClockifyMappings(effective)
-		for _, prefix := range audit.MissingPrefixes {
-			items = append(items, Item{Category: "routing", Target: prefix, Status: "warning", Message: "routed prefix has no Clockify project mapping"})
-		}
-		for _, prefix := range audit.OrphanedPrefixes {
-			items = append(items, Item{Category: "routing", Target: prefix, Status: "warning", Message: "Clockify project mapping is not referenced by Jira routing"})
+		if effective.File.Clockify != nil {
+			audit := config.AuditClockifyMappings(effective)
+			for _, prefix := range audit.MissingPrefixes {
+				items = append(items, Item{Category: "routing", Target: prefix, Status: "warning", Message: "routed prefix has no Clockify project mapping"})
+			}
+			for _, prefix := range audit.OrphanedPrefixes {
+				items = append(items, Item{Category: "routing", Target: prefix, Status: "warning", Message: "Clockify project mapping is not referenced by Jira routing"})
+			}
 		}
 	}
 
