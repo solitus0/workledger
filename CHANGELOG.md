@@ -7,6 +7,29 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+- `worklogs list --unassigned` lists keyless worklogs across all dates, oldest first, with optional date narrowing. It cannot be combined with issue, issue-prefix, or epic filters.
+- `worklogs assign <id>... --issue <KEY> [--dry]` assigns an explicitly selected unassigned batch atomically. Missing, already assigned, stale, or conflicting entries reject the whole batch; conflicts identify worklog IDs and time windows for manual resolution.
+- TUI Worklogs Unassigned view through `u`, with Space, `v`/`V`, and Ctrl+A selection in Day and Unassigned lists. Marks survive date, filter, view, refresh, and resize changes, with counts for hidden selections. `b` opens a count-only assignment dialog; Ctrl+K opens issue search and Ctrl+T cycles Key, Description, and Title before returning the chosen issue to the dialog for saving.
+- TUI Issues Find now switches between issue metadata and all-dates worklog-description search through Ctrl+T, retaining independent queries and highlighting matching worklogs in the preview.
+- TUI plan review now shows each scope's last saved execution state, local timestamp, and full result or error separately from its planned destination, updating as apply and retry progress.
+- Scrollable TUI reconcile, apply, and retry result details with actual counts, per-adapter outcomes, scope errors, warnings, and partial results. CLI execution output now exposes failed and uncertain scope errors; JSON includes scope results and selected-but-unattempted counts.
+
+### Changed
+- Issue keys are optional in manual and automatic worklog creation, batch input, and presets. Empty `issue_key` remains an empty string in JSON and displays as `Unassigned` in terminal output. `worklogs update <id> --issue ""` and an empty TUI Issue field clear assignment without changing other worklogs.
+- Key-only assignment and clearing preserve identity, timing, duration, and description, including worklogs shorter than a subsequently increased creation minimum. Unassigned work counts toward local totals, Clockify comparisons, daily quota, and occupied time; Jira comparisons retain their existing prefix scope.
+- Push skips unassigned worklogs before routing for every adapter and reports their count and duration while retaining remote-owned cleanup discovery. Clearing a key cannot undo a remote request already in flight. Pull keeps its existing saved-payload replacement within issue/date scopes; overlapping unassigned entries can coexist with imported keyed entries.
+- Saved push plans now capture exact source IDs and revisions, including empty and reporting scopes. Apply and mutation-capable retries reject changed groups before Clockify tag creation or delivery while allowing independent groups to continue. Uncertain outcomes may still be verified read-only and recorded as succeeded when the saved remote result already exists.
+- **Upgrade required:** Run `workledger init` to update existing issue-catalog storage guards while retaining worklogs and metadata. Saved push plans without source snapshots require fresh reconciliation before remote mutation.
+- TUI Issues now previews complete metadata and paged all-dates worklog history directly in the right inspector. Tab traverses the list and independently scrollable metadata and history regions; the separate issue-details overlay is removed.
+- Session worklog creation now resolves attribution from explicit selection, session evidence, branch, then a clear local title match, and saves unresolved work unassigned without requesting a key. Explicit unassigned requests are honored; work-evidence and explicit-duration gates remain. Readiness now requires both catalog search and `--unassigned` support, with incompatible executables stopping cleanly.
+
+### Fixed
+- Adapter preparation and scope failures no longer prevent independent Jira or Clockify groups from executing. Completed results survive cancellation or fatal failure, failed preparation remains retryable, and partial remote mutations retain uncertain outcomes.
+- Clockify requests now share workspace pacing and rate-limit cooldowns, honor `Retry-After`, use bounded cancellable retries and a 30-second timeout, and avoid replaying unconfirmed mutations after transport or server failures. Long throttling waits fail promptly with the actual error.
+- Clockify pagination now stops on empty or final pages, including short pages when `Last-Page` is absent, avoiding redundant requests.
+- `workledger status` no longer emits Clockify project-mapping warnings when Clockify is not configured.
+
 ## [0.1.11] - 2026-10-16
 
 ### Added
@@ -32,12 +55,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - TUI Issues list headings show only the matching issue count, keeping aggregate budgets in Epics and issue details.
 - **Breaking:** New worklog and preset writes now use whole-minute timing. Starts and durations round to the nearest minute before validation; automatic placement uses inward-rounded free slots and whole-minute fragments. Shift deltas round to minutes and reject zero results. Existing rows are not converted automatically, and saved plans with second-precision payloads must be reconciled again before apply or retry.
 - Pull reconcile now compares minute-normalized candidates while retaining observed remote timing in totals and trash; rounding-induced duplicates or overlaps block affected scopes.
-- The TUI now uses a compact navigation rail, shared title/date header, adjacent inspectors, and a single-row action bar without repeated destination shortcuts. Day browsing and placement forms share a chronological segmented timeline with stable interval widths, solid selected-worklog fill, explicit lunch and overtime states, and available-window summaries.
+- The TUI now uses a compact navigation rail, shared title/date header, adjacent inspectors, and a single-row action bar without repeated destination shortcuts. Day browsing and placement forms share a chronological segmented timeline with proportional interval widths, explicit lunch and overtime states, and available-window summaries. Selected intervals use a bracket or caret above the bar while retaining their booked or overtime fill.
 - Saved plan scope review now shows local and remote counts and durations at planning time, projected destination totals, and saved desired entries without remote requests; unavailable remote inspection is explicitly marked.
 - TUI Add and shell issue completion now include decorated and cached issues, rank used keys by their latest worklog creation time, and rank unused metadata keys afterward. An empty Add issue field offers the first catalog key for explicit acceptance.
 - Session worklog creation now requires evidence of work performed, generates descriptive entries from that evidence, and defaults unknown exact starts to `--fill --today`; unresolved issue selection may use one clear local title match after explicit duration is provided.
 
 ### Fixed
+- Timeline overtime now starts when cumulative logged time reaches the daily quota, including within a worklog, rather than at the configured workday end. Timelines retain 15-minute cells except for the selected-day preview in Week browsing, which uses hourly cells when over quota.
 - Applying retained second-precision presets now saves minute-normalized worklogs without changing the preset duration or failing its recency update; explicit initialization refreshes the duration guard.
 - Issue-picker title and description searches now match Unicode case variants while preserving literal substring matching and pagination.
 - Initial issue-catalog creation now uses earlier local archived-worklog creation dates without adding trash-only issues.
@@ -56,6 +80,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - `--scope local|remote` filtering for trash list and search commands.
 
 ### Changed
+- Onboarding guidance now requires creating, reviewing, and applying a pull plan from every intended remote source for the complete first-push date window before pushing, because push may delete remote-only worklogs.
 - Saved-plan item execution now uses delivery attempts as its only persisted source of truth; `workledger init` migrates legacy terminal results and removes the duplicate item lifecycle columns in a clean schema cutover.
 - The TUI Activity drawer now shows only meaningful worklog, trash, preset, and plan actions, while activity outcomes no longer appear in the action bar.
 - TUI Worklogs now opens a blank worklog directly with `a` and reserves uppercase `A` for adding from a preset.
@@ -114,7 +139,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Fixed
 - Missing or mismatched SQLite stores now fail with clear `sqlite_store_not_ready` or `sqlite_store_schema_mismatch` errors before feature SQL runs.
 
-## [0.1.6] - 2026-06-02
+## [0.1.6] - 2026-06-01
 
 ### Added
 - `workledger totals` now supports `--route-profile` for Jira Cloud and Jira Data Center totals, including reporting-profile totals scoped to configured reporting target issues.
@@ -129,27 +154,27 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 - Updating an existing worklog's issue key now creates a tombstone so the old remote entry is removed on next sync.
-
-### Fixed
-- Clockify adapter deletes tombstoned entries even when the entry's tags are missing.
-- Jira adapter allows create and replace plans when foreign worklogs already exist for the window.
-- Jira 404 responses during reconcile are now handled gracefully instead of hard-failing.
-- Reconcile output example shows the full `plan inspect` command example when no actionable items are found.
-
-## [0.1.4] - 2026-05-27
-
-### Added
-- `workledger worklogs` issue-prefix filtering for narrower list and apply operations.
 - Top-level `workledger tombstones` commands for viewing and managing tombstoned entries.
 
 ### Changed
 - `workledger plan show` now displays only ready items by default; pass `--all` to include non-ready entries.
-- Shared weekday window resolution across worklog date-window selectors to keep shortcut behavior consistent.
 
 ### Fixed
 - `--instance` flag now applies correctly in `workledger worklogs totals`.
 - Full config fingerprint is now used when a single-adapter plan is inserted to prevent stale matches.
 - Config error message for fingerprint mismatch is now user-friendly and actionable.
+- Clockify adapter deletes tombstoned entries even when the entry's tags are missing.
+- Jira adapter allows create and replace plans when foreign worklogs already exist for the window.
+- Jira 404 responses during reconcile are now handled gracefully instead of hard-failing.
+- Reconcile output example shows the full `plan inspect` command example when no actionable items are found.
+
+## [0.1.4] - 2026-05-26
+
+### Added
+- `workledger worklogs` issue-prefix filtering for narrower list and apply operations.
+
+### Changed
+- Shared weekday window resolution across worklog date-window selectors to keep shortcut behavior consistent.
 
 ## [0.1.3] - 2026-05-25
 
