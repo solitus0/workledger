@@ -27,7 +27,7 @@ func TestPlanLastExecutionUsesSavedAttemptAndLocalTime(t *testing.T) {
 				State: state, CreatedAt: time.Date(2026, 10, 21, 10, 15, 30, 0, time.UTC), Message: "Saved delivery result",
 			}}
 			view := stripANSI(m.renderPlanItemInspector(item, 32, 28))
-			for _, want := range []string{"Last execution", "State " + state, "2026-10-21 13:15:30 EEST", "Saved delivery result", "Planned destination"} {
+			for _, want := range []string{"Last execution", "State " + displayState(state), "2026-10-21 13:15:30 EEST", "Saved delivery result", "Planned destination"} {
 				if !strings.Contains(view, want) {
 					t.Fatalf("inspector missing %q:\n%s", want, view)
 				}
@@ -38,12 +38,12 @@ func TestPlanLastExecutionUsesSavedAttemptAndLocalTime(t *testing.T) {
 		})
 	}
 	item := reconcile.PlanItem{PlanStatus: "ready", ExecutionState: "not_attempted"}
-	if view := m.renderPlanItemInspector(item, 32, 28); !strings.Contains(view, "Not attempted") {
+	if view := m.renderPlanItemInspector(item, 32, 28); !strings.Contains(view, "Not applied") {
 		t.Fatalf("missing empty execution state:\n%s", view)
 	}
 	item.ExecutionState = "uncertain"
 	item.LatestAttempt = &reconcile.DeliveryAttempt{State: "pending", CreatedAt: deps.now(), Message: "push delivery started"}
-	if view := m.renderPlanItemInspector(item, 32, 28); !strings.Contains(view, "State uncertain") || !strings.Contains(view, "no confirmed outcome") {
+	if view := m.renderPlanItemInspector(item, 32, 28); !strings.Contains(view, "State Uncertain") || !strings.Contains(view, "no confirmed outcome") {
 		t.Fatalf("stale pending attempt did not explain uncertainty:\n%s", view)
 	}
 
@@ -70,7 +70,7 @@ func TestPlanRetryRefreshesExecutionAndPreservesScopeSelection(t *testing.T) {
 			m := newModel(t.Context(), deps, ws, nil)
 			m.activeTab, m.width, m.height = plansTab, 120, 36
 			m.plan = &reconcile.Plan{ID: "plan", Direction: "push", Items: []reconcile.PlanItem{untouched, selected}}
-			m.planItemSelected = 1
+			m.planItemSelected = 0
 			m.planOperation = &planOperationState{kind: "plan.retry-failed", planID: "plan"}
 			if view := stripANSI(m.renderPlansWorkspace(89, 30)); !strings.Contains(view, "Last execution") || !strings.Contains(view, "Retry in progress") || !strings.Contains(view, "Earlier failure") {
 				t.Fatalf("retry replaced the scope review:\n%s", view)

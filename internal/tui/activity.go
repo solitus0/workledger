@@ -216,7 +216,16 @@ func (m model) updateActivity(key string) (tea.Model, tea.Cmd) {
 		m.activitySelected = 0
 	case "r":
 		return m, m.startActivityLoad()
-	case "enter", " ":
+	case "enter", "f2":
+		if len(m.activities) > 0 {
+			entry := m.activities[clampIndex(m.activitySelected, len(m.activities))]
+			content := fmt.Sprintf("%s\nState %s\nStarted %s\nElapsed %s\n\n%s", strings.ReplaceAll(entry.Operation, ".", " "), displayState(string(entry.State)), entry.StartedAt.In(m.selectedDate.Location()).Format("2006-01-02 15:04:05 MST"), activityElapsed(entry), entry.Summary)
+			if entry.ErrorMessage != "" {
+				content += "\n\n" + entry.ErrorCode + "\n" + entry.ErrorMessage
+			}
+			m.openDetails("Activity details", content)
+		}
+	case " ":
 		m.focus = focusWorkspace
 	}
 	return m, nil

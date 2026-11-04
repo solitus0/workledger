@@ -69,7 +69,7 @@ func TestMouseSwitchesTabsAndPanelFocus(t *testing.T) {
 		t.Fatalf("plans click tab=%v railFocused=%v", m.activeTab, m.focus == focusRail)
 	}
 
-	next, _ = m.Update(mouseClick(1, railRows[4].y, tea.MouseLeft))
+	next, _ = m.Update(mouseClick(1, railRows[5].y, tea.MouseLeft))
 	m = next.(model)
 	if m.activeTab != trashTab || m.focus == focusRail {
 		t.Fatalf("trash click tab=%v railFocused=%v", m.activeTab, m.focus == focusRail)
@@ -213,7 +213,7 @@ func TestAutomaticPlacementShortcutsToggleOptionsAndRecalculate(t *testing.T) {
 		t.Fatalf("enabled footer actions did not follow state: %s", footer)
 	}
 	compactFooter := m.renderFooter(minimumWidth)
-	if lipgloss.Width(compactFooter) != minimumWidth || !strings.Contains(compactFooter, "Ctrl+P Manual") || !strings.Contains(compactFooter, "Ctrl+O Late off") || !strings.Contains(compactFooter, "Ctrl+L Keep lunch") || !strings.Contains(compactFooter, "? Actions") {
+	if lipgloss.Width(compactFooter) != minimumWidth || !strings.Contains(compactFooter, "Ctrl+P Manual") || !strings.Contains(compactFooter, "Ctrl+O Late off") || !strings.Contains(compactFooter, "Ctrl+L Lunch off") || !strings.Contains(compactFooter, "? Actions") {
 		t.Fatalf("compact footer does not preserve state-dependent actions: %s", compactFooter)
 	}
 
@@ -301,7 +301,7 @@ func TestOnlyNavigationRailAndActionBarDefineNavigationShortcuts(t *testing.T) {
 
 	for name, surface := range surfaces {
 		for _, shortcut := range []string{
-			"1 Status", "2 Worklogs", "3 Plans", "4 Presets", "5 Trash", "6 Issues",
+			"1 Status", "2 Worklogs", "3 Plans", "4 Presets", "5 Issues", "6 Trash",
 			"Press a", "Press n", "press Enter", "q quit", "y / Enter", "n / Esc", "Esc Cancel",
 			"Tab/Shift+Tab", "j/k row", "a add", "R restore",
 		} {
@@ -312,7 +312,7 @@ func TestOnlyNavigationRailAndActionBarDefineNavigationShortcuts(t *testing.T) {
 	}
 
 	rail := m.renderRail(33)
-	for _, shortcut := range []string{"1 Status", "2 Worklogs", "3 Plans", "4 Presets", "5 Trash", "6 Issues"} {
+	for _, shortcut := range []string{"1 Status", "2 Worklogs", "3 Plans", "4 Presets", "5 Issues", "6 Trash"} {
 		if strings.Count(rail, shortcut) != 1 {
 			t.Fatalf("destination rail should define navigation shortcut %q once:\n%s", shortcut, rail)
 		}
@@ -401,7 +401,7 @@ func TestAutomaticAddFormFitsMinimumViewport(t *testing.T) {
 	if width, height := lipgloss.Width(rendered), lipgloss.Height(rendered); width != minimumWidth || height != minimumHeight {
 		t.Fatalf("automatic add render = %dx%d, want %dx%d", width, height, minimumWidth, minimumHeight)
 	}
-	for _, expected := range []string{"Worklog details", "› Issue", "│ Duration", "│ Description", "─ Placement", "[Fill]", "─ Calculated", "Ctrl+P Manual", "Ctrl+O Late on", "Ctrl+L Use lunch", "09:30–11:00", "Ctrl+S Create", "? Actions"} {
+	for _, expected := range []string{"Worklog details", "› Issue", "│ Duration", "│ Description", "─ Placement", "[Fill]", "─ Calculated", "Ctrl+P Manual", "Ctrl+O Late on", "Ctrl+L Lunch on", "09:30–11:00", "Ctrl+S Create", "? Actions"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("automatic add render missing %q", expected)
 		}
@@ -1426,6 +1426,9 @@ func TestPlacementControlsRemainVisibleWithActivityRetainedAtMinimumSize(t *test
 		}
 		assertRedesignBounds(t, m, "placement with Activity")
 		next, _ := m.Update(specialKey(tea.KeyEsc))
+		if next.(model).overlay == discardDraftOverlay {
+			next, _ = next.(model).Update(specialKey(tea.KeyEnter))
+		}
 		if !next.(model).activityVisible() {
 			t.Fatal("cancel did not restore the retained Activity drawer")
 		}
@@ -1528,11 +1531,11 @@ func TestWeekViewRendersOverviewAndSelectedDayAtMinimumViewport(t *testing.T) {
 		t.Fatalf("weekly render = %dx%d, want %dx%d", width, height, minimumWidth, minimumHeight)
 	}
 	for _, expected := range []string{
-		"Week · 2026-05-18–2026-05-24 · 32h 30m logged",
+		"Week · 2026-05-18–2026-05-24 · 32h30m logged",
 		"Day  [Week]",
 		"DAY DATE",
 		"> Thu",
-		"-6h 00m",
+		"-6h",
 		"Thursday, 2026-05-21",
 		"07:00",
 		"d/w/m View",
@@ -1612,8 +1615,8 @@ func TestViewUsesSemanticColorWhenEnabled(t *testing.T) {
 	m.openAddForm()
 	form := m.renderForm(25) + m.renderPlacementInspector(50, 25)
 	for _, expected := range []string{
-		m.paintBold(fmt.Sprintf("%-12s", "› Issue"), m.colors.Focus),
-		m.paint(fmt.Sprintf("%-12s", "│ Duration"), m.colors.Secondary),
+		m.paintBold(fmt.Sprintf("%-14s", "› Issue"), m.colors.Focus),
+		m.paint(fmt.Sprintf("%-14s", "│ Duration"), m.colors.Secondary),
 		m.renderFormSection("Calculated", m.colors.Information),
 		m.secondary("After saving"),
 	} {
@@ -1729,7 +1732,7 @@ func TestWorklogDetailRendersLifecycleTimestampsInLocalTime(t *testing.T) {
 
 	detail := m.renderWorklogDetail()
 	for _, expected := range []string{
-		"Local issue total 5h 30m",
+		"Local issue total 5h30m",
 		"Created           2026-05-20 16:30",
 		"Updated           2026-05-21 09:45",
 	} {

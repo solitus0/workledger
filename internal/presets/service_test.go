@@ -193,3 +193,25 @@ func TestPresetApplyDraftRejectsStaleRevisionBeforeCreatingWorklog(t *testing.T)
 }
 
 func ptr(value string) *string { return &value }
+
+func TestLookupIDReloadsRenamedPreset(t *testing.T) {
+	store, service, cfg := newTestService(t)
+	defer store.Close()
+	ctx := t.Context()
+	created, err := service.Create(ctx, cfg, validInput("daily"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "renamed"
+	updated, err := service.Update(ctx, cfg, created.Name, PatchInput{Name: &name, ExpectedRevision: created.Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := service.LookupID(ctx, created.ID)
+	if err != nil || loaded.Name != updated.Name || loaded.Revision != updated.Revision {
+		t.Fatalf("reload by identity: %#v, %v", loaded, err)
+	}
+	if _, err := service.LookupID(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing identity: %v", err)
+	}
+}

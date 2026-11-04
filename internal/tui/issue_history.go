@@ -103,6 +103,8 @@ func (m model) applyIssueHistoryResult(msg issueHistoryResultMsg) (tea.Model, te
 		state.seekEnd = false
 		state.seekMatch = false
 		state.advance = 0
+		m.resizeIssueHistory()
+		state.history.GotoTop()
 		return m, nil
 	}
 	state.items = append(state.items, msg.items...)
@@ -155,6 +157,10 @@ func (m *model) resizeIssueHistory() int {
 	state.history.SetWidth(width)
 	state.history.SetHeight(historyHeight)
 	var lines []string
+	if state.err != "" {
+		lines = append(lines, wrapIssueDescription("History unavailable: "+state.err, width)...)
+		lines = append(lines, "Refresh to retry. Full details are available.", "")
+	}
 	firstMatch := -1
 	for _, item := range state.items {
 		matches := state.query != "" && strings.Contains(strings.ToLower(item.Description), state.query)
@@ -182,6 +188,14 @@ func (m *model) resizeIssueHistory() int {
 func (m model) updateIssueHistory(key string) (tea.Model, tea.Cmd) {
 	state := m.issueHistory
 	switch key {
+	case "f2":
+		content := m.renderIssueMetadata()
+		if state.err != "" {
+			content += "\n\nHistory unavailable\n" + state.err + "\n\nRefresh issue history to retry."
+		} else {
+			content += "\n\n" + strings.Join(m.issueHistoryLines(), "\n")
+		}
+		m.openDetails("Issue details", content)
 	case "esc", "left":
 		m.focus = focusWorkspace
 	case "/":
@@ -296,7 +310,7 @@ func (m model) renderIssueInspector(width, height int) string {
 	if state.loading {
 		status = "Loading worklogs…"
 	} else if state.err != "" {
-		status = "Worklogs unavailable: " + state.err
+		status = "History unavailable · full details available"
 	} else if state.more {
 		status += " loaded · more available"
 	} else if !state.history.AtBottom() {
@@ -308,4 +322,16 @@ func (m model) renderIssueInspector(width, height int) string {
 		lines = append(lines, m.muted(truncate(status, width)))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m model) issueHistoryLines() []string {
+	state := m.issueHistory
+	var lines []string
+	for _, item := range state.items {
+		lines = append(lines, item.StartedAtUTC.In(m.selectedDate.Location()).Format("2006-01-02 15:04 MST")+" · "+formatDuration(item.DurationSeconds), item.Description, "")
+	}
+	if state.more {
+		lines = append(lines, "More history is available in the issue inspector.")
+	}
+	return lines
 }

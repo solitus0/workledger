@@ -34,35 +34,54 @@ func (m model) renderWorklogWorkspace(width, height int) string {
 	selector := m.renderWorklogViewSelector()
 	balance := m.renderDayQuota()
 	if lipgloss.Width(balance)+lipgloss.Width(selector)+2 > contentWidth {
-		balance = fmt.Sprintf("%s / %s · %s left", formatDuration(m.dayBookedSeconds()), formatDuration(m.dailyQuotaSeconds()), formatDelta(m.dailyQuotaSeconds()-m.dayBookedSeconds()))
+		balance = m.renderStyledDayBalance()
 	}
 	heading := balance + strings.Repeat(" ", max(2, contentWidth-lipgloss.Width(balance)-lipgloss.Width(selector))) + selector
 	lines := []string{heading, ""}
 	if label := m.worklogSelectionLabel(); label != "" {
 		lines = append(lines, m.paint(label, m.colors.Focus))
 	}
-	lines = append(lines, strings.Split(m.renderDayTimelineWidth(nil, m.selectedWorklogID(), contentWidth), "\n")...)
-	lines = append(lines, "", m.renderTimelineLegend(nil, m.selectedWorklogID()), m.rule(contentWidth))
+	timeline := m.renderDayTimelineWidth(nil, m.selectedWorklogID(), contentWidth)
+	if height < 24 {
+		timeline = m.renderCompactTimelineWidth(nil, m.selectedWorklogID(), contentWidth)
+	}
+	lines = append(lines, strings.Split(timeline, "\n")...)
+	if height >= 24 {
+		lines = append(lines, "", m.renderTimelineLegend(nil, m.selectedWorklogID()))
+	}
+	lines = append(lines, m.rule(contentWidth))
 	chrome := m.pane(strings.Join(lines, "\n"), width, len(lines))
 	remaining := height - len(lines)
 	listWidth, detailWidth := inspectorWidths(width)
-	availableHeight := min(8, max(4, remaining/2))
-	rowHeight := max(2, remaining-availableHeight)
-	list := m.muted(m.worklogTableHeader(listWidth-2)) + "\n" + strings.Join(m.worklogRows(listWidth-2, rowHeight-1), "\n")
-	if m.worklogFilter != nil {
-		list = m.paint("Find ", m.colors.Focus) + m.worklogFilter.input.View() + "\n" + m.muted(m.worklogTableHeader(listWidth-2)) + "\n" + strings.Join(m.worklogRows(listWidth-2, rowHeight-2), "\n")
+	availableHeight := min(8, max(4, remaining/3))
+	indices := m.visibleWorklogIndices()
+	title := fmt.Sprintf("Worklogs · %d entries", len(indices))
+	if len(indices) == 1 {
+		title = "Worklogs · 1 entry"
 	}
-	if len(m.visibleWorklogIndices()) == 0 {
-		message := "No worklogs yet."
+	if m.worklogFilter != nil {
+		title = fmt.Sprintf("Worklogs · %d of %d entries", len(indices), len(m.worklogs))
+	}
+	listLines := []string{}
+	if remaining >= 9 {
+		listLines = append(listLines, m.paintBold(title, m.colors.Secondary))
+	}
+	if m.worklogFilter != nil {
+		listLines = append(listLines, m.paint("Find ", m.colors.Focus)+m.worklogFilter.input.View())
+	}
+	listLines = append(listLines, m.muted(m.worklogTableHeader(listWidth-2)))
+	listLines = append(listLines, m.worklogRows(listWidth-2, max(1, remaining-availableHeight-len(listLines)))...)
+	if len(indices) == 0 {
+		message := "No worklogs on this day. Add a worklog to start."
 		if m.worklogFilter != nil {
-			message = "No matching worklogs."
+			message = "No matching worklogs. Clear or change the filter."
 		}
 		if m.worklogLoading {
 			message = "Loading…"
 		}
-		list += "\n" + message
+		listLines = append(listLines, message)
 	}
-	list = lipgloss.NewStyle().Height(rowHeight).MaxHeight(rowHeight).Render(list) + "\n" + m.renderAvailableWindows(listWidth-2, availableHeight)
+	list := strings.Join(listLines, "\n") + "\n" + m.renderAvailableWindows(listWidth-2, min(8, remaining-len(listLines)))
 	detail := m.renderWorklogInspector(detailWidth-2, remaining)
 	body := m.inspector(list, detail, width, remaining)
 	return lipgloss.JoinVertical(lipgloss.Left, chrome, body)
@@ -82,40 +101,55 @@ func (m model) renderDayQuota() string {
 }
 
 func (m model) worklogTableHeader(width int) string {
-	return truncate(fmt.Sprintf("      %-3s %-5s %-8s %-12s %s", "#", "Start", "Duration", "Issue", "Summary"), width)
+	return truncate(fmt.Sprintf("      %3s %-5s %8s  %-12s  %s", "#", "Start", "Duration", "Issue", "Summary"), width)
 }
 
 func (m model) renderAvailableWindows(width, height int) string {
-	lines := []string{m.rule(width), m.paintBold("Available windows", m.colors.Secondary)}
+	lines := []string{m.rule(width)}
 	slots := m.dayContext.FreeSlots
 	if m.dayContext.Date == "" {
-		return strings.Join(append(lines, m.muted("Availability loading…")), "\n")
+		return strings.Join(append(lines, m.paintBold("Available windows", m.colors.Secondary), m.muted("Availability loading…")), "\n")
 	}
 	total := 0
 	for _, slot := range slots {
 		total += slot.DurationSeconds
 	}
+	summary := "Available windows · " + formatEstimateDuration(int64(total)) + " free"
+	if len(slots) == 0 {
+		summary = "0m free · No available windows"
+	}
+	lines = append(lines, m.paintBold(truncate(summary, width), m.colors.Secondary))
 	lunch := m.contextSettings.Lunch
 	lunchRows := 0
-	if lunch != nil && height >= 5 {
+	if lunch != nil && height >= 4 {
 		lunchRows = 1
 	}
-	count := min(len(slots), max(0, height-3-lunchRows))
+	count := min(len(slots), max(0, height-len(lines)-lunchRows))
+	combinedLunch := false
+	if count < len(slots) {
+		if lunchRows > 0 {
+			footer := fmt.Sprintf("%d more windows · Lunch %s–%s excluded", len(slots)-count, lunch.Start, lunch.End)
+			combinedLunch = lipgloss.Width(footer) <= width
+		}
+		if !combinedLunch {
+			count = max(0, count-1)
+		}
+	}
 	for _, slot := range slots[:count] {
 		lines = append(lines, fmt.Sprintf("%s–%s  %s", slot.Start.In(m.workspace.cfg.Location).Format("15:04"), slot.End.In(m.workspace.cfg.Location).Format("15:04"), formatEstimateDuration(int64(slot.DurationSeconds))))
 	}
-	summary := formatEstimateDuration(int64(total)) + " available"
 	if count < len(slots) {
 		label := "windows"
 		if len(slots)-count == 1 {
 			label = "window"
 		}
-		summary += fmt.Sprintf(" · %d more %s", len(slots)-count, label)
+		footer := fmt.Sprintf("%d more %s", len(slots)-count, label)
+		if combinedLunch {
+			footer += " · Lunch " + lunch.Start + "–" + lunch.End + " excluded"
+			lunchRows = 0
+		}
+		lines = append(lines, m.muted(footer))
 	}
-	if len(slots) == 0 {
-		summary = "No available windows."
-	}
-	lines = append(lines, m.muted(truncate(summary, width)))
 	if lunchRows > 0 {
 		lines = append(lines, m.muted("Lunch "+lunch.Start+"–"+lunch.End+" excluded"))
 	}
@@ -127,65 +161,70 @@ func (m model) renderWorklogInspector(width, height int) string {
 	if item == nil {
 		return m.paintBold("Worklog details", m.colors.Secondary) + "\n\nNo worklog selected."
 	}
-	metadata := m.issueMetadata[item.IssueKey]
-	lines := []string{m.paintBold("Worklog details", m.colors.Secondary), "Issue " + worklogs.DisplayIssueKey(item.IssueKey)}
-	if metadata.Title != "" {
-		lines = append(lines, m.secondary(truncate(metadata.Title, width)))
+	start := item.StartedAtUTC.In(m.workspace.cfg.Location)
+	end := start.Add(time.Duration(item.DurationSeconds) * time.Second)
+	clock := start.Format("15:04") + "–" + end.Format("15:04") + " · " + formatDuration(item.DurationSeconds)
+	lines := []string{m.paintBold(worklogs.DisplayIssueKey(item.IssueKey), m.colors.Secondary)}
+	effort := m.worklogInspectorEffort(item.IssueKey, width)
+	spacious := height >= 14
+	if spacious {
+		if title := m.issueMetadata[item.IssueKey].Title; title != "" {
+			titleLines := wrapIssueDescription(title, width)
+			lines = append(lines, titleLines[:min(2, len(titleLines))]...)
+		}
+		lines = append(lines, "", m.paintBold("Selected worklog", m.colors.Secondary))
 	}
-	if item.IssueKey != "" {
-		lines = append(lines, "Local issue total", m.renderIssueTotal(item.IssueKey))
-	} else {
-		lines = append(lines, "Local only · awaiting issue key")
+	lines = append(lines, clock)
+	if spacious {
+		lines = append(lines, "", m.paintBold("Description", m.colors.Secondary))
 	}
-	if metadata.MaxEstimateSeconds != nil && *metadata.MaxEstimateSeconds > 0 {
-		usage := "Unavailable"
-		if m.issueTotalLoading {
-			usage = "Loading…"
-		} else if m.issueTotalIssue == item.IssueKey && m.issueTotalErr == "" {
-			usage = fmt.Sprintf("%.1f%%", 100*float64(m.issueTotal)/float64(*metadata.MaxEstimateSeconds))
-		}
-		lines = append(lines, "Estimate used: "+usage)
-		if usage != "Unavailable" && usage != "Loading…" {
-			lines = append(lines, formatEstimateDuration(int64(m.issueTotal))+" / "+formatEstimateDuration(*metadata.MaxEstimateSeconds))
-			if int64(m.issueTotal) > *metadata.MaxEstimateSeconds {
-				lines = append(lines, m.paint(formatEstimateDuration(int64(m.issueTotal)-*metadata.MaxEstimateSeconds)+" over estimate", m.colors.Warning))
-			}
-		}
+	gap := 0
+	if spacious {
+		gap = 1
 	}
-	if len(lines) > height {
-		// Keep estimate warnings visible when Activity reduces the height.
-		index := slices.Index(lines, "Local issue total")
-		if index < 0 {
-			return strings.Join(lines[:height], "\n")
-		}
-		lines[index] += " " + lines[index+1]
-		if lipgloss.Width(lines[index]) > width {
-			lines[index] = "Total " + lines[index+1]
-		}
-		lines = slices.Delete(lines, index+1, index+2)
-		if len(lines) > height {
-			// Keep issue identity and estimate warnings ahead of the section
-			// heading when Activity reduces the inspector height.
-			lines = lines[1:]
+	budget := max(1, height-len(lines)-len(effort)-gap)
+	description := wrapIssueDescription(item.Description, width)
+	visible := min(len(description), budget)
+	if visible > 0 {
+		lines = append(lines, description[:visible]...)
+		if visible < len(description) {
+			lines[len(lines)-1] = truncate(lines[len(lines)-1]+"…", width)
 		}
 	}
-	local := item.StartedAtUTC.In(m.workspace.cfg.Location)
-	end := local.Add(time.Duration(item.DurationSeconds) * time.Second)
-	if height >= len(lines)+4 {
-		lines = append(lines, "", m.rule(width), "Time "+local.Format("15:04")+"–"+end.Format("15:04"), "Duration "+formatEstimateDuration(int64(item.DurationSeconds)))
+	if spacious {
+		lines = append(lines, "")
 	}
-	budget := height - len(lines) - 2
-	if budget > 0 {
-		description := wrapIssueDescription(item.Description, width)
-		lines = append(lines, "", m.secondary("Description"))
-		lines = append(lines, description[:min(len(description), budget)]...)
+	return strings.Join(append(lines, effort...), "\n")
+}
+
+// Keep one effort summary after the selected worklog, including in compact views.
+func (m model) worklogInspectorEffort(issueKey string, width int) []string {
+	if issueKey == "" {
+		return wrapIssueDescription(m.secondary("Local only · awaiting issue key"), width)
 	}
-	return strings.Join(lines, "\n")
+	lines := []string{m.paintBold("Issue effort · all dates", m.colors.Secondary)}
+	metadata := m.issueMetadata[issueKey]
+	summary := m.renderIssueTotal(issueKey) + " local"
+	if maximum := metadata.MaxEstimateSeconds; maximum != nil && *maximum > 0 {
+		summary += " / " + formatEstimateDuration(*maximum) + " estimate"
+		if m.issueTotalIssue == issueKey && !m.issueTotalLoading && m.issueTotalErr == "" {
+			summary += fmt.Sprintf(" · %.1f%%", 100*float64(m.issueTotal)/float64(*maximum))
+		}
+	}
+	lines = append(lines, wrapIssueDescription(summary, width)...)
+	if maximum := metadata.MaxEstimateSeconds; maximum != nil && *maximum > 0 && m.issueTotalIssue == issueKey && !m.issueTotalLoading && m.issueTotalErr == "" && int64(m.issueTotal) > *maximum {
+		lines = append(lines, m.paint(formatEstimateDuration(int64(m.issueTotal)-*maximum)+" over estimate", m.colors.Warning))
+	}
+	return lines
 }
 
 func (m model) renderWorklogFormWorkspace(width, height int) string {
 	contentWidth := width - 2
-	lines := []string{m.renderDayQuota(), "", m.renderDayTimelineWidth(m.form.previewRecords, "", contentWidth), "", m.renderTimelineLegend(m.form.previewRecords, ""), m.rule(contentWidth)}
+	timeline := m.renderDayTimelineWidth(m.form.previewRecords, "", contentWidth)
+	if height < 30 {
+		timeline = m.renderCompactTimelineWidth(m.form.previewRecords, "", contentWidth)
+	}
+	lines := []string{m.renderDayQuota(), "", timeline, "", m.renderTimelineLegend(m.form.previewRecords, ""), m.rule(contentWidth)}
 	chromeHeight := lipgloss.Height(strings.Join(lines, "\n"))
 	_, detailWidth := inspectorWidths(width)
 	return lipgloss.JoinVertical(lipgloss.Left, m.pane(strings.Join(lines, "\n"), width, chromeHeight),
@@ -195,7 +234,8 @@ func (m model) renderWorklogFormWorkspace(width, height int) string {
 func (m model) renderPlacementInspector(width, height int) string {
 	lines := []string{m.renderFormSection("Calculated", m.colors.Information), ""}
 	if context := m.renderIssueContext(); context != "" {
-		lines = append(lines, wrapIssueDescription(context, width)...)
+		contextLines := wrapIssueDescription(context, width)
+		lines = append(lines, contextLines[:min(2, len(contextLines))]...)
 		lines = append(lines, "")
 	}
 	if m.form.editing {
@@ -205,6 +245,8 @@ func (m model) renderPlacementInspector(width, height int) string {
 	switch {
 	case m.form.previewLoading:
 		lines = append(lines, m.paint("Calculating…", m.colors.Progress))
+	case m.formError != "":
+		lines = append(lines, m.muted("Correct the highlighted field before saving."))
 	case m.form.previewError != "" && len(m.form.previewRecords) == 0:
 		color := m.colors.Destructive
 		if m.form.previewOvertimeAvailable {
@@ -215,9 +257,9 @@ func (m model) renderPlacementInspector(width, height int) string {
 		lines = append(lines, wrapIssueDescription(m.renderPlacementPreview(), width)...)
 	default:
 		lines = append(lines, m.paint(pluralizeWorklogs(len(m.form.previewRecords))+" · "+m.form.placement.String(), m.colors.Proposed))
-		for _, record := range m.form.previewRecords {
-			if len(lines) >= height-5 {
-				lines = append(lines, m.muted("Additional slots on timeline"))
+		for index, record := range m.form.previewRecords {
+			if index > 0 && len(lines) >= height-6 {
+				lines = append(lines, m.muted("More windows in preview details"))
 				break
 			}
 			start := record.StartedAtUTC.In(m.workspace.cfg.Location)
@@ -278,19 +320,7 @@ func (m model) renderWeekWorkspace(width, height int) string {
 }
 
 func (m model) renderWorklogViewSelector() string {
-	labels := []string{"Day", "Week", "Month", "Unassigned"}
-	for index, label := range labels {
-		if worklogView(index) == m.worklogView {
-			if m.deps.noColor || !m.colorReady {
-				labels[index] = "[" + label + "]"
-			} else {
-				labels[index] = lipgloss.NewStyle().Foreground(lipgloss.Color(m.colors.Focus)).Reverse(true).Bold(true).Render(" " + label + " ")
-			}
-		} else {
-			labels[index] = m.secondary(label)
-		}
-	}
-	return strings.Join(labels, "  ")
+	return m.selector([]string{"Day", "Week", "Month", "Unassigned"}, int(m.worklogView))
 }
 
 func (m model) renderWeekDayDetail(width, height int) string {
@@ -352,7 +382,7 @@ func (m model) worklogRows(width, height int) []string {
 			mark = "[x] "
 		}
 		prefix += mark
-		row := fmt.Sprintf("%s%-3d %-5s %-8s %-12s %s", prefix, index+1, local.Format("15:04"), formatEstimateDuration(int64(item.DurationSeconds)), truncate(worklogs.DisplayIssueKey(item.IssueKey), 12), item.Description)
+		row := fmt.Sprintf("%s%3d %-5s %8s  %-12s  %s", prefix, index+1, local.Format("15:04"), formatEstimateDuration(int64(item.DurationSeconds)), truncate(worklogs.DisplayIssueKey(item.IssueKey), 12), item.Description)
 		rows = append(rows, m.selectedRow(row, width, index == m.worklogSelected))
 	}
 	return rows
@@ -415,9 +445,7 @@ func (m model) renderForm(height int) string {
 	if m.form.stale {
 		warnings = append(warnings, m.paint("Changed externally — reload before saving.", m.colors.Warning))
 	}
-	if m.formError != "" {
-		warnings = append(warnings, wrapIssueDescription(m.paint(m.formError, m.colors.Destructive), m.formContentWidth())...)
-	}
+
 	for _, field := range m.formFields() {
 		index, ok := inputIndexForField(field)
 		if !ok {
@@ -427,7 +455,10 @@ func (m model) renderForm(height int) string {
 		if field == startField && !m.form.editing {
 			label = "Start time"
 		}
-		details = append(details, m.renderFormRow(label, m.form.inputs[index].View(), field == m.form.focus))
+		details = append(details, m.renderFormRow(label, m.inputView(m.form.inputs[index], field == m.form.focus), field == m.form.focus))
+		if m.formError != "" && field == m.form.errorField {
+			details = append(details, strings.Split(m.fieldError(m.formError, m.formContentWidth()), "\n")...)
+		}
 	}
 	essential := len(details) + len(warnings)
 	options := 0
@@ -474,7 +505,7 @@ func (m model) renderFormRow(label, value string, focused bool) string {
 	if focused {
 		marker = "›"
 	}
-	label = fmt.Sprintf("%-12s", marker+" "+label)
+	label = fmt.Sprintf("%-14s", marker+" "+label)
 	if focused {
 		label = m.paintBold(label, m.colors.Focus)
 	} else {
@@ -492,7 +523,7 @@ func (m model) renderFormSectionRow(label, value string, focused bool, color str
 	if focused {
 		marker = "›"
 	}
-	label = fmt.Sprintf("%-12s", marker+" "+label)
+	label = fmt.Sprintf("%-14s", marker+" "+label)
 	return m.paint(label, color) + " " + value
 }
 
@@ -508,15 +539,7 @@ func (p placementMode) Description() string {
 }
 
 func (m model) renderPlacementSelector() string {
-	parts := make([]string, 0, 3)
-	for _, placement := range []placementMode{manualPlacement, fitPlacement, fillPlacement} {
-		label := placement.String()
-		if placement == m.form.placement {
-			label = m.paint("["+label+"]", m.colors.Focus)
-		}
-		parts = append(parts, label)
-	}
-	return strings.Join(parts, "  ")
+	return m.selector([]string{"Manual", "Fit", "Fill"}, int(m.form.placement))
 }
 
 func (m model) renderPlacementPreview() string {

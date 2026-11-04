@@ -1,48 +1,39 @@
-# Repository Guidelines
+# Repository guidelines
 
-## Project Structure & Module Organization
+## Start with the contract
 
-This repository is currently specs-first. The product contract lives under `specs/`. Start at `specs/functional.md` and `specs/non-functional.md`. There is no committed `cmd/`, `internal/`, or `tests/` tree yet; when implementation lands, keep the Go CLI small and map package names to the documented command surface such as `workledger plan` and `workledger worklogs`.
+Read `specs/functional.md` and `specs/non-functional.md` before changing behavior. Keep implementation, help, examples, and canonical specs aligned in the same task. Do not preserve trivial spec detail that protects no meaningful contract.
 
-## Build, Test, and Development Commands
+Workledger is maintained by a single author. The README is the product entry point. Task-focused user guides live under `docs/`; begin at `docs/README.md`. Build, test, package ownership, and maintenance are documented in `docs/development.md`.
 
-There is no build pipeline checked in yet. For now, contributors mainly edit and review Markdown:
+## Code organization and checks
 
-- `rg -n "workledger|worklog|route" specs` finds affected specs quickly.
-- `sed -n '1,120p' specs/functional.md` reads a targeted section without loading full files.
-- `git diff -- specs AGENTS.md` reviews contract changes before commit.
+`cmd/workledger` owns startup and wiring. `internal/cli` owns Cobra parsing, output, and exit mapping; `internal/tui` owns the terminal frontend. Keep business rules in shared services and SQLite ownership in `internal/store/sqlite`. The TUI must not query SQLite or parse CLI output directly.
 
-When Go code is added, prefer standard Go commands over custom wrappers: `go test ./...` for tests and `go run ./cmd/workledger version` for a quick CLI smoke test.
+Use standard Go tools and follow the complete verification sequence owned by `docs/development.md#checks`.
 
-## Coding Style & Naming Conventions
+Follow `gofmt`, use small packages and narrow consumer-owned interfaces, and keep tests adjacent to their packages. Prefer table-driven tests when the cases protect observable behavior. Do not update dependencies for documentation-only changes.
 
-Keep prose deterministic and specific. Reuse the canonical terms and identifiers from `specs/`; for example, write issue keys as `<PROJECTKEY>-<NUMBER>` and refer to configured targets by Jira instance name. Use short sections, flat bullet lists, and sentence case headings inside docs. For future Go code, follow `gofmt`, keep business logic outside Cobra command handlers, and prefer small packages over broad utility layers.
+## Documentation and media
 
-## Testing Guidelines
+Use canonical command names, issue keys in `<PROJECTKEY>-<NUMBER>` form, and configured Jira instance names. Write deterministic prose with short sections and clear examples. Give each fact one owner; link from the README to detailed guides.
 
-For documentation changes, verify internal links, command names, and consistency with the canonical contracts in `specs/`. Avoid introducing commands or exit codes that contradict `specs/functional.md` and `specs/non-functional.md`. For future Go tests, use table-driven tests and keep them adjacent to the package under test with `_test.go` suffixes.
+Keep published terminal captures faithful to production rendering. Use the fictional fixture and isolated capture flow documented in `docs/media.md`; never capture personal worklogs or point the showcase generator at operator storage. Preserve the finalized Ledger W geometry and its theme/size treatments.
 
-## Contract Discipline
+Verify local links, anchors, commands, and flags after documentation changes. Add screenshots for visible TUI changes when the published image no longer represents the interface.
 
-Never allow implementation logic and the canonical specification in `specs/` to drift.
-If behavior, flags, output, validation, or workflow semantics change, update the relevant spec in the same task.
-Do not add or preserve trivial, self-evident spec detail that does not protect a meaningful contract.
+## Skill alignment
 
-## Skill Alignment
+CLI work around local worklog creation from the current session must use `.ruler/skills/session-worklog-creator/SKILL.md`. CLI work around setup or status diagnostics must use `.ruler/skills/workledger-onboarding/SKILL.md`.
 
-Future CLI work around local worklog creation from the current session must use `.ruler/skills/session-worklog-creator/SKILL.md`.
-Future CLI work around setup or status diagnostics must use `.ruler/skills/workledger-onboarding/SKILL.md`.
-Do not let the skills drift from `specs/`.
-If one changes, update the relevant skill and spec in the same task.
+Keep these skills and the relevant specs aligned in the same task when either contract changes. Duration remains explicit for session worklogs; estimates never determine logged duration. Import the complete intended remote window before the first push.
 
-## Commit & Pull Request Guidelines
+## Changes and credentials
 
-Current history uses short, imperative subjects such as `plan refinement`. Keep commit titles concise, present tense, and scoped to one change. Pull requests should explain which docs section changed, why the contract changed, and whether the change affects MVP or deferred scope. Include sample command output only when the change alters CLI behavior or JSON/table output.
+Use short, imperative commit subjects scoped to one change. Record the problem, resulting behavior, and relevant verification; identify changed contracts and include before/after images for interface changes.
 
-## Security & Configuration Tips
+Do not commit real Jira credentials, operator configuration, or personal databases. Adapter configuration stores token environment-variable names. `~/.config/workledger/config.yaml` is an operator-local path, not a tracked artifact.
 
-Do not commit real Jira credentials or local config files. Treat `~/.config/workledger/config.yaml` as an operator-local path referenced by docs, not a tracked artifact.
+## Collaboration boundary
 
-## Collaboration Boundary
-
-- When the user is asking questions, requesting suggestions, or asking for an opinion, answer directly and do not implement changes unless the user explicitly asks you to implement, apply, or make the suggested changes.
+When the user asks questions, requests suggestions, or asks for an opinion, answer directly without implementing unless explicitly asked to implement, apply, or make the changes.

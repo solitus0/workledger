@@ -22,7 +22,7 @@ func (m model) renderTrashWorkspace(width, height int) string {
 		lines = append(lines, m.muted("  Start Scope  Issue        Reason"))
 		lines = append(lines, m.trashRows(listWidth-2, height-len(lines))...)
 		if len(m.trashItems) == 0 {
-			message := "No trash for this date and scope."
+			message := "No archived worklogs for this date and scope. Change the date or scope to browse."
 			if m.trashLoading {
 				message = "Loading…"
 			}
@@ -41,22 +41,14 @@ func (m model) trashTitle() string {
 }
 
 func (m model) renderTrashSelectors() string {
-	day, week := m.secondary("Day"), m.secondary("Week")
-	if m.trashView == dayWorklogView {
-		day = m.paint("[Day]", m.colors.Focus)
-	} else {
-		week = m.paint("[Week]", m.colors.Focus)
+	scope := 0
+	if m.trashScope == worklogs.TrashScopeLocal {
+		scope = 1
 	}
-	all, local, remote := m.secondary("All"), m.secondary("Local"), m.secondary("Remote")
-	switch m.trashScope {
-	case worklogs.TrashScopeLocal:
-		local = m.paint("[Local]", m.colors.Focus)
-	case worklogs.TrashScopeRemote:
-		remote = m.paint("[Remote]", m.colors.Focus)
-	default:
-		all = m.paint("[All]", m.colors.Focus)
+	if m.trashScope == worklogs.TrashScopeRemote {
+		scope = 2
 	}
-	return day + "  " + week + "     " + all + "  " + local + "  " + remote
+	return m.selector([]string{"Day", "Week"}, int(m.trashView)) + "     " + m.selector([]string{"All", "Local", "Remote"}, scope)
 }
 
 func (m model) trashRows(width, height int) []string {

@@ -44,11 +44,12 @@ const (
 )
 
 type issueFormState struct {
-	inputs  [4]textinput.Model
-	focus   int
-	editing bool
-	stale   bool
-	saving  bool
+	inputs     [4]textinput.Model
+	focus      int
+	editing    bool
+	stale      bool
+	saving     bool
+	errorIndex int
 }
 
 type issueSearchState struct {
@@ -360,6 +361,7 @@ func (m *model) openIssueForm(item *worklogs.IssueMetadata) tea.Cmd {
 	m.issueFormError = ""
 	m.restyleIssueInputs()
 	m.resizeIssueInputs()
+	m.rememberDraft()
 	return m.issueForm.inputs[state.focus].Focus()
 }
 
@@ -422,15 +424,12 @@ func (m model) updateIssueForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.String() {
-		case "esc":
-			stale := m.issueForm.stale
-			m.issueForm = nil
-			m.issueFormError = ""
-			if stale {
-				cmd := m.refreshCmd(refreshWorklogs)
-				return m, cmd
-			}
+		case "f2":
+			m.openDetails("Draft details", m.draftDetails())
 			return m, nil
+
+		case "esc":
+			return m.cancelDraft()
 		case "ctrl+s":
 			return m.beginIssueFormSubmit()
 		case "enter":
@@ -464,13 +463,14 @@ func (m model) moveIssueFormFocus(delta int) (tea.Model, tea.Cmd) {
 }
 
 func (m model) beginIssueFormSubmit() (tea.Model, tea.Cmd) {
+	m.draftError = ""
 	if m.issueForm.stale {
-		m.issueFormError = "issues changed externally; cancel and reopen before saving"
+		m.overlay = reloadOverlay
 		return m, nil
 	}
 	patch, err := m.issueFormPatch()
 	if err != nil {
-		m.issueFormError = err.Error()
+		m.issueValidation(err)
 		return m, nil
 	}
 	m.issueForm.saving = true
@@ -523,8 +523,7 @@ func (m model) handleIssueMutationResult(msg issueMutationResultMsg) (tea.Model,
 		m.issueForm.saving = false
 	}
 	if msg.err != nil {
-		m.issueFormError = msg.err.Error()
-		m.setNotice(noticeError, msg.err.Error())
+		m.issueValidation(msg.err)
 		return m, nil
 	}
 	m.issueForm = nil
@@ -532,4 +531,44 @@ func (m model) handleIssueMutationResult(msg issueMutationResultMsg) (tea.Model,
 	m.issueSelectKey = msg.issueKey
 	m.setNotice(noticeSuccess, "saved issue "+msg.issueKey)
 	return m, m.consumeTrackerCmd(refreshIssues | refreshWorklogs)
+}
+
+func (m *model) issueValidation(err error) {
+	m.draftError = validationDetails(err)
+	field, message := validationFeedback(err)
+	m.issueFormError = message
+	if m.issueForm == nil {
+		m.setNotice(noticeError, message)
+		return
+	}
+	index := m.issueForm.focus
+	switch field {
+	case "issue", "issue_key":
+		index = 0
+	case "title":
+		index = 1
+	case "max_estimate_seconds", "max_estimate", "estimate":
+		index = 2
+	case "epic":
+		index = 3
+	}
+	if strings.Contains(message, "issue must") || strings.Contains(message, "already exists") {
+		index = 0
+	} else if strings.Contains(message, "title must") {
+		index = 1
+	} else if strings.Contains(message, "epic must") {
+		index = 3
+	} else if strings.Contains(message, "estimate") {
+		index = 2
+	}
+	if m.issueForm.editing && index == 0 {
+		index = 1
+	}
+	for i := range m.issueForm.inputs {
+		m.issueForm.inputs[i].Blur()
+	}
+	m.issueForm.focus = index
+	m.issueForm.errorIndex = index
+	m.issueForm.inputs[index].Focus()
+	m.clearNotice()
 }

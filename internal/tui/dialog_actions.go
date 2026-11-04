@@ -43,8 +43,11 @@ func (m model) dialogActions() (string, []commandAction) {
 		add("enter", "Enter", "Next field or save final field")
 		add("ctrl+s", "Ctrl+S", "Save")
 		add("esc", "Esc", "Cancel")
+		add("f2", "F2", "Full draft details and validation")
 	}
 	switch {
+	case m.savingLabel() != "":
+		return "Saving", nil
 	case m.overlay == detailsOverlay:
 		add("up", "↑", "Scroll up")
 		add("down", "↓", "Scroll down")
@@ -119,6 +122,8 @@ func (m model) dialogActions() (string, []commandAction) {
 		return "Find issue", actions
 	case m.presetPicker != nil:
 		rows()
+		pages()
+		edges()
 		if !m.presetPicker.searching {
 			add("/", "/", "Find presets")
 		}
@@ -141,6 +146,7 @@ func (m model) dialogActions() (string, []commandAction) {
 		fields()
 		return "Preset editor", actions
 	case m.planForm != nil:
+		add("f2", "F2", "Full draft details and validation")
 		add("enter", "Enter", "Inspect and save a reconcile plan")
 		add("ctrl+s", "Ctrl+S", "Inspect and save a reconcile plan")
 		add("esc", "Esc", "Cancel")

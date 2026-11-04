@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -38,22 +39,25 @@ func TestEstimateUsageAndMetadataLayout(t *testing.T) {
 			if detail := m.renderWorklogDetail(); !strings.Contains(detail, scenario.expected) || !strings.Contains(detail, "Product data lifecycle") {
 				t.Fatalf("detail: %s", detail)
 			}
-			compactParts := []string{strings.Join(strings.Fields(scenario.expected), " ")}
-			if parts := strings.SplitN(scenario.expected, " (", 2); len(parts) == 2 {
-				durations := strings.SplitN(parts[1], ")", 2)
-				compactParts = []string{"Estimate used: " + parts[0], durations[0]}
-				if durations[1] != "" {
-					compactParts = append(compactParts, strings.TrimPrefix(durations[1], " · "))
+			compactParts := []string{"Issue effort · all dates", "16h", "estimate"}
+			if scenario.loading {
+				compactParts = append(compactParts, "Loading… local")
+			} else if scenario.failure != "" {
+				compactParts = append(compactParts, "Unavailable local")
+			} else {
+				compactParts = append(compactParts, formatDuration(scenario.total)+" local", fmt.Sprintf("%.1f%%", 100*float64(scenario.total)/float64(estimate)))
+				if int64(scenario.total) > estimate {
+					compactParts = append(compactParts, formatEstimateDuration(int64(scenario.total)-estimate)+" over estimate")
 				}
 			}
-			view := m.render()
+			view := stripANSI(m.render())
 			for _, expected := range compactParts {
 				if !strings.Contains(view, expected) {
 					t.Fatalf("estimate usage %q hidden at minimum size: %s", expected, view)
 				}
 			}
 			m.activityOpen = true
-			drawerView := m.render()
+			drawerView := stripANSI(m.render())
 			m.activityOpen = false
 			for _, expected := range compactParts {
 				if !strings.Contains(drawerView, expected) {
@@ -66,7 +70,7 @@ func TestEstimateUsageAndMetadataLayout(t *testing.T) {
 			if lipgloss.Width(view) != minimumWidth || lipgloss.Height(view) != minimumHeight {
 				t.Fatalf("detail layout: %dx%d", lipgloss.Width(view), lipgloss.Height(view))
 			}
-			if noColor && strings.Contains(view, "\x1b[") {
+			if noColor && strings.Contains(m.render(), "\x1b[") {
 				t.Fatal("NO_COLOR emitted ANSI")
 			}
 		}
@@ -96,7 +100,7 @@ func TestFormMetadataWithoutDurationIgnoresStaleAndRemovedValues(t *testing.T) {
 	if !strings.Contains(m.renderIssueContext(), "Product data lifecycle") {
 		t.Fatalf("metadata missing: %#v", m.issueMetadata)
 	}
-	if view := m.render(); !strings.Contains(view, "Product data lifecycle") {
+	if view := stripANSI(m.render()); !strings.Contains(view, "Product data lifecycle") {
 		t.Fatalf("title hidden in minimum-size add form: %s", view)
 	}
 	m.form.inputs[issueInput].SetValue("SBAH-3")
@@ -127,14 +131,14 @@ func TestUnusedIssuePickerTitleModeAndLayout(t *testing.T) {
 		cmd := m.openIssuePicker()
 		next, _ := m.Update(cmd())
 		m = next.(model)
-		view := m.render()
+		view := stripANSI(m.render())
 		if !strings.Contains(view, "Unused") || strings.Contains(view, "0001-") || !strings.Contains(view, "Max estimate: 16h") || !strings.Contains(view, "Product data") {
 			t.Fatalf("picker: %s", view)
 		}
 		if lipgloss.Width(view) != minimumWidth || lipgloss.Height(view) != minimumHeight {
 			t.Fatalf("picker dimensions: %dx%d", lipgloss.Width(view), lipgloss.Height(view))
 		}
-		if noColor && strings.Contains(view, "\x1b[") {
+		if noColor && strings.Contains(m.render(), "\x1b[") {
 			t.Fatal("picker emitted ANSI")
 		}
 		for range 2 {

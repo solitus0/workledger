@@ -76,11 +76,15 @@ func TestLunchPreviewReclassifiesLaterBookingAndCancelRestoresQuota(t *testing.T
 	if !strings.Contains(string(cells[240:300]), "░") || strings.Contains(string(cells[:480]), "▒") || !strings.Contains(string(cells[480:540]), "▒") {
 		t.Fatalf("working-lunch proposal did not put OT on the later 16:00–17:00 booking: %q", band)
 	}
-	if !strings.Contains(m.renderProjectedDayBalance(), "9h 00m total") || !strings.Contains(m.renderProjectedDayBalance(), "1h 00m over") {
+	if !strings.Contains(m.renderProjectedDayBalance(), "9h total") || !strings.Contains(m.renderProjectedDayBalance(), "1h over") {
 		t.Fatalf("projected balance disagrees with timeline OT: %q", m.renderProjectedDayBalance())
 	}
 	next, _ := m.Update(specialKey(tea.KeyEsc))
 	m = next.(model)
+	if m.overlay == discardDraftOverlay {
+		next, _ = m.Update(specialKey(tea.KeyEnter))
+		m = next.(model)
+	}
 	if m.form != nil || m.renderDayTimelineWidth(nil, "afternoon", 544) != before || m.worklogs[1].DurationSeconds != 4*3600 {
 		t.Fatal("cancel failed to restore exact-target quarter grid, lunch and unchanged bookings")
 	}
@@ -100,7 +104,7 @@ func TestTimelineIncludesCarryInAndClipsProjectedCarryOut(t *testing.T) {
 	}
 	m.openAddForm()
 	m.form.previewRecords = []worklogs.LocalWorklog{{StartedAtUTC: m.selectedDate.Add(23 * time.Hour), DurationSeconds: 2 * 3600}}
-	if balance := m.renderProjectedDayBalance(); !strings.Contains(balance, "10h 00m total") {
+	if balance := m.renderProjectedDayBalance(); !strings.Contains(balance, "10h total") {
 		t.Fatalf("projected balance included next-day work: %q", balance)
 	}
 	ruler, _, _, _ = timelineParts(t, m.renderDayTimelineWidth(m.form.previewRecords, "", 140))

@@ -30,9 +30,12 @@ func moveTestModel(t *testing.T) (model, *fakeWorklogState) {
 
 func TestMoveKeyboardPreviewSaveAndSelection(t *testing.T) {
 	m, state := moveTestModel(t)
-	if !strings.Contains(stripANSI(m.renderFooter(120)), "M Move") {
-		t.Fatal("missing shortcut")
+	m.openActions()
+	m.actions.input.SetValue("Move worklog")
+	if actions := m.matchingActions(); len(actions) == 0 || actions[0].key != "M" {
+		t.Fatal("Move is missing from searchable Actions")
 	}
+	m.actions = nil
 	next, cmd := m.Update(textKey("M"))
 	m = next.(model)
 	if m.move == nil || !m.move.loading {

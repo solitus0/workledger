@@ -45,11 +45,11 @@ func (m model) renderPlanListWorkspace(width, height int) string {
 		if index == m.planSelected {
 			prefix = "> "
 		}
-		row := fmt.Sprintf("%s%-11s %-4s %-17s %4d %4d", prefix, item.CreatedAt.In(m.workspace.cfg.Location).Format("02 Jan 15:04"), item.Direction, truncate(item.ExecutionState, 17), item.OpenItems, item.SucceededItems)
+		row := fmt.Sprintf("%s%-11s %-4s %-17s %4d %4d", prefix, item.CreatedAt.In(m.workspace.cfg.Location).Format("02 Jan 15:04"), item.Direction, truncate(displayState(item.ExecutionState), 17), item.OpenItems, item.SucceededItems)
 		lines = append(lines, m.selectedRow(row, listWidth-2, index == m.planSelected))
 	}
 	if len(m.plans) == 0 {
-		message := "No saved plans in this " + m.planListViewLabel() + "."
+		message := "No saved plans in this " + m.planListViewLabel() + ". Create a plan to inspect sync changes."
 		if m.planLoading {
 			message = "Loading…"
 		}
@@ -63,13 +63,7 @@ func (m model) renderPlanListWorkspace(width, height int) string {
 }
 
 func (m model) renderPlanListSelectors() string {
-	day, week := m.secondary("Day"), m.secondary("Week")
-	if m.planListView == planDayListView {
-		day = m.paint("[Day]", m.colors.Focus)
-	} else {
-		week = m.paint("[Week]", m.colors.Focus)
-	}
-	return day + "  " + week
+	return m.selector([]string{"Day", "Week"}, int(m.planListView))
 }
 
 func (m model) planListViewLabel() string {
@@ -82,11 +76,11 @@ func (m model) planListViewLabel() string {
 func (m model) renderPlanDetailWorkspace(width, height int) string {
 	listWidth, detailWidth := inspectorWidths(width)
 	items := m.visiblePlanItems()
-	mode := "ready scopes"
+	mode := "actionable scopes (planning ready)"
 	if m.planShowAll {
 		mode = "all scopes"
 	}
-	lines := []string{"Scope review · " + m.plan.Direction, fmt.Sprintf("Planning %s · Execution %s", m.paintState(m.plan.PlanningStatus), m.paintState(m.plan.ExecutionState)), "Showing " + mode, "", m.muted("  Target                 Action       State")}
+	lines := []string{"Scope review · " + m.plan.Direction, fmt.Sprintf("Planning %s · Execution %s", m.paintState(m.plan.PlanningStatus), m.paintState(m.plan.ExecutionState)), "Showing " + mode, "", m.muted(fmt.Sprintf("  %-*s %-9s %s", max(12, listWidth-26), "Target", "Action", "Execution"))}
 	start, end := visibleRange(m.planItemSelected, len(items), max(1, height-len(lines)-6))
 	for index := start; index < end; index++ {
 		item := items[index]
@@ -94,12 +88,12 @@ func (m model) renderPlanDetailWorkspace(width, height int) string {
 		if index == m.planItemSelected {
 			prefix = "> "
 		}
-		row := fmt.Sprintf("%s%-22s %-12s %s", prefix, truncate(item.TargetAdapterInstance+"/"+item.TargetIssue, 22), truncate(item.PlannedAction, 12), m.paintState(item.ExecutionState))
+		row := fmt.Sprintf("%s%-*s %-9s %s", prefix, max(12, listWidth-26), truncate(item.TargetAdapterInstance+"/"+item.TargetIssue, max(12, listWidth-26)), truncate(displayState(item.PlannedAction), 9), m.paintState(item.ExecutionState))
 		lines = append(lines, m.selectedRow(row, listWidth-2, index == m.planItemSelected))
 	}
 	detail := "No plan scope selected."
 	if item := m.selectedPlanItem(); item != nil {
-		lines = append(lines, "", m.rule(listWidth-2), "Profile "+emptyDash(item.RouteProfile), "Comparison "+m.paintState(item.ComparisonStatus), "Reason "+emptyDash(item.ReasonCode))
+		lines = append(lines, "", m.rule(listWidth-2), "Profile "+emptyDash(item.RouteProfile), "Comparison "+m.paintState(item.ComparisonStatus), "Reason "+displayState(item.ReasonCode))
 		if item.ReasonDetail != "" {
 			lines = append(lines, wrapIssueDescription(item.ReasonDetail, listWidth-2)...)
 		}
@@ -143,7 +137,7 @@ func (m model) planExecutionLines(item reconcile.PlanItem) []string {
 		lines = append(lines, progress)
 	}
 	if item.LatestAttempt == nil {
-		return append(lines, "Not attempted")
+		return append(lines, "Not applied")
 	}
 	lines = append(lines, "State "+m.paintState(item.ExecutionState), item.LatestAttempt.CreatedAt.In(m.workspace.cfg.Location).Format("2006-01-02 15:04:05 MST"))
 	if item.LatestAttempt.State == "pending" && item.ExecutionState == "uncertain" {
@@ -205,20 +199,12 @@ func (m model) renderPlanScopeDetails(item reconcile.PlanItem) string {
 }
 
 func (m model) renderPlanForm() string {
-	directionPush, directionPull := m.secondary("Push"), m.secondary("Pull")
-	if m.planForm.direction == "push" {
-		directionPush = m.paint("[Push]", m.colors.Focus)
-	} else {
-		directionPull = m.paint("[Pull]", m.colors.Focus)
+	direction := 0
+	if m.planForm.direction == "pull" {
+		direction = 1
 	}
-	day, week, custom := m.secondary("Day"), m.secondary("Week"), m.secondary("Custom")
-	if m.planForm.window == planDayWindow {
-		day = m.paint("[Day]", m.colors.Focus)
-	} else if m.planForm.window == planWeekWindow {
-		week = m.paint("[Week]", m.colors.Focus)
-	} else {
-		custom = m.paint("[Custom]", m.colors.Focus)
-	}
+	directionSelector := m.selector([]string{"Push", "Pull"}, direction)
+	windowSelector := m.selector([]string{"Day", "Week", "Custom"}, int(m.planForm.window))
 	target := "All valid configured targets"
 	if m.planForm.targetIndex >= 0 && m.planForm.targetIndex < len(m.planForm.targets) {
 		target = planTargetLabel(m.planForm.targets[m.planForm.targetIndex])
@@ -242,9 +228,12 @@ func (m model) renderPlanForm() string {
 			toLabel = "› To"
 		}
 		dates = fmt.Sprintf("%-11s %s\n%-11s %s", fromLabel, m.planForm.dateInputs[0].View(), toLabel, m.planForm.dateInputs[1].View())
+		if m.planForm.errorText != "" {
+			dates += "\n" + m.fieldError(m.planForm.errorText, m.width-navigationWidth-3)
+		}
 	}
-	return fmt.Sprintf("New reconcile plan\n\nDirection   %s  %s\nWindow      %s  %s  %s\n%s\nTarget      %s%s\n\n%s",
-		directionPush, directionPull, day, week, custom, dates, target, profile, impact)
+	return fmt.Sprintf(m.paintBold("New reconcile plan", m.colors.Focus)+"\n\nDirection   %s\nWindow      %s\n%s\nTarget      %s%s\n\n%s",
+		directionSelector, windowSelector, dates, target, profile, impact)
 }
 
 func (m model) renderPlanOperation() string {

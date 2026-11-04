@@ -41,6 +41,8 @@ func (m model) updateOverlay(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch m.overlay {
+	case discardDraftOverlay:
+		return m.closeDraft()
 	case deleteOverlay:
 		if len(m.deleteSelection) != 1 {
 			m.overlay = noOverlay
@@ -68,10 +70,7 @@ func (m model) updateOverlay(key string) (tea.Model, tea.Cmd) {
 		}
 	case reloadOverlay:
 		m.overlay = noOverlay
-		m.form = nil
-		m.formError = ""
-		m.reloadAfterForm = false
-		return m, m.refreshCmd(refreshWorkspace)
+		return m, m.reloadDraftCmd()
 	case restoreOverlay:
 		if len(m.restoreSelection) != 1 {
 			m.overlay = noOverlay

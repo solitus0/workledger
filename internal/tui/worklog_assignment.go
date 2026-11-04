@@ -405,7 +405,7 @@ func (m model) renderWorklogAssignment(width, height int) string {
 		return ""
 	}
 	lines := []string{m.paintBold("Assign issue", m.colors.Focus), fmt.Sprintf("%d worklogs selected", len(s.ids)), ""}
-	footer := "Enter Assign   Esc Cancel"
+
 	if m.issuePicker != nil {
 		p := m.issuePicker
 		modes := []string{"Key", "Description", "Title"}
@@ -433,13 +433,13 @@ func (m model) renderWorklogAssignment(width, height int) string {
 		} else if len(p.items) == 0 {
 			lines = append(lines, "No matching issues.")
 		}
-		footer = "Ctrl+T Search mode   Enter Use issue   Esc Back"
+
 	} else {
 		lines = append(lines, "Issue key", s.input.View())
 		if s.title != "" {
 			lines = append(lines, m.secondary(s.title))
 		}
-		lines = append(lines, "", "Ctrl+K Find issue")
+
 		if s.loading {
 			lines = append(lines, "Checking selection…")
 		}
@@ -457,5 +457,5 @@ func (m model) renderWorklogAssignment(width, height int) string {
 		lines = append(lines, errorLines...)
 	}
 	lines = lines[:min(len(lines), max(1, height-2))]
-	return strings.Join(append(lines, "", footer), "\n")
+	return strings.Join(lines, "\n")
 }

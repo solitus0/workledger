@@ -411,3 +411,12 @@ func scanPreset(row scanner) (Preset, error) {
 func uniqueConstraint(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unique constraint failed")
 }
+
+// LookupID reloads the identity held by an editor, including after a rename.
+func (s *Service) LookupID(ctx context.Context, id string) (Preset, error) {
+	item, err := scanPreset(s.store.DB().QueryRowContext(ctx, `SELECT id, name, issue_key, start_time, duration_seconds, description, created_at, updated_at, last_used_at, revision FROM worklog_presets WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Preset{}, ErrNotFound
+	}
+	return item, err
+}

@@ -44,7 +44,7 @@ func (m model) render() string {
 }
 
 func (m model) renderHeader(width int) string {
-	title := m.paintBold("Workledger", m.colors.Secondary)
+	title := m.paintBold("Workledger", m.colors.Focus)
 	date := m.secondary(m.selectedDate.Format("Mon 02 Jan 2006"))
 	line := " " + title + strings.Repeat(" ", max(1, width-lipgloss.Width(title)-lipgloss.Width(date)-2)) + date + " "
 	return line + "\n" + m.rule(width)
@@ -72,7 +72,10 @@ func (m model) selectedRow(value string, width int, selected bool) string {
 	style := lipgloss.NewStyle().Width(width)
 	value = ansi.Strip(value)
 	if !m.deps.noColor && m.colorReady {
-		style = style.Foreground(lipgloss.Color(m.colors.Focus)).Reverse(true)
+		style = style.Foreground(lipgloss.Color(m.colors.SelectionText)).Background(lipgloss.Color(m.colors.SelectionBackground))
+		if strings.HasPrefix(value, "> ") {
+			return style.Width(2).Foreground(lipgloss.Color(m.colors.Focus)).Render("> ") + style.Width(max(0, width-2)).Render(value[2:])
+		}
 	}
 	return style.Render(value)
 }
@@ -90,14 +93,14 @@ func (m model) renderActivityDrawer(width, height int) string {
 		if index == m.activitySelected {
 			prefix = m.paint("> ", m.colors.Focus)
 		}
-		stateText := fmt.Sprintf("%-9s", item.State)
+		stateText := fmt.Sprintf("%-9s", displayState(string(item.State)))
 		state := stateText
 		if color, ok := m.stateColor(string(item.State)); ok {
 			state = m.paint(stateText, color)
 		}
 		const fixedWidth = 64
 		summary := truncate(item.Summary, max(0, width-4-fixedWidth))
-		row := fmt.Sprintf("%s%s  %-3s  %-24s  %s  %-8s  %s", prefix, item.StartedAt.Local().Format("15:04:05"), strings.ToUpper(string(item.Source)), truncate(item.Operation, 24), state, activityElapsed(item), summary)
+		row := fmt.Sprintf("%s%s  %-3s  %-24s  %s  %-8s  %s", prefix, item.StartedAt.In(m.selectedDate.Location()).Format("15:04:05"), strings.ToUpper(string(item.Source)), truncate(item.Operation, 24), state, activityElapsed(item), summary)
 		rows = append(rows, row)
 	}
 	for len(rows) < activityDrawerListRows {
@@ -139,7 +142,7 @@ func (m model) renderRailLayout(height int) (string, [tabCount]rectangle) {
 		label := fmt.Sprintf("%d %s", index+1, name)
 		rows[index] = rectangle{x: 0, y: appHeaderHeight + len(lines), width: navigationWidth, height: 1}
 		prefix := "  "
-		if tab(index) == m.activeTab {
+		if tab(index) == m.activeTab && (m.focus == focusRail || m.deps.noColor || !m.colorReady) {
 			prefix = "> "
 		}
 		line := prefix + m.railTitle(label, tab(index) == m.activeTab)
@@ -162,9 +165,9 @@ func (m model) renderRailLayout(height int) (string, [tabCount]rectangle) {
 	} else if !m.statusLoading {
 		_, warnings, failures := statusCounts(m.statusItems)
 		if failures > 0 {
-			lines = append(lines, m.paint(fmt.Sprintf("%d errors", failures), m.colors.Destructive))
+			lines = append(lines, m.paint(countLabel(failures, "error"), m.colors.Destructive))
 		} else if warnings > 0 {
-			lines = append(lines, m.paint(fmt.Sprintf("%d warnings", warnings), m.colors.Warning))
+			lines = append(lines, m.paint(countLabel(warnings, "warning"), m.colors.Warning))
 		}
 	}
 	return m.pane(strings.Join(lines, "\n"), navigationWidth, height), rows
@@ -186,7 +189,10 @@ func (m model) renderWorkspace(width, height int) string {
 		if m.actions == nil {
 			background.overlay = noOverlay
 		}
-		base := background.renderWorkspace(width, height)
+		if background.worklogAssignment != nil && m.overlay == worklogAssignmentOverlay {
+			background.issuePicker = nil
+		}
+		base := m.inactive(background.renderWorkspace(width, height))
 		modalWidth := min(72, width-6)
 		var text string
 		color := m.colors.Focus
@@ -200,7 +206,7 @@ func (m model) renderWorkspace(width, height int) string {
 		case m.overlay == epicAssignmentOverlay:
 			text = m.renderEpicAssignment(modalWidth-4, height-4)
 		case m.overlay == detailsOverlay:
-			text = m.paintBold(m.detailTitle, color) + "\n\n" + m.detailViewport.View()
+			text = m.paintBold(m.detailTitle, color) + "\n\n" + m.detailViewport.View() + "\n" + m.muted(m.detailPosition())
 		default:
 			content, borderColor := m.overlayContent()
 			color = borderColor
@@ -275,8 +281,11 @@ func (m model) overlayContent() (overlayCopy, string) {
 			body = strings.Join(lines, "\n")
 		}
 	case reloadOverlay:
-		title, color = "Worklog changed externally", m.colors.Warning
-		body = "Reload the latest record and discard this draft?"
+		title, color = "Record changed externally", m.colors.Warning
+		body = "Discard your edits and reload the latest record?\n\nCancel keeps your draft."
+	case discardDraftOverlay:
+		title, color = "Discard unsaved changes?", m.colors.Warning
+		body = "Your edits have not been saved. Discard them and close the editor?\n\nCancel keeps your draft."
 	case restoreOverlay, restoreDayOverlay:
 		title = "Restore local worklogs?"
 		count, duration := len(m.restoreSelection), 0
@@ -300,7 +309,7 @@ func (m model) overlayContent() (overlayCopy, string) {
 	case deletePresetOverlay:
 		title, color = "Delete worklog preset?", m.colors.Destructive
 		if m.presetDelete != nil {
-			body = fmt.Sprintf("%s\n%s\n\nExisting worklogs will not be changed.", m.presetDelete.Name, presetSummary(*m.presetDelete))
+			body = fmt.Sprintf("%s\n%s\n\nThis preset cannot be restored. Existing worklogs will not be changed.", m.presetDelete.Name, presetSummary(*m.presetDelete))
 		}
 	case reconcilePlanOverlay:
 		title = "Inspect remote worklogs and save a plan?"
@@ -342,6 +351,8 @@ func (m model) renderFooter(width int) string {
 	case m.actions != nil:
 		primary = []actionHint{{"↑/↓", "Select"}, {"Enter", "Run action"}, {"Esc", "Close"}}
 		secondary = []actionHint{{"Type", "Filter actions"}}
+	case m.savingLabel() != "":
+		primary = []actionHint{{"", m.savingLabel()}}
 	case m.overlay == detailsOverlay:
 		primary = []actionHint{{"↑/↓", "Scroll"}, {"PgUp/PgDn", "Page"}, {"Enter / Esc", "Close details"}}
 		secondary = nil
@@ -379,25 +390,25 @@ func (m model) renderFooter(width int) string {
 		}
 	case m.presetPicker != nil:
 		primary = []actionHint{{"↑/↓", "Select"}, {"Enter", "Choose"}, {"Esc", "Cancel"}}
-		secondary = []actionHint{{"/", "Find"}, {"Tab", "Complete"}}
+		secondary = []actionHint{{"/", "Find"}, {"PgUp/PgDn", "Page"}, {"Home/End", "Edge"}}
 		if m.presetPicker.searching {
 			secondary[0] = actionHint{"Type", "Filter presets"}
 		}
 	case m.presetForm != nil:
-		primary = []actionHint{{"Tab", "Fields"}, {"Ctrl+S", "Save"}, {"Esc", "Cancel"}}
+		primary = []actionHint{{"Ctrl+S", "Save"}, {"Esc", "Cancel"}, {"Tab", "Fields"}, {"F2", "Details"}}
 		secondary = nil
 	case m.issueForm != nil:
-		primary = []actionHint{{"Tab", "Fields"}, {"Ctrl+S", "Save"}, {"Esc", "Cancel"}}
+		primary = []actionHint{{"Ctrl+S", "Save"}, {"Esc", "Cancel"}, {"Tab", "Fields"}, {"F2", "Details"}}
 		secondary = nil
 	case m.planOperation != nil:
 		primary = []actionHint{{"Esc", "Cancel operation"}, {"Ctrl+C", "Interrupt"}}
 		secondary = nil
 	case m.planForm != nil:
 		primary = []actionHint{{"Enter", "Inspect"}, {"Esc", "Cancel"}, {"p", "Push"}, {"u", "Pull"}, {"d/w/c", "Window"}}
-		secondary = []actionHint{{"x", "Target"}, {"v", "Profile"}, {"Tab", "Dates"}}
+		secondary = []actionHint{{"x", "Target"}, {"v", "Profile"}, {"Tab", "Dates"}, {"F2", "Details"}}
 	case m.form != nil:
 		primary = []actionHint{{"Ctrl+S", "Save"}, {"Esc", "Cancel"}}
-		secondary = nil
+		secondary = []actionHint{{"F2", "Preview"}}
 		if m.form.focus == descriptionField {
 			primary = append(primary, actionHint{"Enter", "Save"})
 		}
@@ -446,19 +457,21 @@ func (m model) renderFooter(width int) string {
 		primary = []actionHint{{"Type", "Filter epic names"}, {"↑/↓ PgUp/Dn", "Select"}, {"Enter", "Browse results"}, {"Esc", "Clear filter"}}
 		secondary = nil
 	case m.focus == focusIssueHistory || m.focus == focusIssueMetadata:
-		primary = []actionHint{{"↑/↓ PgUp/Dn", "Scroll"}, {"Home/End", "Edge"}, {"Tab", "Pane"}, {"r", "Retry / Refresh"}, {"Esc", "Issues"}, {"?", "Actions"}}
+		primary = []actionHint{{"↑/↓ PgUp/Dn", "Scroll"}, {"F2", "Details"}, {"r", "Retry"}, {"Tab", "Pane"}, {"Esc", "Issues"}, {"?", "Actions"}}
 		secondary = nil
 	case m.focus == focusActivity:
-		primary = []actionHint{{"↑/↓", "Select"}, {"PgUp/PgDn", "Page"}, {"r", "Refresh"}, {"g", "Close activity"}, {"?", "Actions"}, {"q", "Quit"}}
+		primary = []actionHint{{"↑/↓", "Select"}, {"Enter", "Details"}, {"r", "Refresh"}, {"g", "Close activity"}, {"?", "Actions"}, {"q", "Quit"}}
 		secondary = []actionHint{{"Home/End", "Edge"}, {"Tab", "Pane"}}
 	case m.focus == focusRail:
 		primary = []actionHint{{"↑/↓", "Workspace"}, {"Enter / Tab", "Open"}, {"?", "Actions"}, {"q", "Quit"}}
 	}
-	primary = append(primary, secondary...)
+	primary = m.availableHints(append(primary, secondary...))
 	if m.form != nil && width <= minimumWidth && m.actions == nil {
 		for index := range primary {
 			hint := &primary[index]
 			switch hint.chord {
+			case "F2":
+				hint.label = "Times"
 			case "Ctrl+S":
 				if strings.HasPrefix(hint.label, "Create ") {
 					hint.label = "Create"
@@ -466,7 +479,11 @@ func (m model) renderFooter(width int) string {
 			case "Ctrl+O":
 				hint.label = strings.Replace(hint.label, "Late starts", "Late", 1)
 			case "Ctrl+L":
-				hint.label = strings.Replace(hint.label, "Reserve lunch", "Keep lunch", 1)
+				if m.form.noLunch {
+					hint.label = "Lunch off"
+				} else {
+					hint.label = "Lunch on"
+				}
 			}
 		}
 	}
@@ -493,7 +510,7 @@ func (m model) renderFooter(width int) string {
 		tail := m.renderHints(primary[len(primary)-2:], width-2)
 		first = m.renderHints(primary[:len(primary)-2], width-4-lipgloss.Width(tail)) + "  " + tail
 	}
-	if m.interactionState.kind() == interactionIdle && m.activeTab == worklogsTab && m.isWorklogList() && m.selectedWorklog() != nil {
+	if m.interactionState.kind() == interactionIdle && m.focus == focusWorkspace && m.activeTab == worklogsTab && m.isWorklogList() && m.selectedWorklog() != nil {
 		indices := m.visibleWorklogIndices()
 		context := fmt.Sprintf("%d of %d", slices.Index(indices, m.worklogSelected)+1, len(indices))
 		if width-2-lipgloss.Width(first) >= lipgloss.Width(context)+4 {
@@ -539,7 +556,15 @@ func (m model) renderHints(hints []actionHint, width int) string {
 		if used+length > width {
 			continue
 		}
-		parts = append(parts, m.paint(hint.chord, m.colors.Focus)+" "+hint.label)
+		color := m.colors.Focus
+		if m.confirmationOverlayOpen() && m.actions == nil {
+			if hint.chord == "y / Enter" {
+				_, color = m.overlayContent()
+			} else if hint.chord == "n / Esc" {
+				color = m.colors.Secondary
+			}
+		}
+		parts = append(parts, m.paint(hint.chord, color)+" "+hint.label)
 		used += length
 	}
 	return strings.Join(parts, "  ")
@@ -643,7 +668,9 @@ func (m model) confirmationAction() string {
 	case forceOverlay:
 		return "Save despite conflict"
 	case reloadOverlay:
-		return "Reload and discard draft"
+		return "Reload latest"
+	case discardDraftOverlay:
+		return "Discard changes"
 	case reconcilePlanOverlay:
 		return "Inspect and save plan"
 	case applyPlanOverlay:
@@ -660,9 +687,9 @@ func (m model) secondary(value string) string { return m.paint(value, m.colors.S
 func (m model) paintState(value string) string {
 	color, ok := m.stateColor(value)
 	if !ok {
-		return value
+		return displayState(value)
 	}
-	return m.paint(value, color)
+	return m.paint(displayState(value), color)
 }
 
 func (m model) paintStateMessage(state, message string) string {
@@ -725,7 +752,13 @@ func formatDuration(seconds int) string {
 	}
 	hours := seconds / 3600
 	minutes := (seconds % 3600) / 60
-	return fmt.Sprintf("%dh %02dm", hours, minutes)
+	if hours == 0 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	if minutes == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%dm", hours, minutes)
 }
 
 func truncate(value string, width int) string {

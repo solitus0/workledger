@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -16 544 544" role="img" aria-labelledby="title">
+  <title id="title">Workledger — padded Ledger W avatar</title>
+  <rect x="-16" y="-16" width="544" height="544" fill="#1E1E2E"/>
+  <g fill="#B9A2F4">
+  <path d="M60 96H132Q142 96 145 106L167.086 178H72.658L51 110Q47 96 60 96Z"/>
+  <path d="M380 96H452Q465 96 461 110L439.342 178H344.914L367 106Q370 96 380 96Z"/>
+  <path d="M79.027 198H173.221L195 269L224 203Q228 194 238 194H274Q284 194 288 203L317 269L338.779 198H432.973L368 402Q364 416 350 416H303Q293 416 289 405L256 322L223 405Q219 416 209 416H162Q148 416 144 402Z"/>
+  </g>
+</svg>

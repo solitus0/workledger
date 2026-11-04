@@ -18,7 +18,7 @@ func TestTrashTabFiltersAndRestoresOnlyLocalRows(t *testing.T) {
 		{ID: "remote", StorageScope: worklogs.TrashScopeRemote, IssueKey: "APP-1"},
 		{ID: "local", StorageScope: worklogs.TrashScopeLocal, SourceWorklogID: &originalID, IssueKey: "APP-2", DurationSeconds: 3600},
 	}
-	next, _ := m.Update(textKey("5"))
+	next, _ := m.Update(textKey("6"))
 	m = next.(model)
 	if m.activeTab != trashTab || !strings.Contains(m.render(), "Trash") || !strings.Contains(m.render(), "[All]") {
 		t.Fatalf("trash tab did not render expected defaults")

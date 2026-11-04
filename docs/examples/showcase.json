@@ -1,0 +1,25 @@
+{
+  "date": "2026-11-03",
+  "timezone": "Europe/Vilnius",
+  "issues": [
+    {"issue_key":"CORE-101","title":"Atlas release planning","max_estimate_seconds":28800,"epic":"Atlas workspace"},
+    {"issue_key":"APP-214","title":"Workspace activity feed","max_estimate_seconds":57600,"epic":"Atlas workspace"},
+    {"issue_key":"API-87","title":"Reliable event delivery","max_estimate_seconds":43200,"epic":"Platform reliability"},
+    {"issue_key":"OPS-42","title":"Queue latency observability","max_estimate_seconds":21600,"epic":"Platform reliability"},
+    {"issue_key":"TEAM-12","title":"Engineering coordination","epic":"Team rituals"}
+  ],
+  "adds": [
+    {"issue_key":"APP-214","started_at":"2026-11-02T08:00","duration_seconds":7200,"description":"Design the activity feed and event model"},
+    {"issue_key":"API-87","started_at":"2026-11-02T10:00","duration_seconds":7200,"description":"Implement delivery receipts and retry policy"},
+    {"issue_key":"CORE-101","started_at":"2026-11-02T12:45","duration_seconds":3600,"description":"Review the Atlas release scope"},
+    {"issue_key":"APP-214","started_at":"2026-11-02T13:45","duration_seconds":7200,"description":"Connect the workspace activity timeline"},
+    {"issue_key":"OPS-42","started_at":"2026-11-02T15:45","duration_seconds":3600,"description":"Establish queue latency baselines"},
+    {"issue_key":"CORE-101","started_at":"2026-11-03T08:30","duration_seconds":1800,"description":"Plan the Atlas release"},
+    {"issue_key":"APP-214","started_at":"2026-11-03T09:00","duration_seconds":5400,"description":"Build the workspace activity feed"},
+    {"issue_key":"TEAM-12","started_at":"2026-11-03T10:30","duration_seconds":900,"description":"Daily engineering sync"},
+    {"issue_key":"API-87","started_at":"2026-11-03T10:45","duration_seconds":4500,"description":"Add idempotent event delivery"},
+    {"issue_key":"API-87","started_at":"2026-11-03T12:45","duration_seconds":5400,"description":"Verify retry handling and failure recovery"},
+    {"issue_key":"APP-214","started_at":"2026-11-03T14:30","duration_seconds":2700,"description":"Review keyboard navigation and focus states"},
+    {"issue_key":"OPS-42","started_at":"2026-11-03T15:15","duration_seconds":2700,"description":"Trace queue latency in staging"}
+  ]
+}

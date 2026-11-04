@@ -97,7 +97,7 @@ func (m model) handleIssuePullResult(msg issuePullResultMsg) (tea.Model, tea.Cmd
 	kind := noticeSuccess
 	if state.failed > 0 || remaining > 0 {
 		kind = noticeWarning
-		label += " · Shift+R to retry selected"
+		label += " · Retry selected issues from Actions"
 		if state.firstError != "" {
 			label += " · " + strings.Join(strings.Fields(state.firstError), " ")
 		}
@@ -113,5 +113,5 @@ func (m model) issuePullLabel() string {
 		return ""
 	}
 	state := m.issuePull
-	return fmt.Sprintf("Pulling Jira metadata %d/%d · %d updated · %d failed · Esc stop", state.completed, len(state.keys), state.updated, state.failed)
+	return fmt.Sprintf("Pulling Jira metadata %d/%d · %d updated · %d failed", state.completed, len(state.keys), state.updated, state.failed)
 }

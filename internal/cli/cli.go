@@ -275,7 +275,8 @@ func (a *app) newRootCommand() *cobra.Command {
 
 	root := &cobra.Command{
 		Use:           "workledger",
-		Short:         "Manage canonical local worklogs",
+		Short:         "Agent-friendly CLI for local worklogs",
+		Long:          "Workledger is an agent-friendly CLI for local worklogs, daily planning,\nand reviewed sync with Jira and Clockify.\n\nUse structured JSON output, dry runs, and batch payloads in agent and\nscripted workflows. Open the optional TUI with 'workledger tui' for\ninteractive review.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, _ []string) error {

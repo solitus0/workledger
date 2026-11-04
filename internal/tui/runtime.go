@@ -56,6 +56,7 @@ type trashService interface {
 
 type presetService interface {
 	List(context.Context, string, int) ([]presets.Preset, error)
+	LookupID(context.Context, string) (presets.Preset, error)
 	Create(context.Context, config.EffectiveConfig, presets.CreateInput) (presets.Preset, error)
 	Update(context.Context, config.EffectiveConfig, string, presets.PatchInput) (presets.Preset, error)
 	Delete(context.Context, string, int64) (presets.DeleteResult, error)
@@ -204,6 +205,8 @@ type formState struct {
 	id                       string
 	revision                 int64
 	stale                    bool
+	saving                   bool
+	errorField               formField
 	force                    bool
 	placement                placementMode
 	overtime                 bool
@@ -222,12 +225,15 @@ type formState struct {
 }
 
 type presetFormState struct {
-	inputs   [5]textinput.Model
-	focus    int
-	editing  bool
-	name     string
-	revision int64
-	stale    bool
+	inputs     [5]textinput.Model
+	focus      int
+	editing    bool
+	id         string
+	name       string
+	revision   int64
+	stale      bool
+	saving     bool
+	errorIndex int
 }
 
 type presetPickerState struct {

@@ -2,11 +2,11 @@ package tui
 
 import (
 	"fmt"
-	"github.com/solitus0/workledger/internal/worklogs"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/solitus0/workledger/internal/worklogs"
 )
 
 func (m model) renderPresetWorkspace(width, height int) string {
@@ -28,7 +28,7 @@ func (m model) renderPresetWorkspace(width, height int) string {
 		lines = append(lines, m.selectedRow(fmt.Sprintf("%s%-20s %-12s %s", prefix, truncate(item.Name, 20), truncate(worklogs.DisplayIssueKey(item.IssueKey), 12), formatEstimateDuration(int64(item.DurationSeconds))), listWidth-2, index == m.presetSelected))
 	}
 	if len(m.presets) == 0 {
-		message := "No presets yet."
+		message := "No presets yet. Add a preset for work you log regularly."
 		if m.presetLoading {
 			message = "Loading…"
 		}
@@ -56,48 +56,54 @@ func (m model) renderPresetForm() string {
 		title = "Edit worklog preset"
 	}
 	labels := []string{"Name", "Issue", "Start time", "Duration", "Description"}
-	lines := []string{title, ""}
+	lines := []string{m.paintBold(title, m.colors.Focus), ""}
 	for index, label := range labels {
-		lines = append(lines, m.renderFormRow(label, m.presetForm.inputs[index].View(), index == m.presetForm.focus))
+		lines = append(lines, m.renderFormRow(label, m.inputView(m.presetForm.inputs[index], index == m.presetForm.focus), index == m.presetForm.focus))
+		if m.presetFormError != "" && index == m.presetForm.errorIndex {
+			lines = append(lines, m.fieldError(m.presetFormError, m.width-navigationWidth-3))
+		}
 	}
 	lines = append(lines, "", m.muted("Applying a preset creates an ordinary worklog; existing worklogs are never linked or changed."))
 	if m.presetForm.stale {
-		lines = append(lines, m.paint("Changed externally — cancel and reopen before saving.", m.colors.Warning))
+		lines = append(lines, m.paint("Changed externally — save to review reloading the latest record.", m.colors.Warning))
 	}
-	if m.presetFormError != "" {
-		lines = append(lines, m.paint(m.presetFormError, m.colors.Destructive))
-	}
+
 	return strings.Join(lines, "\n")
 }
 
+func (m model) presetPickerRows() int {
+	rows := min(12, m.height-appHeaderHeight-appFooterHeight-9)
+	if m.presetPicker != nil && m.presetPicker.searching {
+		rows -= 3
+	}
+	return max(1, rows)
+}
+
 func (m model) renderPresetPicker(width, height int) string {
-	lines := []string{m.paint("Add worklog from preset", m.colors.Focus), ""}
+	modalWidth := min(76, width-8)
+	contentWidth := modalWidth - 4
+	lines := []string{m.paintBold("Add worklog from preset", m.colors.Focus), ""}
 	if m.presetPicker.searching {
 		lines = append(lines, "Find preset", m.presetPicker.input.View(), "")
 	}
-	for index, item := range m.presetPicker.items {
+	start, end := visibleRange(m.presetPicker.selected, len(m.presetPicker.items), m.presetPickerRows())
+	for i := start; i < end; i++ {
+		item := m.presetPicker.items[i]
 		prefix := "  "
-		if m.presetPicker.selected == index {
-			prefix = m.paint("> ", m.colors.Focus)
+		if i == m.presetPicker.selected {
+			prefix = "> "
 		}
-		lines = append(lines, m.selectedRow(prefix+item.Name+"  "+m.muted(presetSummary(item)), width-12, index == m.presetPicker.selected))
-		if len(lines) >= min(14, height-5) {
-			break
-		}
+		lines = append(lines, m.selectedRow(prefix+item.Name+"  "+presetSummary(item), contentWidth, i == m.presetPicker.selected))
 	}
 	if len(m.presetPicker.items) == 0 {
-		lines = append(lines, m.muted("  No matching presets"))
+		lines = append(lines, m.muted("No matching presets. Clear the filter to browse."))
+	} else {
+		lines = append(lines, "", m.muted(fmt.Sprintf("%d of %d presets", m.presetPicker.selected+1, len(m.presetPicker.items))))
 	}
-	modalWidth := min(76, width-8)
-	longest := 0
-	for _, line := range lines {
-		longest = max(longest, lipgloss.Width(line))
-	}
-	modalWidth = min(modalWidth, max(48, longest+4))
-	modal := m.box(strings.Join(lines, "\n"), modalWidth, min(max(10, len(lines)+2), height-4), true)
+	modal := m.box(strings.Join(lines, "\n"), modalWidth, min(height-2, len(lines)+2), true)
 	background := m
 	background.presetPicker = nil
-	base := background.renderWorkspace(width, height)
+	base := m.inactive(background.renderWorkspace(width, height))
 	return lipgloss.NewCompositor(lipgloss.NewLayer(base), lipgloss.NewLayer(modal).X((width-lipgloss.Width(modal))/2).Y((height-lipgloss.Height(modal))/2).Z(1)).Render()
 }
 

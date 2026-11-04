@@ -103,6 +103,7 @@ func (m *model) openPresetForm(item *presets.Preset) {
 	if item != nil {
 		values = []string{item.Name, item.IssueKey, item.StartTime, formatDurationInput(item.DurationSeconds), item.Description}
 		state.editing, state.name, state.revision = true, item.Name, item.Revision
+		state.id = item.ID
 	}
 	placeholders := []string{"daily-standup", "Optional, e.g. PROJ-123", "09:00", "15m", "Daily standup"}
 	for index := range state.inputs {
@@ -130,13 +131,14 @@ func (m *model) openPresetForm(item *presets.Preset) {
 	m.presetForm = &state
 	m.presetFormError = ""
 	m.resizePresetInputs()
+	m.rememberDraft()
 }
 
 func (m *model) resizePresetInputs() {
 	if m.presetForm == nil {
 		return
 	}
-	width := max(20, m.width-30-12)
+	width := max(20, m.width-navigationWidth-18)
 	for index := range m.presetForm.inputs {
 		m.presetForm.inputs[index].SetWidth(width)
 	}
@@ -158,13 +160,18 @@ func (m *model) restylePresetInputs() {
 }
 
 func (m model) updatePresetForm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.presetForm.saving {
+		return m, nil
+	}
 	key, isKey := msg.(tea.KeyPressMsg)
 	if isKey {
 		switch key.String() {
-		case "esc":
-			m.presetForm = nil
-			m.presetFormError = ""
+		case "f2":
+			m.openDetails("Draft details", m.draftDetails())
 			return m, nil
+
+		case "esc":
+			return m.cancelDraft()
 		case "ctrl+s":
 			return m.beginPresetFormSubmit()
 		case "tab":
@@ -218,8 +225,9 @@ func (m model) movePresetFormFocus(delta int) (tea.Model, tea.Cmd) {
 }
 
 func (m model) beginPresetFormSubmit() (tea.Model, tea.Cmd) {
+	m.draftError = ""
 	if m.presetForm.stale {
-		m.presetFormError = "preset changed externally; cancel and reopen before saving"
+		m.overlay = reloadOverlay
 		return m, nil
 	}
 	operation := "presets.create"
@@ -227,6 +235,10 @@ func (m model) beginPresetFormSubmit() (tea.Model, tea.Cmd) {
 		operation = "presets.update"
 	}
 	summary := tuiActivitySummary("name="+strings.TrimSpace(m.presetForm.inputs[0].Value()), "issue="+strings.ToUpper(strings.TrimSpace(m.presetForm.inputs[1].Value())), durationSummary(m.presetForm.inputs[3].Value()))
+	if m.presetForm.saving {
+		return m, nil
+	}
+	m.presetForm.saving = true
 	return m, m.beginActivity(operation, summary, m.submitPresetFormCmd())
 }
 
@@ -263,18 +275,35 @@ func (m model) deletePresetCmd(item presets.Preset) tea.Cmd {
 }
 
 func (m model) handlePresetMutationResult(msg presetMutationResultMsg) (tea.Model, tea.Cmd) {
+	if m.presetForm != nil {
+		m.presetForm.saving = false
+	}
 	if msg.err != nil {
 		if errors.Is(msg.err, presets.ErrConflict) {
 			if m.presetForm != nil {
 				m.presetForm.stale = true
-				m.presetFormError = "preset changed externally; cancel and reopen before saving"
+				m.presetFormError = "Preset changed externally. Save to review reloading the latest record."
+				m.overlay = reloadOverlay
 			} else {
 				m.setNotice(noticeWarning, "preset changed externally; list reloaded")
 			}
 			return m, m.startPresetLoad()
 		}
-		m.presetFormError = msg.err.Error()
-		m.setNotice(noticeError, msg.err.Error())
+		if m.presetForm != nil {
+			m.draftError = validationDetails(msg.err)
+			field, message := validationFeedback(msg.err)
+			m.presetFormError = message
+			index := map[string]int{"name": 0, "issue": 1, "start": 2, "started": 2, "duration": 3, "description": 4}[field]
+			for i := range m.presetForm.inputs {
+				m.presetForm.inputs[i].Blur()
+			}
+			m.presetForm.focus = index
+			m.presetForm.errorIndex = index
+			m.presetForm.inputs[index].Focus()
+			m.clearNotice()
+		} else {
+			m.setNotice(noticeError, msg.err.Error())
+		}
 		return m, nil
 	}
 	m.presetForm = nil
@@ -360,6 +389,20 @@ func (m model) updatePresetPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "up":
 			m.presetPicker.selected = max(0, m.presetPicker.selected-1)
+			return m, nil
+		case "pgup", "pgdown", "home", "end":
+			step := m.presetPickerRows()
+			switch key.String() {
+			case "pgup":
+				m.presetPicker.selected -= step
+			case "pgdown":
+				m.presetPicker.selected += step
+			case "home":
+				m.presetPicker.selected = 0
+			case "end":
+				m.presetPicker.selected = len(m.presetPicker.items) - 1
+			}
+			m.presetPicker.selected = clampIndex(m.presetPicker.selected, len(m.presetPicker.items))
 			return m, nil
 		case "down":
 			maximum := len(m.presetPicker.items) - 1

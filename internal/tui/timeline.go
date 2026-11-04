@@ -363,3 +363,22 @@ func containsFreeSlot(slots []worklogs.ContextFreeSlot, value time.Time) bool {
 	}
 	return false
 }
+
+// Compact timelines retain the exact time scale and state patterns while
+// yielding the frame, lunch caption and unused selection row to the task.
+func (m model) renderCompactTimelineWidth(records []worklogs.LocalWorklog, selectedID string, width int) string {
+	plan, ok := m.buildTimelinePlan(records, selectedID, width)
+	if !ok {
+		return m.muted("Workday unavailable")
+	}
+	lines := []string{m.muted(plan.ruler)}
+	if plan.selected.end > plan.selected.first {
+		marker := "▼"
+		if n := plan.selected.end - plan.selected.first; n > 1 {
+			marker = "┌" + strings.Repeat("─", n-2) + "┐"
+		}
+		lines = append(lines, strings.Repeat(" ", plan.selected.first)+m.paint(marker, m.colors.Focus))
+	}
+	lines = append(lines, m.renderTimelineBar(plan))
+	return strings.Join(lines, "\n")
+}

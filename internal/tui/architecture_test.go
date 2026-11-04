@@ -20,7 +20,7 @@ func TestLayoutOwnsRenderAndMouseGeometry(t *testing.T) {
 	m := newModel(t.Context(), deps, ws, nil)
 	m.width, m.height = 120, 40
 	_, cards := m.renderRailLayout(layout.rail.height)
-	wantTabs := [...]tab{statusTab, worklogsTab, plansTab, presetsTab, trashTab, issuesTab}
+	wantTabs := [...]tab{statusTab, worklogsTab, plansTab, presetsTab, issuesTab, trashTab}
 	for index, card := range cards {
 		next, _ := m.updateMouse(mouseClick(card.x+1, card.y+card.height/2, tea.MouseLeft))
 		if got := next.(model).activeTab; got != wantTabs[index] {

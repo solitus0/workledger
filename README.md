@@ -1,344 +1,126 @@
-# workledger
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/branding/ledger-w-refined/workledger-w-dark.svg">
+    <img src="docs/assets/branding/ledger-w-refined/workledger-w-light.svg" width="72" height="72" alt="Ledger W">
+  </picture>
+  <h1>Workledger</h1>
+  <p>An agent-friendly CLI for local worklogs,<br>daily planning, and reviewed sync with Jira and Clockify.</p>
+  <p>Structured JSON · Dry runs · Local storage · Optional TUI</p>
+  <p>
+    <a href="#quick-start">Quick start</a> ·
+    <a href="docs/agents.md">Agent workflows</a> ·
+    <a href="docs/README.md">Documentation</a> ·
+    <a href="docs/configuration.md">Connect a tracker</a> ·
+    <a href="docs/development.md">Development</a>
+  </p>
+  <p>
+    <a href="https://github.com/solitus0/workledger/actions/workflows/ci.yml"><img src="https://github.com/solitus0/workledger/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6D4BC3" alt="MIT license"></a>
+  </p>
+</div>
 
-`workledger` is a local-first CLI for keeping canonical worklogs in SQLite and reconciling them with remote time trackers through reviewed plans.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/worklogs-wide-dark.png">
+  <img src="docs/assets/screenshots/worklogs-wide-light.png" alt="Optional TUI: Worklogs Day view with 6h30m logged, a chronological timeline, seven worklogs, available windows, and a selected-worklog inspector with description and all-dates issue effort." width="1120">
+</picture>
 
-It is built for operators and coding agents that need one inspectable source of truth for work done, gaps, corrections, totals, and sync decisions.
+<p align="center"><sub>The optional TUI’s real Worklogs renderer, with fictional Atlas project data. Full size: <a href="docs/assets/screenshots/worklogs-wide-dark.png">Dark</a> · <a href="docs/assets/screenshots/worklogs-wide-light.png">Light</a>. <a href="docs/media.md">Capture details and other layouts</a>.</sub></p>
 
-## Core contract
+## Quick start
 
-- YAML stores operator-managed configuration at `~/.config/workledger/config.yaml`.
-- SQLite stores canonical local worklogs at `~/.local/share/workledger/worklogs.db` by default.
-- Remote adapters such as Jira and Clockify provide evidence, comparison data, and sync targets; they are not the source of truth.
-- Reconciliation is plan-based: inspect, save, review, then apply.
-- Before the first push for a date window, pull and apply that complete window from every intended remote source so existing remote-only worklogs are preserved locally.
-- Human output defaults to `table`; automation should use `--output json`.
-- Adapter secrets are referenced by environment variable names. Inline secrets are invalid.
-
-The canonical product contract lives in:
-
-- [`specs/functional.md`](specs/functional.md)
-- [`specs/non-functional.md`](specs/non-functional.md)
-
-When this README and the specs disagree, the specs win.
-
-## Install
+Install with Homebrew:
 
 ```sh
 brew install solitus0/tap/workledger
 ```
 
-For local development:
+[Other installation options](docs/installation.md).
 
-```sh
-go run ./cmd/workledger --help
-```
-
-## Shell completion
-
-Workledger generates completion scripts for Bash, Zsh, and Fish. PowerShell is not supported.
-
-For Zsh, generate the script once:
-
-```sh
-mkdir -p ~/.zfunc
-workledger completion zsh > ~/.zfunc/_workledger
-```
-
-Then ensure `~/.zshrc` initializes that completion directory before `compinit`:
-
-```zsh
-fpath=(~/.zfunc $fpath)
-autoload -Uz compinit
-compinit
-```
-
-For Bash, load completion in the current session:
-
-```bash
-source <(workledger completion bash)
-```
-
-For Fish, install the generated script permanently:
-
-```fish
-mkdir -p ~/.config/fish/completions
-workledger completion fish > ~/.config/fish/completions/workledger.fish
-```
-
-Regenerate installed scripts after upgrading to a release that changes commands or flags.
-
-## First run
+Initialize your local ledger:
 
 ```sh
 workledger init
+```
+
+Before your first entry, open `~/.config/workledger/config.yaml` and set `local_timezone` to your IANA timezone. Review the [workday and lunch settings](docs/configuration.md#set-your-workday); the starter configuration uses `Europe/Vilnius` and an 08:00–17:00 workday.
+
+Then check readiness, log an activity, and inspect today's entries:
+
+```sh
 workledger status
+workledger worklogs add --fit --today --duration 45m --description "Review the activity feed"
+workledger worklogs list --today
 ```
 
-`init` creates the config file when needed and provisions local SQLite storage. `status` runs setup diagnostics and shows authenticated identity details for successful remote checks.
+`--fit` puts the activity into one free slot in your configured workday. Your new 45-minute unassigned entry should appear in the list and contribute to the logged-time total.
 
-After configuring remote adapters, make the first reconciliation action a pull. The initial pull workflow is documented under [Configuration](#configuration); complete it before creating any push plan.
+No remote account is required. Issue keys are optional, so you can capture work now and assign an issue later. Configuration and canonical worklogs stay on your machine in YAML and SQLite.
 
-Workledger also includes an interactive terminal UI, available through `workledger tui`. In its Day view, select a worklog and press `M` to preview a move. Use the up/down arrows to choose a valid position before or after another booking or at a workday boundary, `Ctrl+S` to save, and `Esc` to cancel. Moves preserve duration and other bookings and avoid configured lunch; `r` refreshes the source and available positions.
+See [other installation options and shell completion](docs/installation.md), or [connect Jira and Clockify](docs/configuration.md) when you are ready to reconcile remote records.
 
-## Issues and epics
+## Use it from an agent
 
-Issues are a local catalog with optional titles, maximum estimates, and epic groups. Saving a worklog for a new key automatically creates its local issue. No metadata is required, and no remote issue is created.
+After working with an agent, invoke the [session-worklog-creator skill](docs/agents.md#log-a-coding-session) in that same chat:
+
+```text
+$session-worklog-creator 1h
+```
+
+**You choose the duration; the agent handles the rest.** Duration is the only required input. The agent writes a description from the work performed in the session and infers an issue key when the context clearly identifies one; otherwise it saves the work unassigned. Workledger places the time into available slots in your configured workday, today by default, around existing worklogs and lunch.
+
+The skill previews the entry and saves it locally after a successful dry run. It never derives logged duration from session length or issue estimates. See [Agent workflows](docs/agents.md) for skill installation and placement details.
+
+Agents can also use the CLI directly to read planning context as JSON and preview an entry before writing:
 
 ```sh
-workledger issues set --issue SBAH-1
-workledger issues set --issue SBAH-2 --title "Product data lifecycle" --max-estimate 16h --epic "Product documents"
-workledger issues list --issue-prefix SBAH
-workledger issues list --epic "Product documents"
-workledger worklogs list --epic "Product documents"
-workledger worklogs list --epic "Product documents" --current-month
-workledger issues epics --issue-prefix SBAH
-workledger issues set --issue SBAH-2 --clear-epic
+workledger worklogs context --today --output json
+workledger worklogs add --fit --today --duration 30m --description "Review retry behavior" --dry --output json
 ```
 
-Each issue belongs to at most one named local epic. Groups need no separate creation and do not change Jira hierarchy. `issues list --search` matches issue keys, titles, and epic names; `issues epics --search` matches group names.
+JSON output stays on stdout; diagnostics and progress use stderr. Batch payloads accept files or stdin, and exit codes distinguish validation failures, partial results, and other outcomes. [Agent workflows](docs/agents.md) covers direct CLI use and optional skills for onboarding and logging coding sessions. The [CLI reference](docs/cli.md) owns payloads, output, and exit codes.
 
-`worklogs list --epic "Product documents"` lists all active local worklogs for the epic across all dates. The name matches exactly after trimming, including case, using the issues' current epic assignments. Add a date selector, `--issue`, or `--issue-prefix` to narrow the results. Without `--epic` or `--unassigned`, `worklogs list` requires a date selector. Use `--output json` for records with raw and effective filters, or `--fields` to select record fields.
+## Work from a local ledger
 
-Tables show readable estimate, logged, remaining, and overrun durations. Budgets use all active local worklogs across all dates; date selectors choose issues without reducing their lifetime logged totals. Trash and additional remote rows are excluded. The local total is only as complete as the history available locally.
+- **Agent-friendly commands.** Inspect structured context, preview writes with dry runs, and apply JSON batches. Saved reconciliation plans separate inspection from remote changes.
+- **One local ledger.** Inspect your work, corrections, and totals independently of any remote tracker. Local deletion moves entries to recoverable trash.
+- **Plan around the work already there.** Inspect gaps and quota, then place work into free slots with `--fit` or `--fill`.
+- **Keep issues in context.** Group issues into local epics, inspect worklog history, and compare logged effort with optional estimates. Refresh Jira titles and estimates when needed.
+- **Review before changing a tracker.** Pull or push through saved reconciliation plans. Inspect the exact scope, apply it explicitly, and handle partial failures with targeted retries.
+- **Optional interactive review.** Open the TUI when a timeline or visual inspector helps. It uses the same local ledger and services as the CLI.
 
-Remaining time is the sum of each estimated issue's unused budget, clamped at zero; overruns are shown separately. Missing estimates appear as `unknown`. Partial rollups show known remaining time and the number of unestimated issues, so an unknown budget never appears exhausted. These measures describe logged effort, not completion.
+## Optional TUI
 
-Manual titles and estimates override cached Jira metadata; `--clear-title` reveals Jira’s title and `--clear-max-estimate` reveals Jira's value again. `issues refresh` preserves local title, estimate, and epic fields. Estimates accept positive whole-second Go durations and remain informational: they never limit worklog creation or supply the duration an agent logs.
-
-Apply multiple issues using a JSON array of `{issue_key, title, max_estimate_seconds, epic}` patches. Only `issue_key` is required; omitted fields stay unchanged, and `null` clears a local field. Clearing every optional field keeps the issue. The entire batch is validated before atomic persistence, and `--dry` writes no issues. The [ten-issue example](docs/examples/issues.json) groups the supplied SBAH scope and uses `16h` as the maximum for both `8–16h` estimates:
+For an interactive workspace, run:
 
 ```sh
-workledger issues apply --file docs/examples/issues.json --dry --output json
-workledger issues apply --file docs/examples/issues.json
-workledger issues epics --issue-prefix SBAH
+workledger tui
 ```
 
-You can also provide the array through `--stdin`. Use `--output json` for exact seconds, summary counts, estimate source, and cache provenance. `workledger init` provisions issue storage while preserving existing metadata and worklogs.
+Use a terminal of at least **100 columns × 28 rows**. Worklogs opens on today’s entries, with a timeline, available windows, and details for the selected entry. Use `↑`/`↓` to browse, `a` to add, `?` for contextual actions, and `q` to quit. The CLI and agent workflows work independently of this view.
 
-In `workledger tui`, press `6` for Issues. The list heading shows the matching issue count; aggregate budgets appear in Epics and the issue inspector. Use `t` to switch to Epics, Enter to open a group's members, `/` to search, `a` to add, and `e` to edit. Save with `Ctrl+S` or cancel with Esc. Selecting an issue automatically previews its active local worklogs across all dates in the right pane. The right pane includes the full title, creation time, Jira cache provenance and overrides, and epic totals. Tab cycles from the issue list through independently scrollable metadata and worklogs; Esc returns to the list, and Home/End reaches the first/last content of the focused region. In Find, Ctrl+T switches between Issues (key, title, epic) and Worklog text (descriptions), retaining separate queries. Both modes return issues; description matches are marked in the preview and the first match appears automatically. The existing issue picker includes unused issues and titles. Selected-worklog detail continues to show all-time estimate usage, such as `62.5% (10h / 16h)` or `125.0% (20h / 16h) · 4h over estimate`.
+## Sync deliberately
 
-Worklog history loads in pages as you scroll. Use arrows or PgUp/PgDn to scroll the focused metadata or worklog region, Home/End to reach its first/last content, and `r` to refresh or retry.
+The workflow is **reconcile → review → apply**. Creating a plan saves the proposed changes; applying it performs them.
 
-To assign a batch to an epic, mark issues with Space (toggle and advance), or press `v` and move to select a range; press `v` again to finish the range. `V` unselects a range, and `Ctrl+A` selects all matching issues. Press `b`, choose an existing local epic or type a new name, then Enter to apply. Choose **No epic** explicitly to remove assignments. Marks survive sorting and filtering, and the count includes selections outside the current view. Esc finishes a range, clears marks, then clears a filter or returns to Epics. Cancelling or a failed save keeps the batch.
+**Before the first push for a date window, pull, review, and apply that complete window from every intended remote source.** A push can classify remote-only entries as cleanup and delete them. Repeat the pull when expanding into a new window or resolving a failed source.
 
-In Issues and epic member lists, press **Shift+R** to pull Jira titles and original estimates for marked issues, including hidden selections; with no marks it pulls the focused issue. Ownership routes choose the original issue’s Jira instance; a single instance without routing serves as a default. Ambiguous or unmatched ownership keeps the issue selected with a configuration error. Manual titles and estimates, epic assignments, creation dates, and worklogs remain intact. Successful issues save independently and clear their marks; failures remain marked for Shift+R retry with existing cache values preserved. Missing or zero Jira estimates clear the cached estimate and remain unknown. Esc stops pending requests while retaining completed updates and selecting unfinished issues. Lowercase `r` refreshes local data. The issue list's right pane shows cached Jira values, source, refresh time, and active manual overrides; the editor edits manual fields only, and blank title or estimate reveals Jira’s cached value. Run `workledger init` once to add title caching to an existing database.
+The [synchronization guide](docs/synchronization.md) walks through the initial import, review, push, and recovery paths.
 
-In Issues or Epics, press `s` to choose a sort, Enter to apply, or Esc to cancel. Issues show logged time alongside remaining time and offer created at (newest first), natural key, remaining, overrun, title, and logged order; Epics show logged totals and offer name, remaining, overrun, and logged order. Issues default to Created at descending; choices last for the session and preserve selection across refresh and group drilldown. Creation means when an issue first entered the local catalog, and metadata edits or epic assignments do not change it. Run `workledger init` once to migrate an older catalog; existing creation dates use the earliest surviving local timestamp and are approximate. Missing estimates and titles sort last; logged time remains available for unestimated issues. `PgUp`/`PgDn` jump one visible page with one item of overlap, accounting for search, Activity, and wrapped epic rows; `Home`/`End` jump to the first/last matching item while browsing. In a search field those keys move the text cursor, and expanded details retain their own scrolling.
+## Find your next workflow
 
-Agents may use local titles to resolve a missing issue key only when session evidence clearly matches one title. Explicit user selection takes priority, followed by an unambiguous session or branch key; unresolved or ambiguous matches are logged unassigned without requesting a key. Estimates and remaining budget never determine attribution or duration.
-
-Use `/` to start Find in worklog and issue lists, epic lists, and preset or issue pickers. In the issue picker, `Ctrl+T` cycles search by key, worklog description, or title; `/` from its history pane returns focus to Find. Once typing in a search field, `/` is normal query text. Press `?` from any view, form, picker, confirmation, or running operation for contextual Actions. Esc or `?` closes help and returns to the same draft, input cursor, selection, and dialog. Choosing an action runs its normal guarded shortcut in that window. `?` is reserved for help during typing; paste it when literal text is needed and paste is supported.
-
-## Work before an issue exists
-
-Issue keys are optional for worklogs and presets. Capture time now and assign an issue later:
-
-```sh
-workledger worklogs add --fill --today --duration 1h --description "Investigate payment retry"
-workledger worklogs list --unassigned
-workledger worklogs assign <id> <id> --issue PROJ-123 --dry
-workledger worklogs assign <id> <id> --issue PROJ-123
-workledger worklogs update <id> --issue ""
-```
-
-The Unassigned list includes all dates, oldest first; add date selectors to narrow it. Assignment changes only explicitly selected unassigned entries and commits the whole batch together. Unassigned time counts toward local totals, quota, and occupied slots, but push skips it. Pull retains its existing issue-scoped replacement behavior: an imported keyed row can coexist with overlapping unassigned work. If later assignment conflicts, inspect the reported IDs and resolve the duplicate with existing show, update, or delete commands.
-
-In the TUI, `u` opens Unassigned. Day and Unassigned lists support Space, `v`/`V`, and Ctrl+A selection; `b` assigns a key to the marked batch, including explicitly selected entries outside the view. The count-only dialog supports Ctrl+K issue search and Ctrl+T Key, Description, and Title modes. Enter chooses an issue back into the dialog before a separate save.
-
-After upgrading, run `workledger init` if storage readiness reports outdated issue guards. Existing worklogs and issue metadata are retained. Saved push plans without current source snapshots require fresh reconciliation; clearing a key does not undo an already in-flight remote request.
-
-## Daily workflow
-
-Add work locally at an explicit time:
-
-```sh
-workledger worklogs add --issue PROJ-123 --started todayT09:00 --duration 2h --description "Implement reconciliation flow"
-```
-
-Let `workledger` place one entry in the earliest free slot:
-
-```sh
-workledger worklogs add --issue PROJ-123 --fit --today --duration 2h --description "Implement reconciliation flow"
-workledger worklogs add --issue PROJ-123 --fit --mon --duration 90m --description "Review pull request"
-```
-
-Fill a selected date window, splitting across free slots when needed:
-
-```sh
-workledger worklogs add --issue PROJ-123 --fill --from 2026-05-14 --to 2026-05-14 --duration 5h --description "Implement reconciliation flow"
-workledger worklogs add --issue PROJ-123 --fill --tue --duration 3h --description "Prepare release notes"
-```
-
-Save repeated work as a reusable preset and apply it to any explicit local day:
-
-```sh
-workledger presets add daily-standup --issue PROJ-123 --start 09:45 --duration 15m --description "Daily standup"
-workledger presets apply daily-standup --date tomorrow
-workledger presets apply daily-standup --date mon --start 10:00 --dry
-```
-
-Use `workledger presets list`, `show`, `update`, and `delete` to manage presets. Applying a preset creates one ordinary local worklog; one-off overrides do not change the saved preset. Shell completion suggests locally stored preset names.
-
-Automatic placement starts each worklog before the configured workday end by default, although a worklog that starts before the boundary may finish afterward. Use `--overtime` with `--fit` or `--fill` to allow placement to start at or after the workday end:
-
-```sh
-workledger worklogs add --issue PROJ-123 --fill --today --overtime --duration 2h --description "Handle release follow-up"
-```
-
-### `--fit` vs `--fill`
-
-![Worklog placement modes: --fit vs --fill](docs/images/fill_v_fit.png)
-
-`--started` accepts local timestamps such as `2026-05-14T09:00`, `todayT09:00`, `yesterdayT09:00`, `tomorrowT09:00`, `monT09:00`, `+2dT09:00`, and `-3dT09:00`. Weekday names `mon` through `sun` resolve inside the current local Monday-through-Sunday week.
-
-Inspect the current local day:
-
-```sh
-workledger worklogs context --today
-```
-
-Preview and delete worklogs that entered the local ledger recently:
-
-```sh
-workledger worklogs delete --created-within 15m --dry
-workledger worklogs delete --created-within 15m --yes
-```
-
-`--created-within` uses positive whole-second Go durations such as `15m`, `2h`, or `90s`. It filters the local `created_at` timestamp rather than the worklog start time. Worklogs inserted by a reconciliation pull receive a new local creation timestamp, so a recent pull can also match this selector. Batch deletion remains recoverable through local trash; use the dry-run before execution to review each matched row and its creation time.
-
-Permanently remove selected trash records or empty all trash:
-
-```sh
-workledger trash delete <trash-id> --dry
-workledger trash delete <trash-id> --yes
-workledger trash delete --scope local --trashed-within 15m --dry
-workledger trash clear --dry
-workledger trash clear --yes
-```
-
-Trash date selectors continue to filter the original worklog start time; `--trashed-within` instead filters when the archive row entered trash. Filtered deletion can target local or remote trash with `--scope`. `trash clear` always removes both recoverable local trash and remote audit evidence. These operations are irreversible within Workledger and do not change active worklogs, saved plans, or remote services. SQLite deletion is not forensic erasure: data may remain in WAL files, filesystem snapshots, or backups.
-
-Compare local time with a configured adapter:
-
-```sh
-workledger totals --instance clockify --today
-```
-
-After completing the initial pull described under [Configuration](#configuration), create and execute a push plan:
-
-```sh
-workledger plan reconcile --push --today
-workledger plan show <plan-id>
-workledger plan apply <plan-id>
-```
-
-### Reconcile -> review -> apply
-
-![Reconcile, review, then apply remote changes](docs/images/main_flow.png)
-
-`plan reconcile` is non-destructive. It saves the execution contract; `plan apply` performs the mutation after review.
-
-## Date selectors
-
-Use one date selector per command unless the command accepts an explicit `--from` and `--to` range.
-
-| Selector | Meaning |
+| I want to… | Start here |
 | --- | --- |
-| `--today` | Current local day. |
-| `--yesterday` | Previous local day. |
-| `--tomorrow` | Next local day. |
-| `--mon` through `--sun` | One day in the current local Monday-through-Sunday week. |
-| `--current-week` | Current local Monday-through-Sunday week. |
-| `--last-week` | Previous local Monday-through-Sunday week. |
-| `--current-month` | Current local calendar month. |
-| `--last-month` | Previous local calendar month. |
-| `--from <date> --to <date>` | Explicit inclusive local date range. |
-| `--week-offset <n>` | Shift one weekday selector by whole weeks; valid only with `--mon` through `--sun`. |
+| Use Workledger from an agent or log a coding session | [Agent workflows](docs/agents.md) |
+| Install, update, or enable completion | [Installation](docs/installation.md) |
+| Configure storage, work hours, Jira, or Clockify | [Configuration](docs/configuration.md) |
+| Import, review, push, or recover tracker changes | [Synchronization](docs/synchronization.md) |
+| Add, move, group, or recover work | [Daily workflows](docs/usage.md) |
+| Use the optional TUI | [Keybindings](docs/keybindings.md) |
+| Use dates, JSON output, or exit codes | [CLI reference](docs/cli.md) |
+| Diagnose a setup or runtime problem | [Troubleshooting](docs/troubleshooting.md) |
 
-`--from` and `--to` accept `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, weekdays `mon` through `sun` in the current local week, and signed day offsets such as `+2d` or `-3d`.
+## Development
 
-## Recommended agent workflow
+Workledger is maintained by a single author. The [development guide](docs/development.md) covers the code layout, checks, and maintenance workflow. The canonical behavior contracts live in [functional requirements](specs/functional.md) and [non-functional requirements](specs/non-functional.md).
 
-If you use an agent with `workledger`, install the `workledger-onboarding` skill for guided first-time setup and `status` diagnostics before any worklog entry or remote sync workflow.
-
-```sh
-npx skills add solitus0/workledger --skill workledger-onboarding -g
-```
-
-Install the `session-worklog-creator` skill to turn current coding-session context into local worklogs with minimal prompting.
-
-```sh
-npx skills add solitus0/workledger --skill session-worklog-creator -g
-```
-
-If you use Codex and want it to write local worklogs to the shared SQLite database outside the current agent session without asking for permission on every add, allow the default storage path in your Codex sandbox config:
-
-```toml
-[sandbox_workspace_write]
-writable_roots = [
-  "~/.local/share/workledger"
-]
-```
-
-## Configuration
-
-Run setup commands to add adapters to the local YAML config:
-
-```sh
-workledger setup jira-cloud --instance main --base-url https://example.atlassian.net --email user@example.com --token-env JIRA_TOKEN --issue-prefix PROJ
-workledger setup jira-data-center --instance internal --base-url https://jira.example.com --token-env JIRA_DC_TOKEN --issue-prefix OPS
-workledger setup clockify
-```
-
-For Jira, `--issue-prefix` is the project key at the start of an issue key: use `PROJ` for issues such as `PROJ-123`. Workledger needs it for routing—it tells Workledger which configured Jira instance owns those issues. Without that mapping, Workledger cannot safely decide where a local worklog for `PROJ-123` should be read from or sent.
-
-Pass `--issue-prefix` once for each Jira project handled by the instance:
-
-```sh
-workledger setup jira-cloud ... --issue-prefix PROJ --issue-prefix APP
-```
-
-This does not filter Jira during setup and it is not a display label. It creates the instance's default routing rules. Choose only prefixes that belong to that instance; the same prefix cannot be owned by two instances in the same Jira family.
-
-Each setup command can prompt interactively or accept flags. Use command help for exact inputs:
-
-```sh
-workledger setup jira-cloud --help
-```
-
-### Initial remote pull
-
-After `workledger status` succeeds, the first reconciliation action must pull existing worklogs from every configured remote source into the local ledger. Choose a window that covers the complete date range of the first push; use the earliest remote worklog date when importing all history.
-
-```sh
-workledger plan reconcile --pull --from <earliest-date-to-preserve> --to <end-of-first-push-window>
-workledger plan show <plan-id>
-workledger plan apply <plan-id>
-```
-
-Omitting `--adapter` and `--instance` selects all configured reconcile-capable targets. Review the pull plan before applying it. Do not create or apply a push plan if any intended source was skipped or failed; resolve the source and repeat the pull first. A push may otherwise classify remote-only worklogs in its date window as cleanup and delete them. If a later push uses a date outside the imported range, pull and apply that complete window before pushing it.
-
-## Output and failure model
-
-- stdout is reserved for command output.
-- stderr is used for logs, diagnostics, and progress.
-- `--output json` writes valid JSON to stdout without mixed logs.
-- Exit code `0` means success.
-- Exit code `1` means unexpected failure.
-- Exit code `2` means validation or input failure.
-- Exit code `3` means not found.
-- Exit code `4` means authentication failure.
-- Exit code `5` means external or connectivity failure.
-- Exit code `6` means partial success.
-
-## Contributing
-
-Start with the specs before changing behavior. Keep implementation, tests, and documentation aligned with the current contract in the same change.
-
-Use standard Go checks:
-
-```sh
-go test ./...
-```
-
-Business logic belongs outside Cobra command handlers. Keep CLI rendering, exit-code mapping, storage, adapter work, and domain behavior separated.
+[MIT licensed](LICENSE). [Releases](https://github.com/solitus0/workledger/releases).

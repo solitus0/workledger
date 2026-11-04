@@ -227,7 +227,7 @@ func TestInlineHistoryFailureRetryAndExternalChange(t *testing.T) {
 	state := worklogState(m.workspace)
 	state.issueDetailErr = errors.New("history unavailable")
 	m = resolveHistory(t, m, m.syncIssueHistory())
-	if m.issueHistory.err != "history unavailable" || !strings.Contains(ansi.Strip(m.render()), "Worklogs unavailable") {
+	if m.issueHistory.err != "history unavailable" || !strings.Contains(ansi.Strip(m.render()), "History unavailable") {
 		t.Fatal("history failure hidden")
 	}
 	state.issueDetailErr = nil

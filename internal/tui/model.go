@@ -35,8 +35,8 @@ const (
 	worklogsTab
 	plansTab
 	presetsTab
-	trashTab
 	issuesTab
+	trashTab
 	tabCount
 )
 
@@ -45,8 +45,8 @@ var tabLabels = [tabCount]string{
 	worklogsTab: "Worklogs",
 	plansTab:    "Plans",
 	presetsTab:  "Presets",
-	trashTab:    "Trash",
 	issuesTab:   "Issues",
+	trashTab:    "Trash",
 }
 
 type worklogView int
@@ -91,6 +91,7 @@ const (
 	issueSortOverlay
 	epicAssignmentOverlay
 	worklogAssignmentOverlay
+	discardDraftOverlay
 )
 
 type noticeKind int
@@ -209,6 +210,9 @@ type interactionState struct {
 	detailTitle       string
 	detailContent     string
 	detailWorklog     bool
+	draftBaseline     []string
+	draftReloading    bool
+	draftError        string
 }
 
 type interactionKind int
@@ -526,6 +530,8 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		}()
 	}
 	switch msg := msg.(type) {
+	case draftReloadedMsg:
+		return m.applyDraftReload(msg)
 	case tea.BackgroundColorMsg:
 		m.colors = m.deps.theme.palette(msg.IsDark())
 		m.colorReady = true
@@ -534,6 +540,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.restyleIssueInputs()
 		m.restyleIssuePickerInput()
 		m.restyleSearchInputs()
+		m.restylePlanInputs()
 		m.resizeIssueHistory()
 		return m, nil
 	case tea.WindowSizeMsg:
@@ -543,6 +550,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		m.resizeIssueInputs()
 		m.resizeIssuePickerInput()
 		m.resizeSearchInputs()
+		m.resizePlanInputs()
 		m.refreshDetailViewport()
 		m.resizeIssueHistory()
 		return m, nil
@@ -1041,6 +1049,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		}
 		return m, m.openActions()
 	}
+	if m.draftReloading && m.actions == nil {
+		return m, nil
+	}
 	if m.width < minimumWidth || m.height < minimumHeight {
 		if keyName == "q" {
 			return m, tea.Quit
@@ -1113,11 +1124,11 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m, nil
 	}
 	if keyName == "5" && m.workspace != nil {
-		m.activateTab(trashTab)
+		m.activateTab(issuesTab)
 		return m, nil
 	}
 	if keyName == "6" && m.workspace != nil {
-		m.activateTab(issuesTab)
+		m.activateTab(trashTab)
 		return m, nil
 	}
 	if keyName == "q" {
@@ -1141,7 +1152,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		case "down", "j":
 			m.issueRange = nil
 			if m.workspace != nil {
-				m.activeTab = min(issuesTab, m.activeTab+1)
+				m.activeTab = min(tabCount-1, m.activeTab+1)
 			}
 		case "enter", " ":
 			m.focus = focusWorkspace
@@ -1221,9 +1232,9 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		case railCards[3].contains(msg.X, msg.Y) && m.workspace != nil:
 			m.activateTab(presetsTab)
 		case railCards[4].contains(msg.X, msg.Y) && m.workspace != nil:
-			m.activateTab(trashTab)
-		case railCards[5].contains(msg.X, msg.Y) && m.workspace != nil:
 			m.activateTab(issuesTab)
+		case railCards[5].contains(msg.X, msg.Y) && m.workspace != nil:
+			m.activateTab(trashTab)
 		}
 		return m, nil
 	}
@@ -1571,6 +1582,7 @@ func (m *model) openAddForm() tea.Cmd {
 	m.form = &form
 	m.formError = ""
 	m.resizeForm()
+	m.rememberDraft()
 	m.descriptionSuggestionGen++
 	return m.scheduleIssueSuggestions(false)
 }
@@ -1581,6 +1593,7 @@ func (m *model) openEditForm(item worklogs.LocalWorklog) {
 	m.form = &form
 	m.formError = ""
 	m.resizeForm()
+	m.rememberDraft()
 	m.descriptionSuggestionGen++
 }
 
@@ -1619,7 +1632,7 @@ func (m model) newForm(editing bool, id string, revision int64, issue, started, 
 	if editing {
 		placement = manualPlacement
 	}
-	form := formState{inputs: inputs, focus: issueField, editing: editing, id: id, revision: revision, placement: placement}
+	form := formState{inputs: inputs, focus: issueField, errorField: issueField, editing: editing, id: id, revision: revision, placement: placement}
 	form.inputs[issueInput].Focus()
 	return form
 }
@@ -1846,7 +1859,7 @@ func (m *model) resizeForm() {
 	if m.form == nil {
 		return
 	}
-	width := max(12, m.formContentWidth()-13)
+	width := max(12, m.formContentWidth()-15)
 	for index := range m.form.inputs {
 		m.form.inputs[index].SetWidth(width)
 	}
@@ -1966,6 +1979,9 @@ func overtimePlacementAvailable(err error) bool {
 }
 
 func automaticPlacementMessage(err error) string {
+	if field, message := validationFeedback(err); field == "duration" {
+		return message
+	}
 	if overtimePlacementAvailable(err) {
 		return "No eligible placement is available; allowing later starts can succeed."
 	}

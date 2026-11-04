@@ -534,3 +534,12 @@ type recordedMove struct {
 	revision    int64
 	destination time.Time
 }
+
+func (f *fakePresets) LookupID(_ context.Context, id string) (presets.Preset, error) {
+	for _, p := range f.items {
+		if p.ID == id {
+			return p, f.err
+		}
+	}
+	return presets.Preset{}, presets.ErrNotFound
+}

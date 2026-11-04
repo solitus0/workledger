@@ -58,7 +58,7 @@ brews:
       - workledger
     name: workledger
     homepage: https://github.com/solitus0/workledger
-    description: Local-first CLI for managing canonical worklogs
+    description: Agent-friendly CLI for local worklogs and reviewed tracker sync
     license: MIT
     directory: Formula
     repository:

@@ -42,7 +42,7 @@ func TestIssuePickerModesPagingDetailsAndDraft(t *testing.T) {
 	next, _ = m.Update(cmd())
 	m = next.(model)
 	view := m.render()
-	if !strings.Contains(view, "recognizable work") || !strings.Contains(view, "2026-05-04 · 1h 30m") || strings.Contains(view, "\x1b[") {
+	if !strings.Contains(view, "recognizable work") || !strings.Contains(view, "2026-05-04 · 1h30m") || strings.Contains(view, "\x1b[") {
 		t.Fatalf("detail pane / NO_COLOR failed:\n%s", view)
 	}
 	if width, height := lipgloss.Width(view), lipgloss.Height(view); width != minimumWidth || height != minimumHeight {
@@ -219,8 +219,8 @@ func TestIssuePickerEntryDateAndDuration(t *testing.T) {
 		search   bool
 		header   string
 	}{
-		{name: "minutes", duration: 900, header: "2026-10-07 · 0h 15m"},
-		{name: "multi-hour search match", duration: 12600, search: true, header: "* 2026-10-07 · 3h 30m"},
+		{name: "minutes", duration: 900, header: "2026-10-07 · 15m"},
+		{name: "multi-hour search match", duration: 12600, search: true, header: "* 2026-10-07 · 3h30m"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ws, deps := testWorkspace(t)

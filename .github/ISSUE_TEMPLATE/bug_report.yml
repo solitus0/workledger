@@ -1,0 +1,28 @@
+name: Bug report
+description: Report a reproducible CLI, agent workflow, or optional TUI problem.
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include Workledger version, OS, and agent or shell. For TUI issues, add terminal emulator, dimensions, and multiplexer when applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Give the exact command or minimal interaction sequence. Use fictional data and remove secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Additional evidence
+      description: Add sanitized output or screenshots. Include font and theme when relevant to rendering.

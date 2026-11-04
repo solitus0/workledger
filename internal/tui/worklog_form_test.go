@@ -506,6 +506,10 @@ func TestExternalChangeRecalculatesAutomaticAddWithoutStalingDraft(t *testing.T)
 	worklogGeneration := m.worklogGen
 	next, cmd = m.Update(specialKey(tea.KeyEscape))
 	m = next.(model)
+	if m.overlay == discardDraftOverlay {
+		next, cmd = m.Update(specialKey(tea.KeyEnter))
+		m = next.(model)
+	}
 	if m.form != nil || cmd == nil || m.worklogGen != worklogGeneration+1 {
 		t.Fatalf("cancelling externally changed draft did not reload list")
 	}
@@ -707,7 +711,7 @@ func TestAutomaticAddFormExplainsDayAndProjectedOutcome(t *testing.T) {
 		"jira cloud · estimate 4h",
 		"█ booked  ░ proposed  ╱ lunch  □ free",
 		"2 worklogs · Fill", "10:00–12:00", "12:45–13:45",
-		"5h 00m total · 3h 00m below daily", "target",
+		"5h total · 3h below daily", "target",
 		"Ctrl+S Create 2 worklogs",
 	} {
 		if !strings.Contains(rendered, expected) {

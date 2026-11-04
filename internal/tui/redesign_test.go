@@ -146,7 +146,7 @@ func TestActionsSearchDispatchesThroughExistingConfirmation(t *testing.T) {
 func TestActionsOpenAndCloseFromEveryDestination(t *testing.T) {
 	for _, destination := range []struct{ key, label string }{
 		{"1", "Status"}, {"2", "Worklogs"}, {"3", "Plans"},
-		{"4", "Presets"}, {"5", "Trash"}, {"6", "Issues"},
+		{"4", "Presets"}, {"5", "Issues"}, {"6", "Trash"},
 	} {
 		t.Run(destination.label, func(t *testing.T) {
 			ws, deps := testWorkspace(t)

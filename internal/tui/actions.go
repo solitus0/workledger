@@ -1,6 +1,9 @@
 package tui
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // These commands are also the source of the idle action bar. The menu dispatches
 // the same keys as direct keyboard input, including existing mutation guards.
@@ -15,14 +18,14 @@ func (m model) commandActions() []commandAction {
 	actions := []commandAction{}
 	add := func(key, chord, label string) { actions = append(actions, commandAction{key, chord, label}) }
 	if m.focus == focusIssueHistory || m.focus == focusIssueMetadata {
-		actions = []commandAction{{"up", "↑", "Scroll panel up"}, {"down", "↓", "Scroll panel down"}, {"pgup", "PgUp", "Previous panel page"}, {"pgdown", "PgDn", "Next panel page"}, {"home", "Home", "First panel content"}, {"end", "End", "Last panel content"}, {"tab", "Tab", "Next pane"}, {"shift+tab", "Shift+Tab", "Previous pane"}, {"esc", "Esc", "Focus issues"}, {"/", "/", "Find issues"}, {"ctrl+t", "Ctrl+T", "Switch Issues or Worklog text search"}, {"r", "r", "Refresh or retry issue data"}, {"g", "g", "Toggle activity"}, {"q", "q", "Quit"}}
+		actions = []commandAction{{"f2", "F2", "Full issue details or error"}, {"up", "↑", "Scroll panel up"}, {"down", "↓", "Scroll panel down"}, {"pgup", "PgUp", "Previous panel page"}, {"pgdown", "PgDn", "Next panel page"}, {"home", "Home", "First panel content"}, {"end", "End", "Last panel content"}, {"tab", "Tab", "Next pane"}, {"shift+tab", "Shift+Tab", "Previous pane"}, {"esc", "Esc", "Focus issues"}, {"/", "/", "Find issues"}, {"ctrl+t", "Ctrl+T", "Switch Issues or Worklog text search"}, {"r", "r", "Refresh or retry issue data"}, {"g", "g", "Toggle activity"}, {"q", "q", "Quit"}}
 		for index, name := range tabLabels {
 			add(fmt.Sprint(index+1), fmt.Sprint(index+1), "Open "+name)
 		}
 		return actions
 	}
 	if m.focus == focusActivity {
-		for _, action := range []commandAction{{"up", "↑", "Select previous activity"}, {"down", "↓", "Select next activity"}, {"pgup", "PgUp", "Previous page"}, {"pgdown", "PgDn", "Next page"}, {"home", "Home", "Newest activity"}, {"end", "End", "Oldest activity"}, {"r", "r", "Refresh activity"}, {"g", "g", "Close activity"}, {"q", "q", "Quit"}} {
+		for _, action := range []commandAction{{"enter", "Enter", "Activity details"}, {"f2", "F2", "Activity details"}, {"tab", "Tab", "Next pane"}, {"up", "↑", "Select previous activity"}, {"down", "↓", "Select next activity"}, {"pgup", "PgUp", "Previous page"}, {"pgdown", "PgDn", "Next page"}, {"home", "Home", "Newest activity"}, {"end", "End", "Oldest activity"}, {"r", "r", "Refresh activity"}, {"g", "g", "Close activity"}, {"q", "q", "Quit"}} {
 			actions = append(actions, action)
 		}
 		for index, name := range tabLabels {
@@ -134,7 +137,7 @@ func (m model) commandActions() []commandAction {
 			if m.selectedPlanItem() != nil {
 				add("enter", "Enter", "Scope details")
 			}
-			add("a", "a", "Show ready or all scopes")
+			add("a", "a", "Show actionable or all scopes")
 			if m.planExecutableCount("not_attempted") > 0 {
 				add("A", "A", "Apply saved plan")
 			}
@@ -197,7 +200,7 @@ func (m model) idleHints() (primary []actionHint) {
 		keys = []string{"a", "e", "D", "enter", "r"}
 	case issuesTab:
 		primary[0] = actionHint{"↑/↓ PgUp/Dn", "Select"}
-		keys = []string{"s", "/", "ctrl+t", "tab", "space", "v", "b", "R", "t", "esc", "a", "e", "enter", "r"}
+		keys = []string{"a", "e", "space", "/", "tab", "b", "R", "s", "ctrl+t", "v", "t", "esc", "enter", "r"}
 	case trashTab:
 		keys = []string{"R", "s", "enter", "r"}
 	case plansTab:
@@ -207,12 +210,20 @@ func (m model) idleHints() (primary []actionHint) {
 			keys = []string{"a", "A", "f", "u", "enter", "r", "esc"}
 		}
 	case worklogsTab:
-		keys = []string{"a", "A", "e", "M", "D", "v", "space", "u", "/", "enter"}
-		if len(m.worklogMarks) > 0 {
+		primary = nil
+		keys = []string{"a", "e", "enter", "/", "space"}
+		if !m.isWorklogList() {
+			primary = []actionHint{{"↑/↓", "Select"}}
+			keys = []string{"a", "enter", "A"}
+		}
+		if m.isWorklogList() && len(m.worklogMarks) > 0 {
 			keys = []string{"b", "space", "v", "V", "ctrl+a", "esc", "/"}
 		}
 	}
 	labels := map[string]string{"a": "Add", "e": "Edit", "M": "Move", "D": "Trash", "/": "Find", "enter": "Details", "s": "Scope", "c": "Config", "r": "Refresh", "R": "Restore", "n": "New plan", "A": "Apply", "f": "Retry failed", "u": "Retry uncertain", "esc": "Back"}
+	if m.activeTab == presetsTab {
+		labels["D"] = "Delete preset"
+	}
 	if m.activeTab == statusTab {
 		labels["s"] = "Status"
 	}
@@ -227,7 +238,7 @@ func (m model) idleHints() (primary []actionHint) {
 	}
 	if m.activeTab == worklogsTab {
 		labels["A"] = "Preset"
-		labels["v"], labels["V"], labels["space"], labels["b"], labels["ctrl+a"], labels["u"], labels["esc"] = "Range", "Unselect", "Toggle", "Assign issue", "Select all", "Unassigned", "Clear selection"
+		labels["v"], labels["V"], labels["space"], labels["b"], labels["ctrl+a"], labels["u"], labels["esc"] = "Range", "Unselect", "Mark", "Assign issue", "Select all", "Unassigned", "Clear selection"
 	}
 	if m.activeTab == issuesTab {
 		labels["tab"], labels["ctrl+t"] = "Inspector", "Search mode"
@@ -250,7 +261,12 @@ func (m model) idleHints() (primary []actionHint) {
 			labels["t"], labels["enter"] = "Issues", "Members"
 		}
 	}
+	seen := map[string]bool{}
 	for _, key := range keys {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		for _, action := range m.commandActions() {
 			if action.key == key {
 				primary = append(primary, actionHint{action.chord, labels[key]})
@@ -258,7 +274,7 @@ func (m model) idleHints() (primary []actionHint) {
 			}
 		}
 	}
-	if m.activeTab == worklogsTab {
+	if m.activeTab == worklogsTab && !m.isWorklogList() {
 		primary = append(primary, actionHint{"d/w/m", "View"})
 		if m.worklogView == monthWorklogView {
 			primary = append([]actionHint{{"hjkl", "Day"}, {"PgUp/Dn", "Month"}}, primary[1:]...)
@@ -269,4 +285,48 @@ func (m model) idleHints() (primary []actionHint) {
 	}
 	primary = append(primary, actionHint{"?", "Actions"}, actionHint{"q", "Quit"})
 	return
+}
+
+// Availability comes from the same live command list as searchable Actions.
+// Footer grouping and short labels are presentation, never a second guard set.
+func (m model) availableHints(hints []actionHint) []actionHint {
+	allowed := map[string]bool{}
+	for _, a := range m.commandActions() {
+		allowed[a.key] = true
+		allowed[a.chord] = true
+	}
+	var result []actionHint
+	seen := map[string]bool{}
+	for _, hint := range hints {
+		if seen[hint.chord] {
+			continue
+		}
+		valid := allowed[hint.chord] || hint.chord == "" || hint.chord == "Type" || hint.chord == "?" || m.actions != nil
+		for _, key := range strings.FieldsFunc(hint.chord, func(r rune) bool { return r == '/' || r == ' ' }) {
+			if len(key) > 1 {
+				key = strings.ToLower(key)
+			}
+			switch key {
+			case "↑":
+				key = "up"
+			case "↓":
+				key = "down"
+			case "pgdn", "dn":
+				key = "pgdown"
+			case "pgup":
+				key = "pgup"
+			case "edge":
+				continue
+			}
+			valid = valid || allowed[key]
+		}
+		if hint.chord == "/" {
+			valid = allowed["/"]
+		}
+		if valid {
+			result = append(result, hint)
+			seen[hint.chord] = true
+		}
+	}
+	return result
 }

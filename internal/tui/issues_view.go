@@ -114,11 +114,7 @@ func (m model) issueRefreshLabel() string {
 }
 
 func (m model) renderIssueViewSelector() string {
-	sort := m.muted("  ·  Sort: " + m.currentIssueSort().label(m.issueView))
-	if m.issueView == epicListView {
-		return "Issues  " + m.paintBold("[Epics]", m.colors.Focus) + sort
-	}
-	return m.paintBold("[Issues]", m.colors.Focus) + "  Epics" + sort
+	return m.selector([]string{"Issues", "Epics"}, int(m.issueView)) + m.muted("  ·  Sort: "+m.currentIssueSort().label(m.issueView))
 }
 
 func (m model) renderEpicsWorkspace(width, height int) string {
@@ -317,14 +313,17 @@ func (m model) renderIssueForm() string {
 	if m.issueForm.editing {
 		title = "Edit issue metadata"
 	}
-	lines := []string{m.paintBold(title, m.colors.Secondary), ""}
+	lines := []string{m.paintBold(title, m.colors.Focus), ""}
 	labels := []string{"Issue", "Title", "Max estimate", "Epic"}
 	for index, label := range labels {
-		value := m.issueForm.inputs[index].View()
+		value := m.inputView(m.issueForm.inputs[index], index == m.issueForm.focus)
 		if index == 0 && m.issueForm.editing {
 			value = m.issueForm.inputs[index].Value()
 		}
 		lines = append(lines, m.renderFormRow(label, value, index == m.issueForm.focus))
+		if m.issueFormError != "" && index == m.issueForm.errorIndex {
+			lines = append(lines, m.fieldError(m.issueFormError, m.width-navigationWidth-3))
+		}
 	}
 	helper := "Title, estimate and epic are optional."
 	if m.issueForm.editing {
@@ -338,10 +337,8 @@ func (m model) renderIssueForm() string {
 		lines = append(lines, "", m.paint("Saving…", m.colors.Progress))
 	}
 	if m.issueForm.stale {
-		lines = append(lines, "", m.paint("Changed externally — cancel and reopen before saving.", m.colors.Warning))
+		lines = append(lines, "", m.paint("Changed externally — save to review reloading the latest record.", m.colors.Warning))
 	}
-	if m.issueFormError != "" {
-		lines = append(lines, "", m.paint(m.issueFormError, m.colors.Destructive))
-	}
+
 	return strings.Join(lines, "\n")
 }

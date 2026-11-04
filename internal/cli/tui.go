@@ -13,7 +13,7 @@ var runTUI = workledgertui.Run
 func (a *app) newTUICommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "tui",
-		Short: "Open the interactive status and worklog workspace",
+		Short: "Open the optional interactive status and worklog workspace",
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				return a.fail("table", 2, "validation_error", "tui accepts no arguments", nil)

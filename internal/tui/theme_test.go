@@ -33,6 +33,12 @@ func TestDefaultThemeMeetsSemanticContrastTargets(t *testing.T) {
 		if ratio := contrastRatio(testCase.palette.Border, testCase.background); ratio < 3 {
 			t.Errorf("%s border contrast = %.2f:1, want at least 3:1", name, ratio)
 		}
+		if ratio := contrastRatio(testCase.palette.SelectionText, testCase.palette.SelectionBackground); ratio < 4.5 {
+			t.Errorf("%s selected row contrast = %.2f:1, want at least 4.5:1", name, ratio)
+		}
+		if ratio := contrastRatio(testCase.palette.Focus, testCase.palette.SelectionBackground); ratio < 3 {
+			t.Errorf("%s selection marker contrast = %.2f:1, want at least 3:1", name, ratio)
+		}
 	}
 }
 
@@ -59,14 +65,16 @@ func relativeLuminance(value string) float64 {
 	return 0.2126*channel(rgb>>16) + 0.7152*channel((rgb>>8)&0xff) + 0.0722*channel(rgb&0xff)
 }
 
-func TestDefaultThemeUsesContrastQualifiedCatppuccinRoles(t *testing.T) {
+func TestDefaultThemeUsesLedgerWAndSemanticRoles(t *testing.T) {
 	want := Theme{
 		Light: Palette{
-			Focus: "#7E1FD4", Information: "#006F73", Progress: "#0B63CE", Warning: "#925500", Success: "#287A1D",
+			SelectionText: "#4C4F69", SelectionBackground: "#DED5F1",
+			Focus: "#6D4BC3", Information: "#006F73", Progress: "#0B63CE", Warning: "#925500", Success: "#287A1D",
 			Destructive: "#D20F39", Proposed: "#0969A2", Secondary: "#5C5F6F", Muted: "#686B7A", Border: "#737686", Placeholder: "#686B7A",
 		},
 		Dark: Palette{
-			Focus: "#CBA6F7", Information: "#94E2D5", Progress: "#89B4FA", Warning: "#F9E2AF", Success: "#A6E3A1",
+			SelectionText: "#CDD6F4", SelectionBackground: "#45375C",
+			Focus: "#B9A2F4", Information: "#94E2D5", Progress: "#89B4FA", Warning: "#F9E2AF", Success: "#A6E3A1",
 			Destructive: "#F38BA8", Proposed: "#74C7EC", Secondary: "#BAC2DE", Muted: "#9399B2", Border: "#6C7086", Placeholder: "#9399B2",
 		},
 	}

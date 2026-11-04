@@ -11,16 +11,16 @@ import (
 )
 
 func (m model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.form.saving {
+		return m, nil
+	}
 	key, isKey := msg.(tea.KeyPressMsg)
 	if isKey {
 		switch key.String() {
 		case "esc":
-			m.form = nil
-			m.formError = ""
-			if m.reloadAfterForm {
-				m.reloadAfterForm = false
-				return m, m.refreshCmd(refreshWorkspace)
-			}
+			return m.cancelDraft()
+		case "f2":
+			m.openDetails("Worklog preview", m.draftDetails())
 			return m, nil
 		case "ctrl+s":
 			return m.beginFormSubmit()
@@ -96,6 +96,10 @@ func (m model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) beginFormSubmit() (tea.Model, tea.Cmd) {
+	if m.form.saving {
+		return m, nil
+	}
+	m.draftError = ""
 	m.normalizeDurationInput()
 	if m.form.stale {
 		m.overlay = reloadOverlay
@@ -107,7 +111,9 @@ func (m model) beginFormSubmit() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if len(m.form.previewRecords) == 0 {
-			m.formError = firstText(m.form.previewError, "enter a valid duration to preview placement")
+			m.formError = firstText(m.form.previewError, "Enter a duration such as 1h30m or 90m.")
+			m.form.errorField = durationField
+			m.focusForm(durationField)
 			return m, nil
 		}
 	}
@@ -116,6 +122,7 @@ func (m model) beginFormSubmit() (tea.Model, tea.Cmd) {
 		operation = "worklogs.update"
 	}
 	summary := tuiActivitySummary("issue="+strings.ToUpper(strings.TrimSpace(m.form.inputs[issueInput].Value())), durationSummary(m.form.inputs[durationInput].Value()), "date="+m.selectedDate.Format("2006-01-02"), "placement="+strings.ToLower(m.form.placement.String()))
+	m.form.saving = true
 	return m, m.beginActivity(operation, summary, m.submitFormCmd())
 }
 
@@ -168,6 +175,9 @@ func (m *model) acceptFormSuggestion(msg tea.Msg) (tea.Cmd, bool) {
 }
 
 func (m model) handleMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd) {
+	if m.form != nil {
+		m.form.saving = false
+	}
 	if msg.kind == "move" && m.move != nil {
 		m.move.saving = false
 		if msg.err != nil {
@@ -222,8 +232,11 @@ func (m model) handleMutationResult(msg mutationResultMsg) (tea.Model, tea.Cmd) 
 			}
 			return m, nil
 		}
-		m.formError = msg.err.Error()
-		m.setNotice(noticeError, msg.err.Error())
+		if m.form != nil {
+			m.worklogValidation(msg.err)
+		} else {
+			m.setNotice(noticeError, msg.err.Error())
+		}
 		return m, nil
 	}
 	m.form = nil

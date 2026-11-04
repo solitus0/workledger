@@ -169,11 +169,20 @@ func TestIssuesFormValidationFailureRecoveryAndExternalChanges(t *testing.T) {
 	m = next.(model)
 	next, cmd = m.Update(ctrlKey('s'))
 	m = next.(model)
-	if !m.issueForm.stale || cmd != nil || !strings.Contains(m.issueFormError, "cancel and reopen") {
+	if !m.issueForm.stale || cmd != nil || m.overlay != reloadOverlay {
 		t.Fatal("external issue change did not block stale save")
 	}
 	next, _ = m.Update(specialKey(tea.KeyEsc))
 	m = next.(model)
+	if m.issueForm == nil || m.overlay != noOverlay {
+		t.Fatal("cancel reload lost draft")
+	}
+	next, _ = m.Update(specialKey(tea.KeyEsc))
+	m = next.(model)
+	if m.overlay == discardDraftOverlay {
+		next, _ = m.Update(specialKey(tea.KeyEnter))
+		m = next.(model)
+	}
 	if m.issueForm != nil || m.selectedIssueKey() != "SBAH-2" {
 		t.Fatal("failure/stale cancel did not preserve selection")
 	}
@@ -194,7 +203,7 @@ func TestIssuesLayoutsPreserveMetricsAndFormAtMinimumSize(t *testing.T) {
 				if !strings.Contains(listHeader, "3 issues") || strings.Contains(listHeader, "left") || strings.Contains(listHeader, "unestimated") {
 					t.Fatalf("list header repeats aggregate budget: %s", listHeader)
 				}
-				for _, content := range []string{"6 Issues", "Logged", "Estimate", "Remaining", "Unknown", "Worklogs"} {
+				for _, content := range []string{"5 Issues", "Logged", "Estimate", "Remaining", "Unknown", "Worklogs"} {
 					if !strings.Contains(view, content) {
 						t.Fatalf("lost %s at %v activity=%t: %s", content, size, drawer, view)
 					}

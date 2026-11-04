@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/viewport"
@@ -34,6 +35,15 @@ func (m *model) refreshDetailViewport() {
 		m.detailContent = m.renderWorklogDetail()
 	}
 	content := ansi.Wrap(m.detailContent, width, "")
-	m.detailViewport.SetHeight(min(max(1, layout.workspace.height-6), max(1, lipgloss.Height(content))))
+	m.detailViewport.SetHeight(min(max(1, layout.workspace.height-8), max(1, lipgloss.Height(content))))
 	m.detailViewport.SetContent(content)
+}
+
+func (m model) detailPosition() string {
+	total := m.detailViewport.TotalLineCount()
+	if total == 0 {
+		return "No detail lines"
+	}
+	start := m.detailViewport.YOffset() + 1
+	return fmt.Sprintf("Lines %d–%d of %d", start, min(total, start+m.detailViewport.Height()-1), total)
 }

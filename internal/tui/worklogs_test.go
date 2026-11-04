@@ -206,7 +206,7 @@ func TestWeekDeleteSnapshotsAndDeletesExactlySelectedDay(t *testing.T) {
 		t.Fatalf("week delete overlay=%v selection=%#v", m.overlay, m.deleteSelection)
 	}
 	rendered := m.render()
-	for _, expected := range []string{"Move selected day's worklogs to trash?", "2 worklogs (2h 30m)", "Thursday, 2026-05-21", "They can be restored if conflict-free."} {
+	for _, expected := range []string{"Move selected day's worklogs to trash?", "2 worklogs (2h30m)", "Thursday, 2026-05-21", "They can be restored if conflict-free."} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("week delete confirmation missing %q:\n%s", expected, rendered)
 		}
@@ -277,7 +277,7 @@ func TestSelectedIssueTotalLoadsForExactIssueAndIgnoresLateResults(t *testing.T)
 	}
 	next, _ := m.Update(cmd())
 	m = next.(model)
-	if m.issueTotal != 3*3600 || !strings.Contains(m.renderWorklogDetail(), "Local issue total 3h 00m") {
+	if m.issueTotal != 3*3600 || !strings.Contains(m.renderWorklogDetail(), "Local issue total 3h") {
 		t.Fatalf("first issue total state = %#v detail=%q", m, m.renderWorklogDetail())
 	}
 

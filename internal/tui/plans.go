@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ type planFormState struct {
 	profileIndex int // -1 uses automatic profile selection.
 	dateInputs   [2]textinput.Model
 	dateFocus    int
+	errorText    string
 }
 
 type planOperationState struct {
@@ -138,15 +140,17 @@ func (m model) planLoadCmd(generation int, id string) tea.Cmd {
 
 func (m *model) openPlanForm() {
 	targets := m.resolvePlanTargets("push")
-	from := textinput.New()
+	from := m.searchInput("YYYY-MM-DD")
 	from.Prompt = ""
 	from.Placeholder = "YYYY-MM-DD"
 	from.SetValue(m.selectedDate.Format("2006-01-02"))
-	to := textinput.New()
+	to := m.searchInput("YYYY-MM-DD")
 	to.Prompt = ""
 	to.Placeholder = "YYYY-MM-DD"
 	to.SetValue(m.selectedDate.Format("2006-01-02"))
 	m.planForm = &planFormState{direction: "push", window: planDayWindow, targets: targets, targetIndex: -1, profileIndex: -1, dateInputs: [2]textinput.Model{from, to}}
+	m.resizePlanInputs()
+	m.rememberDraft()
 }
 
 func (m model) resolvePlanTargets(direction string) []reconcile.ReconcileTarget {
@@ -167,8 +171,12 @@ func (m model) updatePlanForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	key := keyMsg.String()
 	switch key {
+	case "f2":
+		m.openDetails("Draft details", m.draftDetails())
+		return m, nil
+
 	case "esc":
-		m.planForm = nil
+		return m.cancelDraft()
 	case "p":
 		m.planForm.direction = "push"
 		m.planForm.targets = m.resolvePlanTargets("push")
@@ -215,7 +223,12 @@ func (m model) updatePlanForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if _, _, err := m.planFormWindow(); err != nil {
-			m.setNotice(noticeError, err.Error())
+			m.planForm.errorText = err.Error()
+			m.planForm.dateFocus = 0
+			if _, err := time.ParseInLocation("2006-01-02", m.planForm.dateInputs[0].Value(), m.workspace.cfg.Location); err == nil {
+				m.planForm.dateFocus = 1
+			}
+			m.focusPlanDateInput()
 			return m, nil
 		}
 		m.overlay = reconcilePlanOverlay
@@ -223,6 +236,9 @@ func (m model) updatePlanForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.planForm.window == planCustomWindow {
 			input := m.planForm.dateInputs[m.planForm.dateFocus]
 			updated, cmd := input.Update(keyMsg)
+			if updated.Value() != input.Value() {
+				m.planForm.errorText = ""
+			}
 			m.planForm.dateInputs[m.planForm.dateFocus] = updated
 			return m, cmd
 		}
@@ -515,15 +531,16 @@ func (m model) visiblePlanItems() []reconcile.PlanItem {
 	if m.plan == nil {
 		return nil
 	}
-	if m.planShowAll {
-		return m.plan.Items
-	}
 	items := make([]reconcile.PlanItem, 0, len(m.plan.Items))
 	for _, item := range m.plan.Items {
-		if item.PlanStatus == "ready" {
+		if m.planShowAll || item.PlanStatus == "ready" {
 			items = append(items, item)
 		}
 	}
+	rank := map[string]int{"not_attempted": 0, "failed": 1, "uncertain": 2, "succeeded": 3}
+	slices.SortStableFunc(items, func(a, b reconcile.PlanItem) int {
+		return rank[a.ExecutionState] - rank[b.ExecutionState]
+	})
 	return items
 }
 
@@ -664,4 +681,28 @@ func planReconcileFailures(result reconcile.ReconcileResult) []string {
 		}
 	}
 	return failures
+}
+
+func (m *model) restylePlanInputs() {
+	if m.planForm == nil {
+		return
+	}
+	styles := m.colors.textInputStyles()
+	if m.deps.noColor {
+		styles = textinput.Styles{}
+	}
+	for i := range m.planForm.dateInputs {
+		m.planForm.dateInputs[i].SetStyles(styles)
+		if m.deps.noColor {
+			m.planForm.dateInputs[i].SetVirtualCursor(false)
+		}
+	}
+}
+func (m *model) resizePlanInputs() {
+	if m.planForm == nil {
+		return
+	}
+	for i := range m.planForm.dateInputs {
+		m.planForm.dateInputs[i].SetWidth(max(10, m.width-navigationWidth-18))
+	}
 }

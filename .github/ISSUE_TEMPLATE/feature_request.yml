@@ -1,0 +1,17 @@
+name: Feature request
+description: Describe a worklog problem and the outcome you need.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What task is difficult or impossible today? Include the concrete workflow.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the resulting behavior and any alternatives you have tried.
+    validations:
+      required: true

@@ -8,6 +8,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ## [Unreleased]
 
 ### Added
+- TUI draft-discard protection, shared stale-record reload, full draft and error details through F2, Activity details, and visible line positions in scrollable dialogs.
 - `worklogs list --unassigned` lists keyless worklogs across all dates, oldest first, with optional date narrowing. It cannot be combined with issue, issue-prefix, or epic filters.
 - `worklogs assign <id>... --issue <KEY> [--dry]` assigns an explicitly selected unassigned batch atomically. Missing, already assigned, stale, or conflicting entries reject the whole batch; conflicts identify worklog IDs and time windows for manual resolution.
 - TUI Worklogs Unassigned view through `u`, with Space, `v`/`V`, and Ctrl+A selection in Day and Unassigned lists. Marks survive date, filter, view, refresh, and resize changes, with counts for hidden selections. `b` opens a count-only assignment dialog; Ctrl+K opens issue search and Ctrl+T cycles Key, Description, and Title before returning the chosen issue to the dialog for saving.
@@ -16,6 +17,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Scrollable TUI reconcile, apply, and retry result details with actual counts, per-adapter outcomes, scope errors, warnings, and partial results. CLI execution output now exposes failed and uncertain scope errors; JSON includes scope results and selected-but-unattempted counts.
 
 ### Changed
+- Workledger now introduces itself as an agent-friendly CLI, with an optional TUI, across root help, package metadata, the README, and documentation.
+- TUI Issues now occupies destination 5 and Trash destination 6, including numbered shortcuts and mouse navigation.
+- TUI focus colors now match the finalized Ledger W brand. Editors, selectors, compact durations, human-readable sync states, action availability, validation and busy feedback follow shared presentation rules.
 - Issue keys are optional in manual and automatic worklog creation, batch input, and presets. Empty `issue_key` remains an empty string in JSON and displays as `Unassigned` in terminal output. `worklogs update <id> --issue ""` and an empty TUI Issue field clear assignment without changing other worklogs.
 - Key-only assignment and clearing preserve identity, timing, duration, and description, including worklogs shorter than a subsequently increased creation minimum. Unassigned work counts toward local totals, Clockify comparisons, daily quota, and occupied time; Jira comparisons retain their existing prefix scope.
 - Push skips unassigned worklogs before routing for every adapter and reports their count and duration while retaining remote-owned cleanup discovery. Clearing a key cannot undo a remote request already in flight. Pull keeps its existing saved-payload replacement within issue/date scopes; overlapping unassigned entries can coexist with imported keyed entries.
@@ -29,6 +33,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Clockify requests now share workspace pacing and rate-limit cooldowns, honor `Retry-After`, use bounded cancellable retries and a 30-second timeout, and avoid replaying unconfirmed mutations after transport or server failures. Long throttling waits fail promptly with the actual error.
 - Clockify pagination now stops on empty or final pages, including short pages when `Last-Page` is absent, avoiding redundant requests.
 - `workledger status` no longer emits Clockify project-mapping warnings when Clockify is not configured.
+
+- Preset-picker selection stays visible through arrow, page and edge navigation; permanent preset deletion is labeled explicitly.
+- Minimum-size forms retain placement controls and exact proposed times, Activity retains selected-worklog details, custom plan dates follow the theme, and failed diagnostic checks show unavailable results.
 
 ## [0.1.11] - 2026-10-16
 

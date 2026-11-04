@@ -19,8 +19,13 @@ func (m model) renderStatusDiagnosticsWorkspace(width, height int) string {
 	if !m.statusChecked.IsZero() {
 		checked = "Checked " + m.statusChecked.In(m.selectedDate.Location()).Format("02 Jan 15:04")
 	}
-	lines := []string{m.paintBold("Status diagnostics", m.colors.Secondary), m.renderStatusSelectors(),
-		m.paint(fmt.Sprintf("OK %d", ok), m.colors.Success) + " · " + m.paint(fmt.Sprintf("Warnings %d", warnings), m.colors.Warning) + " · " + m.paint(fmt.Sprintf("Errors %d", failures), m.colors.Destructive), m.muted(checked), "", m.muted("  Category   Target                 State")}
+	summary := m.paint(fmt.Sprintf("OK %d", ok), m.colors.Success) + " · " + m.paint(fmt.Sprintf("Warnings %d", warnings), m.colors.Warning) + " · " + m.paint(fmt.Sprintf("Errors %d", failures), m.colors.Destructive)
+	if m.statusErr != "" {
+		summary = m.paint("Check failed — results unavailable", m.colors.Destructive)
+	} else if m.statusLoading && len(m.statusItems) == 0 {
+		summary = m.muted("Checking — results unavailable")
+	}
+	lines := []string{m.paintBold("Status diagnostics", m.colors.Focus), m.renderStatusSelectors(), summary, m.muted(checked), "", m.muted("  Category   Target                 State")}
 	lines = append(lines, m.statusRows(listWidth-2, height-len(lines))...)
 	if len(m.statusItems) == 0 {
 		message := "No diagnostics"
@@ -49,7 +54,7 @@ func (m model) renderStatusDetail() string {
 func (m model) renderStatusConfigWorkspace(width, height int) string {
 	listWidth, _ := inspectorWidths(width)
 	rows := m.statusConfigRows()
-	lines := []string{m.paintBold("Effective configuration", m.colors.Secondary), m.renderStatusSelectors(), ""}
+	lines := []string{m.paintBold("Effective configuration", m.colors.Focus), m.renderStatusSelectors(), ""}
 	if len(m.statusConfigIssues) > 0 {
 		lines = append(lines, m.paint("Configuration validation errors", m.colors.Destructive))
 	}
@@ -90,13 +95,7 @@ func (m model) renderConfigDetail() string {
 }
 
 func (m model) renderStatusSelectors() string {
-	diagnostics, configuration := m.secondary("Status"), m.secondary("Config")
-	if m.statusView == statusConfigView {
-		configuration = m.paint("[Config]", m.colors.Focus)
-	} else {
-		diagnostics = m.paint("[Status]", m.colors.Focus)
-	}
-	return diagnostics + "  " + configuration
+	return m.selector([]string{"Status", "Config"}, int(m.statusView))
 }
 
 type statusConfigRow struct {
