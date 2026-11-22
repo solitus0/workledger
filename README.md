@@ -123,4 +123,6 @@ The [synchronization guide](docs/synchronization.md) walks through the initial i
 
 Workledger is maintained by a single author. The [development guide](docs/development.md) covers the code layout, checks, and maintenance workflow. The canonical behavior contracts live in [functional requirements](specs/functional.md) and [non-functional requirements](specs/non-functional.md).
 
+Keep the same skill version for follow-up edits while the previous changes are still local. See the [skill maintenance guidance](.ruler/AGENTS.md#skill-alignment).
+
 [MIT licensed](LICENSE). [Releases](https://github.com/solitus0/workledger/releases).

@@ -1,6 +1,8 @@
 ---
 name: workledger-onboarding
 description: guide first-time workledger cli setup, shell completion, configuration, adapter onboarding, token environment variables, routing checks, and diagnostics. use when chatgpt needs to help initialize workledger, configure command completion, configure jira cloud, jira data center, or clockify, inspect effective yaml config, validate local storage, explain setup command syntax, interpret workledger status output, or troubleshoot onboarding before worklog creation, editing, reconciliation, or remote sync.
+metadata:
+  version: "1.0.0"
 ---
 
 # Workledger Onboarding

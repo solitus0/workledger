@@ -28,7 +28,7 @@ Use `.ruler/skills/worklogs-creator/SKILL.md` for local worklog creation and `.r
 
 Keep these skills and the relevant specs aligned in the same task when either contract changes. Duration remains explicit for session worklogs; estimates never determine logged duration. Import the complete intended remote window before the first push.
 
-Bump `metadata.version` in a skill’s `SKILL.md` in the same change whenever its behavior or contract changes.
+Set an initial `metadata.version` in `SKILL.md` when the field is missing. For a behavior or contract change, bump the version in the same change only if the previous edits to that skill have already been pushed to the remote branch.
 
 ## Changes and credentials
 
