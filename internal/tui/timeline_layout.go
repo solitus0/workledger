@@ -82,9 +82,6 @@ func (m model) buildTimelinePlan(previewRecords []worklogs.LocalWorklog, selecte
 			}
 		} else if m.inLunch(local) {
 			state = timelineLunch
-		} else if m.dayContext.Date != "" && m.dayContext.FreeSlots != nil && !containsFreeSlot(m.dayContext.FreeSlots, local) &&
-			!(m.lunchAvailableForPlacement() && m.inConfiguredLunch(local)) {
-			state = timelineBooked
 		}
 		if preview := worklogAt(previewRecords, local); preview != nil {
 			if persisted != nil && m.form != nil && m.form.previewConflict != "" {

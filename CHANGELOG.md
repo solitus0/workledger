@@ -18,6 +18,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - Ctrl+K opens the TUI issue picker from the Issue field in Edit. Choosing an issue fills the draft for explicit save.
 
 ### Fixed
+- TUI timelines show unbooked gaps between early or late bookings and configured work hours.
 - `worklogs apply` checks conflicts inside the write transaction so concurrent submissions of the same payload cannot both book the same time with conflict checks enabled.
 
 ## [0.1.12] - 2026-11-04

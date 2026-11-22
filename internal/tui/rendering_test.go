@@ -681,6 +681,38 @@ func TestDayTimelineShowsBookedTimeBeforeWorkdayStartAsRegularBelowQuota(t *test
 	}
 }
 
+func TestDayTimelineLeavesGapBetweenEarlyWorklogAndWorkdayFree(t *testing.T) {
+	ws, deps := testWorkspace(t)
+	m := newModel(t.Context(), deps, ws, nil)
+	m.width, m.height = 700, 38
+	m.contextSettings = worklogs.ContextSettings{
+		DayStart: "08:00", DayEnd: "17:00",
+		Lunch: &worklogs.ContextLunch{Start: "12:00", End: "13:00"},
+	}
+	record := worklogs.LocalWorklog{ID: "early", StartedAtUTC: m.selectedDate.Add(6 * time.Hour), DurationSeconds: 45 * 60}
+	m.worklogs = []worklogs.LocalWorklog{record}
+	m.dayContext = worklogs.ContextDay{
+		Date: m.selectedDate.Format("2006-01-02"), Worklogs: m.worklogs, TimelineWorklogs: m.worklogs, BookedSeconds: record.DurationSeconds,
+		FreeSlots: []worklogs.ContextFreeSlot{
+			{Start: m.selectedDate.Add(8 * time.Hour), End: m.selectedDate.Add(12 * time.Hour), DurationSeconds: 4 * 3600},
+			{Start: m.selectedDate.Add(13 * time.Hour), End: m.selectedDate.Add(17 * time.Hour), DurationSeconds: 4 * 3600},
+		},
+	}
+
+	// One minute per column on the 06:00–17:00 axis.
+	_, _, bar, _ := timelineParts(t, m.renderDayTimelineWidth(nil, record.ID, 664))
+	cells := []rune(bar)
+	if len(cells) != 660 {
+		t.Fatalf("timeline width = %d, want 660", len(cells))
+	}
+	if got := cells[44]; got != '█' {
+		t.Fatalf("last booked minute before 06:45 = %q, want booked", got)
+	}
+	if gap := string(cells[45:120]); strings.ContainsAny(gap, "█▒") {
+		t.Fatalf("06:45–08:00 contains booked cells: %q", gap)
+	}
+}
+
 func timelineParts(t *testing.T, rendered string) (ruler, upper, band, lower string) {
 	t.Helper()
 	lines := strings.Split(stripANSI(rendered), "\n")

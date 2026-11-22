@@ -72,6 +72,7 @@ These dark-theme captures compare `v0.1.12` with the unreleased renderer at 110 
 | --- | --- | --- |
 | Ctrl+K in Edit | [Before](assets/screenshots/release-review/edit-issue-picker-before.png) | [After](assets/screenshots/release-review/edit-issue-picker-after.png) |
 | Copy marked issue keys and ignore a right-click | [Before](assets/screenshots/release-review/copy-issues-before.png) | [After](assets/screenshots/release-review/copy-issues-after.png) |
+| Unbooked gaps outside work hours | [Before](assets/screenshots/release-review/outside-hours-before.png) | [After](assets/screenshots/release-review/outside-hours-after.png) |
 
 Set `WORKLEDGER_CAPTURE_REVIEW=1` and point `WORKLEDGER_CAPTURE_DIR` at a temporary directory to generate the comparison frames with the capture test below.
 

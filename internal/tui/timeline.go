@@ -319,16 +319,12 @@ func (m model) workdayBounds() (string, string) {
 	return start, end
 }
 
-func (m model) inLunch(value time.Time) bool {
-	return !m.lunchAvailableForPlacement() && m.inConfiguredLunch(value)
-}
-
 func (m model) lunchAvailableForPlacement() bool {
 	return m.form != nil && !m.form.editing && m.form.placement != manualPlacement && m.form.noLunch
 }
 
-func (m model) inConfiguredLunch(value time.Time) bool {
-	if m.contextSettings.Lunch == nil {
+func (m model) inLunch(value time.Time) bool {
+	if m.lunchAvailableForPlacement() || m.contextSettings.Lunch == nil {
 		return false
 	}
 	start, startErr := time.ParseInLocation("15:04", m.contextSettings.Lunch.Start, value.Location())
@@ -351,17 +347,6 @@ func worklogAt(records []worklogs.LocalWorklog, value time.Time) *worklogs.Local
 		}
 	}
 	return nil
-}
-
-func containsFreeSlot(slots []worklogs.ContextFreeSlot, value time.Time) bool {
-	for _, slot := range slots {
-		start := slot.Start.In(value.Location())
-		end := slot.End.In(value.Location())
-		if !value.Before(start) && value.Before(end) {
-			return true
-		}
-	}
-	return false
 }
 
 // Compact timelines retain the exact time scale and state patterns while

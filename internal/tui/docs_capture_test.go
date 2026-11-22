@@ -143,6 +143,16 @@ func TestDocumentationCapture(t *testing.T) {
 			update(m, textKey("y"))
 			update(m, mouseClick(25, 8, tea.MouseRight))
 		})
+		early := fixture.Date + "T06:30"
+		late := fixture.Date + "T18:00"
+		duration := 1800
+		if _, err := service.Apply(ctx, cfg, worklogs.RawApplyPayload{Adds: []worklogs.RawApplyAdd{
+			{IssueKey: "OPS-42", StartedAt: &early, DurationSeconds: &duration, Description: "Check the Atlas queue before the workday"},
+			{IssueKey: "APP-214", StartedAt: &late, DurationSeconds: &duration, Description: "Verify the Atlas feed after deployment"},
+		}}, false, false); err != nil {
+			t.Fatal(err)
+		}
+		capture("outside-hours", 110, 34, func(*model) {})
 		return
 	}
 	capture("worklogs", 110, 34, func(*model) {})
