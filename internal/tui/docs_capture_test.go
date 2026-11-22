@@ -133,6 +133,16 @@ func TestDocumentationCapture(t *testing.T) {
 			m.focusForm(issueField)
 			update(m, ctrlKey('k'))
 		})
+		capture("copy-issues", 110, 34, func(m *model) {
+			m.workspace.issues = service
+			m.activeTab = issuesTab
+			update(m, m.startIssueLoad()())
+			m.restoreIssueSelection("APP-214")
+			m.issueMarks = map[string]bool{"APP-214": true, "OPS-42": true}
+			m.deps.writeClipboard = func(context.Context, string) error { return nil }
+			update(m, textKey("y"))
+			update(m, mouseClick(25, 8, tea.MouseRight))
+		})
 		return
 	}
 	capture("worklogs", 110, 34, func(*model) {})

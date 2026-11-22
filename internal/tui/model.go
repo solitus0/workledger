@@ -309,10 +309,12 @@ type model struct {
 func (m *model) setNotice(kind noticeKind, message string) {
 	m.noticeKind = kind
 	m.notice = message
+	m.issueCopyNotice = false
 }
 
 func (m *model) clearNotice() {
 	m.notice = ""
+	m.issueCopyNotice = false
 }
 
 type statusResultMsg struct {
@@ -926,6 +928,8 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m.handleIssueMutationResult(msg)
 	case issuePullResultMsg:
 		return m.handleIssuePullResult(msg)
+	case issueCopyResultMsg:
+		return m.handleIssueCopyResult(msg)
 	case epicAssignmentResultMsg:
 		return m.handleEpicAssignmentResult(msg)
 	case activityListResultMsg:
@@ -1036,6 +1040,9 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 		return m, nil
 	}
 	keyName := key.String()
+	if keyName != "y" {
+		m.dismissIssueCopyFeedback()
+	}
 	if keyName == "ctrl+c" {
 		return m, tea.Interrupt
 	}
@@ -1190,6 +1197,7 @@ func (m *model) cyclePanelFocus(backward bool) {
 }
 
 func (m *model) activateTab(destination tab) {
+	m.dismissIssueCopyFeedback()
 	if destination != m.activeTab {
 		m.issueRange = nil
 	}
@@ -1205,6 +1213,7 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	layout := calculateLayout(m.width, m.height, m.activityVisible())
 	_, railCards := m.renderRailLayout(layout.rail.height)
 	if layout.activity.contains(msg.X, msg.Y) {
+		m.dismissIssueCopyFeedback()
 		m.focus = focusActivity
 		row := msg.Y - layout.activity.y - 2
 		if row >= 0 {
@@ -1236,6 +1245,9 @@ func (m model) updateMouse(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if layout.workspace.contains(msg.X, msg.Y) {
+		if m.focus != focusWorkspace {
+			m.dismissIssueCopyFeedback()
+		}
 		m.focus = focusWorkspace
 		if m.activeTab == worklogsTab && m.worklogView == monthWorklogView {
 			compact := monthCalendarCompact(m.selectedDate, layout.workspace.height)

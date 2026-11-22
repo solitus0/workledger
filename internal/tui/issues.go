@@ -34,6 +34,9 @@ type issuesScreen struct {
 	issueSearchGen  int
 	issuePull       *issuePullState
 	issuePullGen    int
+	issueCopying    bool
+	issueCopyGen    int
+	issueCopyNotice bool
 }
 
 type issueView int
@@ -204,6 +207,9 @@ func (m *model) moveIssueSelection(delta int) {
 }
 
 func (m model) updateIssues(key string) (tea.Model, tea.Cmd) {
+	if key == "y" {
+		return m.copyIssueKeys()
+	}
 	if key == "esc" && m.issuePull != nil {
 		m.issuePull.cancel()
 		m.setNotice(noticeInfo, "Stopping Jira pull…")

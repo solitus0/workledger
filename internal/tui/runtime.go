@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/solitus0/workledger/internal/activity"
+	"github.com/solitus0/workledger/internal/clipboard"
 	"github.com/solitus0/workledger/internal/config"
 	"github.com/solitus0/workledger/internal/issues"
 	"github.com/solitus0/workledger/internal/presets"
@@ -111,6 +112,7 @@ type dependencies struct {
 	status            statusChecker
 	openWorkspace     func(context.Context) (*workspace, error)
 	checkWritable     func(string, string) error
+	writeClipboard    func(context.Context, string) error
 	now               func() time.Time
 	noColor           bool
 	waitForBackground bool
@@ -122,6 +124,7 @@ func defaultDependencies(theme Theme) dependencies {
 		status:            statusservice.NewService(),
 		openWorkspace:     openWorkspace,
 		checkWritable:     sqlitestore.CheckWritable,
+		writeClipboard:    clipboard.WriteText,
 		now:               time.Now,
 		noColor:           os.Getenv("NO_COLOR") != "",
 		waitForBackground: true,
@@ -179,6 +182,8 @@ func openWorkspace(ctx context.Context) (*workspace, error) {
 
 // Run starts the interactive Workledger frontend.
 func Run(ctx context.Context, input io.Reader, output io.Writer, theme Theme) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	deps := defaultDependencies(theme)
 	m := newModel(ctx, deps, nil, nil)
 	profile := colorprofile.Detect(output, os.Environ())

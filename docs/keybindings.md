@@ -79,9 +79,14 @@ Move uses up/down to preview valid positions, `r` to refresh, `Ctrl+S` to save a
 | `s` | Choose sort |
 | `a` / `e` | Add / edit local issue metadata |
 | `Space`, `v` / `V`, `Ctrl+A` | Mark issues |
+| `y` | Copy marked issue keys to the clipboard |
 | `b` | Assign an epic to the marked batch; choose No epic to clear |
 | `Shift+R` | Pull Jira titles and original estimates for marked or focused issues |
 | `Tab` | Focus metadata, then worklog history |
+
+In Issues and epic member lists, `y` and **Copy selected issue keys** in Actions copy all marks, including those outside the current view. The clipboard gets one key per line in natural issue-key order. The marks stay selected, and the action bar shows the result until you resume navigating.
+
+On Linux, install `wl-clipboard` for Wayland or `xclip` or `xsel` for X11. The helper must be on `PATH` and able to reach your desktop session.
 
 Metadata and history scroll independently. `Esc` or left returns to the list. During a Jira pull, `Esc` stops pending requests and retains committed updates plus unfinished marks.
 

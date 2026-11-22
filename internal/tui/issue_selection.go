@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -149,6 +152,74 @@ func (m model) hiddenIssueMarks() int {
 		}
 	}
 	return len(m.issueMarks) - visible
+}
+
+type issueCopyResultMsg struct {
+	generation    int
+	count, hidden int
+	err           error
+}
+
+func (m model) canCopyIssueKeys() bool {
+	return m.focus == focusWorkspace && m.issueView == issueListView && len(m.issueMarks) > 0 && !m.issueCopying
+}
+
+func (m model) copyIssueKeys() (tea.Model, tea.Cmd) {
+	if !m.canCopyIssueKeys() {
+		return m, nil
+	}
+	keys := m.markedIssueKeys()
+	count := len(keys)
+	payload := strings.Join(keys, "\n")
+	hidden := m.hiddenIssueMarks()
+	write := m.deps.writeClipboard
+	m.issueCopying = true
+	m.issueCopyGen++
+	generation, parent := m.issueCopyGen, m.ctx
+	if m.issueCopyNotice {
+		m.clearNotice()
+	}
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+		defer cancel()
+		return issueCopyResultMsg{generation: generation, count: count, hidden: hidden, err: write(ctx, payload)}
+	}
+}
+
+func (m model) handleIssueCopyResult(msg issueCopyResultMsg) (tea.Model, tea.Cmd) {
+	m.issueCopying = false
+	if msg.generation != m.issueCopyGen || m.activeTab != issuesTab || m.focus != focusWorkspace ||
+		m.issueView != issueListView || m.interactionState.kind() != interactionIdle {
+		return m, nil
+	}
+	if msg.err != nil {
+		reason := msg.err.Error()
+		if errors.Is(msg.err, context.DeadlineExceeded) {
+			reason = "Clipboard write timed out."
+		}
+		m.setNotice(noticeError, "Could not copy issue keys. "+reason)
+		m.issueCopyNotice = true
+		return m, nil
+	}
+	notice := fmt.Sprintf("Copied %d issue keys", msg.count)
+	if msg.count == 1 {
+		notice = "Copied 1 issue key"
+	}
+	if msg.hidden > 0 {
+		notice += fmt.Sprintf(" (%d outside current view)", msg.hidden)
+	}
+	m.setNotice(noticeSuccess, notice)
+	m.issueCopyNotice = true
+	return m, nil
+}
+
+func (m *model) dismissIssueCopyFeedback() {
+	if m.issueCopying {
+		m.issueCopyGen++
+	}
+	if m.issueCopyNotice {
+		m.clearNotice()
+	}
 }
 
 func (m model) issueSelectionLabel() string {

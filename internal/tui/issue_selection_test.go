@@ -1,7 +1,7 @@
 package tui
 
 import (
-	tea "charm.land/bubbletea/v2"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,10 +11,204 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/solitus0/workledger/internal/activity"
 	"github.com/solitus0/workledger/internal/worklogs"
 )
+
+func TestCopyMarkedIssueKeys(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		epic   bool
+		notice string
+	}{
+		{"shortcut with all marks filtered out", false, "Copied 2 issue keys (2 outside current view)"},
+		{"Actions from epic members", true, "Copied 2 issue keys (1 outside current view)"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := navigationModel(t)
+			m.issues = []worklogs.IssueMetadata{
+				{IssueKey: "APP-10", Epic: "Other"},
+				{IssueKey: "APP-2", Epic: "Onboarding"},
+				{IssueKey: "APP-3", Epic: "Onboarding"},
+			}
+			m.issueMarks = map[string]bool{"APP-10": true, "APP-2": true}
+			m.restoreIssueSelection("APP-2")
+			key := "y"
+			if test.epic {
+				m = sendIssueKey(m, "t")
+				m.restoreEpicSelection("Onboarding", true)
+				m = sendIssueKey(m, "enter")
+				m = sendIssueKey(m, "v")
+			} else {
+				m = sendIssueKey(m, "/")
+				m = sendIssueKey(m, "no matching issue")
+				m = sendIssueKey(m, "enter")
+			}
+			view := ansi.Strip(m.View().Content)
+			if !strings.Contains(view, "y Copy keys") {
+				t.Fatal("copy hint missing at 100x28")
+			}
+			if test.epic && (!strings.Contains(view, "Tab Inspector") || !strings.Contains(view, "s Sort")) {
+				t.Fatal("copy hint displaced inspector or sort shortcuts at 100x28")
+			}
+			if test.epic {
+				m = sendIssueKey(m, "?")
+				m = sendIssueKey(m, "Copy selected issue keys")
+				key = "enter"
+			}
+			var copied string
+			m.deps.writeClipboard = func(_ context.Context, text string) error {
+				copied = text
+				return nil
+			}
+			focusedKey, activeRange, filter := m.selectedIssueKey(), m.issueRange, m.issueSearch
+			next, cmd := m.Update(actionKey(key))
+			if cmd == nil || copied != "" {
+				t.Fatal("copy should schedule an asynchronous write")
+			}
+			next, _ = next.Update(cmd())
+			m = next.(model)
+			if copied != "APP-2\nAPP-10" {
+				t.Fatalf("clipboard = %q", copied)
+			}
+			if m.overlay != noOverlay || m.actions != nil || !reflect.DeepEqual(m.markedIssueKeys(), []string{"APP-2", "APP-10"}) ||
+				m.selectedIssueKey() != focusedKey || m.issueRange != activeRange || m.issueSearch != filter {
+				t.Fatal("copy changed the selection, range, filter, cursor, or overlay")
+			}
+			if m.noticeKind != noticeSuccess || !strings.Contains(ansi.Strip(m.View().Content), test.notice) {
+				t.Fatalf("missing success notice: %q", m.notice)
+			}
+			assertRedesignBounds(t, m, test.name)
+			m = sendIssueKey(m, "down")
+			if m.notice != "" || !strings.Contains(ansi.Strip(m.View().Content), "y Copy keys") {
+				t.Fatal("copy notice masked the action bar after navigation")
+			}
+		})
+	}
+}
+
+func TestCopyIssueKeysFailureAllowsRetry(t *testing.T) {
+	m := navigationModel(t)
+	m.issues = []worklogs.IssueMetadata{{IssueKey: "APP-2"}}
+	m.restoreIssueSelection("APP-2")
+	m = sendIssueKey(m, "v")
+	activeRange := m.issueRange
+	writes := 0
+	m.deps.writeClipboard = func(ctx context.Context, _ string) error {
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("clipboard write has no deadline")
+		}
+		writes++
+		if writes == 1 {
+			return errors.New("clipboard unavailable")
+		}
+		return nil
+	}
+	next, cmd := m.Update(actionKey("y"))
+	if cmd == nil {
+		t.Fatal("copy did not start")
+	}
+	next, duplicate := next.Update(actionKey("y"))
+	if duplicate != nil {
+		t.Fatal("a second copy started while a write was pending")
+	}
+	next, _ = next.Update(cmd())
+	m = next.(model)
+	if m.noticeKind != noticeError || !strings.Contains(ansi.Strip(m.View().Content), "Could not copy issue keys. clipboard unavailable") ||
+		!m.issueMarks["APP-2"] || m.selectedIssueKey() != "APP-2" || m.issueRange != activeRange {
+		t.Fatalf("copy failure changed selection or did not show the error: %q", m.notice)
+	}
+	next, cmd = m.Update(actionKey("y"))
+	if cmd == nil {
+		t.Fatal("copy retry did not start")
+	}
+	next, _ = next.Update(cmd())
+	m = next.(model)
+	if writes != 2 || m.noticeKind != noticeSuccess || m.notice != "Copied 1 issue key" {
+		t.Fatalf("retry wrote %d times and reported %q", writes, m.notice)
+	}
+}
+
+func TestCopyIssueKeysIgnoresResultAfterNavigation(t *testing.T) {
+	m := navigationModel(t)
+	m.issues = []worklogs.IssueMetadata{{IssueKey: "APP-2"}}
+	m.restoreIssueSelection("APP-2")
+	m = sendIssueKey(m, "space")
+	m.deps.writeClipboard = func(context.Context, string) error { return nil }
+	next, cmd := m.Update(actionKey("y"))
+	if cmd == nil {
+		t.Fatal("copy did not start")
+	}
+	m = sendIssueKey(next.(model), "1")
+	m = sendIssueKey(m, "5")
+	m.setNotice(noticeWarning, "New workspace feedback")
+	next, _ = m.Update(cmd())
+	m = next.(model)
+	if !m.canCopyIssueKeys() || m.notice != "New workspace feedback" {
+		t.Fatalf("late result left the copy busy or changed the current notice to %q", m.notice)
+	}
+	m = sendIssueKey(m, "down")
+	if m.notice != "New workspace feedback" {
+		t.Fatal("clipboard notice cleanup cleared unrelated feedback")
+	}
+}
+
+func TestIgnoredMouseClicksPreservePendingAndVisibleCopyFeedback(t *testing.T) {
+	m := navigationModel(t)
+	m.issues = []worklogs.IssueMetadata{{IssueKey: "APP-2"}}
+	m.restoreIssueSelection("APP-2")
+	m = sendIssueKey(m, "space")
+	m.deps.writeClipboard = func(context.Context, string) error { return nil }
+	next, cmd := m.Update(actionKey("y"))
+	if cmd == nil {
+		t.Fatal("copy did not start")
+	}
+	next, _ = next.Update(mouseClick(25, 8, tea.MouseRight))
+	next, _ = next.Update(cmd())
+	m = next.(model)
+	if m.notice != "Copied 1 issue key" {
+		t.Fatalf("right-click suppressed the pending result: %q", m.notice)
+	}
+	next, _ = m.Update(mouseClick(25, 8, tea.MouseRight))
+	next, _ = next.Update(mouseClick(-1, -1, tea.MouseLeft))
+	m = next.(model)
+	if m.notice != "Copied 1 issue key" {
+		t.Fatalf("ignored click cleared visible feedback: %q", m.notice)
+	}
+	if m = sendIssueKey(m, "down"); m.notice != "" {
+		t.Fatalf("navigation retained copy feedback: %q", m.notice)
+	}
+}
+
+func TestCopyIssueKeysOnlyAvailableInMarkedList(t *testing.T) {
+	m := navigationModel(t)
+	m.issues = []worklogs.IssueMetadata{{IssueKey: "APP-2", Epic: "Onboarding"}}
+	m.restoreIssueSelection("APP-2")
+	assertUnavailable := func(m model, context string) {
+		t.Helper()
+		if slices.ContainsFunc(m.commandActions(), func(action commandAction) bool { return action.key == "y" }) {
+			t.Fatalf("copy action available in %s", context)
+		}
+		if m.issueCopying {
+			t.Fatalf("copy started in %s", context)
+		}
+	}
+	m = sendIssueKey(m, "y")
+	assertUnavailable(m, "unmarked issue list")
+	m.issueMarks = map[string]bool{"APP-2": true}
+	m = sendIssueKey(m, "t")
+	m = sendIssueKey(m, "y")
+	assertUnavailable(m, "epic overview")
+	m = sendIssueKey(m, "t")
+	m = sendIssueKey(m, "/")
+	m = sendIssueKey(m, "y")
+	assertUnavailable(m, "search editing")
+	if m.issueSearch.input.Value() != "y" {
+		t.Fatal("copy shortcut swallowed search text")
+	}
+}
 
 func captureBulkState(t *testing.T, m model, name string) {
 	t.Helper()

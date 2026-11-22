@@ -66,11 +66,12 @@ These examples use the same isolated capture flow. They cover minimum-size place
 
 ## Unreleased TUI comparisons
 
-These dark-theme captures compare `v0.1.12` with the unreleased renderer at 110 × 34. Both use the same fictional Atlas fixture and send the same inputs.
+These dark-theme captures compare `v0.1.12` with the unreleased renderer at 110 × 34. Both use the same fictional Atlas fixture and send the same inputs. The clipboard capture uses an in-memory clipboard writer.
 
 | Workflow | v0.1.12 | Unreleased |
 | --- | --- | --- |
 | Ctrl+K in Edit | [Before](assets/screenshots/release-review/edit-issue-picker-before.png) | [After](assets/screenshots/release-review/edit-issue-picker-after.png) |
+| Copy marked issue keys and ignore a right-click | [Before](assets/screenshots/release-review/copy-issues-before.png) | [After](assets/screenshots/release-review/copy-issues-after.png) |
 
 Set `WORKLEDGER_CAPTURE_REVIEW=1` and point `WORKLEDGER_CAPTURE_DIR` at a temporary directory to generate the comparison frames with the capture test below.
 

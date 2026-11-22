@@ -117,6 +117,9 @@ func (m model) commandActions() []commandAction {
 			if len(m.issueMarks) > 0 && !m.issuesLoading && m.issuesErr == "" {
 				add("b", "b", "Assign epic to selected issues")
 			}
+			if m.canCopyIssueKeys() {
+				add("y", "y", "Copy selected issue keys")
+			}
 			if m.selectedIssue() != nil {
 				if !m.issuesLoading && m.issuesErr == "" {
 					add("e", "e", "Edit issue metadata")
@@ -200,7 +203,11 @@ func (m model) idleHints() (primary []actionHint) {
 		keys = []string{"a", "e", "D", "enter", "r"}
 	case issuesTab:
 		primary[0] = actionHint{"↑/↓ PgUp/Dn", "Select"}
-		keys = []string{"a", "e", "space", "/", "tab", "b", "R", "s", "ctrl+t", "v", "t", "esc", "enter", "r"}
+		keys = []string{"a", "e", "space", "/", "tab", "b", "R", "s"}
+		if m.issueView == issueListView && len(m.issueMarks) > 0 {
+			keys = []string{"space", "/", "tab", "y", "s", "b", "a", "e", "R"}
+		}
+		keys = append(keys, "ctrl+t", "v", "t", "esc", "enter", "r")
 	case trashTab:
 		keys = []string{"R", "s", "enter", "r"}
 	case plansTab:
@@ -242,6 +249,7 @@ func (m model) idleHints() (primary []actionHint) {
 	}
 	if m.activeTab == issuesTab {
 		labels["tab"], labels["ctrl+t"] = "Inspector", "Search mode"
+		labels["y"] = "Copy keys"
 		labels["s"] = "Sort"
 		labels["R"] = "Pull Jira"
 		labels["t"] = "Epics"
