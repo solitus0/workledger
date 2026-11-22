@@ -23,6 +23,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - TUI timelines show unbooked gaps between early or late bookings and configured work hours.
 - `worklogs apply` checks conflicts inside the write transaction so concurrent submissions of the same payload cannot both book the same time with conflict checks enabled.
 
+### Removed
+- Removed the repository copies of the `no-backcompat-coding` and `specs-organizer` skills.
+
 ## [0.1.12] - 2026-11-04
 
 ### Added
