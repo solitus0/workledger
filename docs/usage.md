@@ -77,6 +77,32 @@ workledger issues apply --file docs/examples/issues.json
 
 Those paths assume a repository checkout. The [example issue catalog](examples/issues.json) demonstrates titles, estimates, and grouping.
 
+### Pull your assigned Jira issues
+
+`workledger issues pull` searches all configured Jira Cloud and Data Center instances for issues assigned to the authenticated user. It includes issues with no worklogs and uses no date or status filter.
+
+```sh
+workledger issues pull
+workledger issues pull --adapter jira-cloud --instance product --output json
+workledger issues pull --output plain
+```
+
+`--adapter` selects one Jira family. `--instance` selects one configured instance and can be used alone when its name is unique across both families. Both flags require a nonblank value when supplied. An issue must belong to a project owned by its source instance. The pull skips configured `pull.exclude_issues` keys and reporting targets.
+
+Pulled issues appear in `workledger issues list` and in issue completion. The pull preserves manual overrides and local epic membership. Its results list only new issues and issues whose cached Jira title, original estimate, or source changed. The table identifies each issue’s source as `adapter/instance`. Plain output prints one issue key per line and produces empty stdout when there are zero changes. A repeat pull with identical Jira data keeps the cache timestamps.
+
+JSON results on stdout have three keys.
+
+- `items` contains one record per changed issue with `issue_key`, nullable `title`, nullable `max_estimate_seconds`, `source_adapter_family`, and `source_adapter_instance`.
+- `total` is the number of changed issues.
+- `targets` contains one record per source with `adapter`, `instance`, `status` (`succeeded`, `skipped`, or `failed`), and `imported` (the count of changed issues). Failed sources include `reason_code`. Skipped sources include `message`.
+
+Failures go to stderr. JSON mode wraps the diagnostic in `error` with `code`, `exit_code`, and `message`, plus `run` or `details` where applicable. Per-instance entries in `details` include `adapter`, `instance`, `status`, `code`, and `message`. Failed instances also include a retry command in `run`.
+
+When one instance fails and another succeeds, the command returns exit `6` and stdout reports the committed changes. On total failure, stderr reports failed and skipped instances and stdout is empty. Exit codes use the same precedence across instances, starting with unexpected (`1`), then validation (`2`), authentication (`4`), missing resource (`3`), and external (`5`).
+
+### Browse issues in the TUI
+
 In the optional TUI’s Issues view (`5`), `t` switches between Issues and Epics. Enter opens an epic’s members. Selecting an issue previews its full metadata and worklog history in independently scrollable right panes. `/` opens Find; `Ctrl+T` switches between issue metadata and worklog-description search. `s` chooses a sort. Space, `v`/`V`, `Ctrl+A`, and `b` support assigning selected issues to an epic, including hidden marks.
 
 Use `Shift+R` to pull Jira titles and original estimates for marked issues, or the focused issue when none are marked. Ownership routes select the original Jira instance. Local overrides, epic assignments, creation dates, and worklogs remain intact. Successful issues clear their marks; failures remain selected for retry. `Esc` stops pending requests while preserving completed work. Lowercase `r` refreshes local data.

@@ -82,9 +82,11 @@ func (e exitError) Error() string {
 }
 
 type app struct {
+	args                 []string
 	stdin                io.Reader
 	stdout               io.Writer
 	stderr               io.Writer
+	diagnosticsOnStderr  bool
 	activeActivityID     string
 	activityErrorCode    string
 	activityErrorMessage string
@@ -242,7 +244,7 @@ func trimmedUsages(flags *pflag.FlagSet) string {
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	a := &app{stdin: os.Stdin, stdout: stdout, stderr: stderr}
+	a := &app{args: args, stdin: os.Stdin, stdout: stdout, stderr: stderr}
 	cmd := a.newRootCommand()
 	cmd.SetArgs(args)
 	cmd.SetOut(stdout)
@@ -1547,6 +1549,7 @@ func (a *app) newIssuesCommand() *cobra.Command {
 	cmd.AddCommand(a.newIssuesListCommand())
 	cmd.AddCommand(a.newIssuesSetCommand())
 	cmd.AddCommand(a.newIssuesApplyCommand())
+	cmd.AddCommand(a.newIssuesPullCommand())
 	cmd.AddCommand(a.newIssuesRefreshCommand())
 	cmd.AddCommand(a.newIssuesEpicsCommand())
 	return cmd
@@ -1760,10 +1763,7 @@ func (a *app) newIssuesRefreshCommand() *cobra.Command {
 				}
 				var remoteErr *issues.RemoteError
 				if errors.As(err, &remoteErr) {
-					if remoteErr.Adapter == "jira-cloud" {
-						return a.handleJiraCloudError(mode, remoteErr.Err)
-					}
-					return a.handleJiraDataError(mode, remoteErr.Err)
+					return a.handleJiraError(mode, remoteErr.Err)
 				}
 				return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
 			}
@@ -1904,7 +1904,7 @@ func (a *app) newTotalsCommand() *cobra.Command {
 					if totals.IsValidationError(err) {
 						return a.fail(mode, 2, "validation_error", err.Error(), nil)
 					}
-					return a.handleJiraDataError(mode, err)
+					return a.handleJiraError(mode, err)
 				}
 			case "jira-cloud":
 				resolvedInstance, result, err = service.CompareJiraCloudRemote(cmd.Context(), effective, instance, windowFrom, windowTo, opts)
@@ -1912,7 +1912,7 @@ func (a *app) newTotalsCommand() *cobra.Command {
 					if totals.IsValidationError(err) {
 						return a.fail(mode, 2, "validation_error", err.Error(), nil)
 					}
-					return a.handleJiraCloudError(mode, err)
+					return a.handleJiraError(mode, err)
 				}
 			default:
 				return a.fail(mode, 2, "validation_error", "supported adapters are clockify, jira-cloud, and jira-data-center", nil)
@@ -3229,32 +3229,32 @@ func (a *app) handleClockifyError(mode string, err error) error {
 	return a.fail(mode, 5, "external_error", err.Error(), nil)
 }
 
-func (a *app) handleJiraDataError(mode string, err error) error {
-	var requestErr *jiradcadapter.RequestError
-	if errors.As(err, &requestErr) {
-		switch requestErr.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return a.fail(mode, 4, "auth_error", "jira data center authentication failed", nil)
-		case http.StatusNotFound:
-			return a.fail(mode, 3, "not_found", err.Error(), nil)
-		default:
-			return a.fail(mode, 5, "remote_error", requestErr.Error(), nil)
-		}
+func classifyJiraRequestError(err error) (exitCode int, reason, message string) {
+	var cloud *jiracloudadapter.RequestError
+	var dataCenter *jiradcadapter.RequestError
+	var status int
+	var adapter, notFound, remoteMessage string
+	switch {
+	case errors.As(err, &cloud):
+		status, adapter, notFound, remoteMessage = cloud.StatusCode, "jira cloud", "jira cloud resource not found", cloud.Error()
+	case errors.As(err, &dataCenter):
+		status, adapter, notFound, remoteMessage = dataCenter.StatusCode, "jira data center", err.Error(), dataCenter.Error()
+	default:
+		return 0, "", ""
 	}
-	return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return 4, "auth_error", adapter + " authentication failed"
+	case http.StatusNotFound:
+		return 3, "not_found", notFound
+	default:
+		return 5, "remote_error", remoteMessage
+	}
 }
 
-func (a *app) handleJiraCloudError(mode string, err error) error {
-	var requestErr *jiracloudadapter.RequestError
-	if errors.As(err, &requestErr) {
-		switch requestErr.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return a.fail(mode, 4, "auth_error", "jira cloud authentication failed", nil)
-		case http.StatusNotFound:
-			return a.fail(mode, 3, "not_found", "jira cloud resource not found", nil)
-		default:
-			return a.fail(mode, 5, "remote_error", requestErr.Error(), nil)
-		}
+func (a *app) handleJiraError(mode string, err error) error {
+	if code, reason, message := classifyJiraRequestError(err); code != 0 {
+		return a.fail(mode, code, reason, message, nil)
 	}
 	return a.fail(mode, 1, "unexpected_error", err.Error(), nil)
 }
@@ -3264,13 +3264,8 @@ func (a *app) handleReconcileAdapterError(mode, adapter string, err error) error
 	if errors.As(err, &clockifyErr) {
 		return a.handleClockifyError(mode, err)
 	}
-	var jiraDataErr *jiradcadapter.RequestError
-	if errors.As(err, &jiraDataErr) {
-		return a.handleJiraDataError(mode, err)
-	}
-	var jiraCloudErr *jiracloudadapter.RequestError
-	if errors.As(err, &jiraCloudErr) {
-		return a.handleJiraCloudError(mode, err)
+	if code, reason, message := classifyJiraRequestError(err); code != 0 {
+		return a.fail(mode, code, reason, message, nil)
 	}
 	_ = adapter
 	return a.fail(mode, 2, "validation_error", err.Error(), nil)
@@ -3969,6 +3964,9 @@ func (a *app) renderPlanExecutionResult(mode string, result reconcile.ApplyResul
 }
 
 func (a *app) fail(mode string, code int, errorCode, message string, details any) error {
+	if a.diagnosticsOnStderr {
+		return a.reportDiagnostic(mode, commandDiagnostic{Code: errorCode, ExitCode: code, Message: message, Details: details})
+	}
 	a.activityErrorCode = errorCode
 	a.activityErrorMessage = safeActivityErrorMessage(errorCode)
 	if mode == "json" {
@@ -3996,6 +3994,12 @@ func (a *app) failSQLiteStoreSchemaMismatch(mode string) error {
 func (a *app) failUnrecoverableSQLite(mode, sqlitePath string) error {
 	message := "Local SQLite store is corrupt or incompatible and cannot be repaired safely."
 	next := "Next step: inspect, replace, or restore the SQLite file, then rerun workledger init."
+	if a.diagnosticsOnStderr {
+		return a.reportDiagnostic(mode, commandDiagnostic{
+			Code: "sqlite_unrecoverable", ExitCode: 1, Message: message + " " + next,
+			Details: map[string]string{"sqlite_path": sqlitePath}, Run: "workledger init",
+		})
+	}
 
 	_, _ = fmt.Fprintf(a.stderr, "%s\nsqlite_path: %s\n%s\n", message, sqlitePath, next)
 	if mode == "json" {
@@ -4011,6 +4015,12 @@ func (a *app) failUnrecoverableSQLite(mode, sqlitePath string) error {
 func (a *app) failLocalStorageNotWritable(mode string, storageErr *sqlitestore.WritableError) error {
 	message := storageErr.Error()
 	next := "Next step: run outside sandbox, move storage.sqlite_path to a writable location, or fix filesystem permissions."
+	if a.diagnosticsOnStderr {
+		return a.reportDiagnostic(mode, commandDiagnostic{
+			Code: "local_storage_not_writable", ExitCode: 1, Message: message + " " + next,
+			Details: map[string]string{"sqlite_path": storageErr.SQLitePath, "parent_dir": storageErr.ParentDir, "operation": storageErr.Operation},
+		})
+	}
 
 	if mode == "json" {
 		_ = a.writeJSON(map[string]any{

@@ -110,6 +110,7 @@ func (c *Client) SearchIssues(ctx context.Context, jql string, fields []string) 
 func (c *Client) searchIssuesEnhanced(ctx context.Context, jql string, fields []string) ([]IssueBrief, error) {
 	items := make([]IssueBrief, 0)
 	nextPageToken := ""
+	seenTokens := make(map[string]struct{})
 	for {
 		query := url.Values{}
 		query.Set("jql", jql)
@@ -125,9 +126,13 @@ func (c *Client) searchIssuesEnhanced(ctx context.Context, jql string, fields []
 			return nil, err
 		}
 		items = append(items, page.Issues...)
-		if page.IsLast || page.NextPageToken == "" || len(page.Issues) == 0 {
+		if page.IsLast || page.NextPageToken == "" {
 			break
 		}
+		if _, seen := seenTokens[page.NextPageToken]; seen {
+			return nil, errors.New("jira cloud search repeated a page token")
+		}
+		seenTokens[page.NextPageToken] = struct{}{}
 		nextPageToken = page.NextPageToken
 	}
 	return items, nil

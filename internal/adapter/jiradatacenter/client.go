@@ -53,6 +53,7 @@ type IssueBrief struct {
 	Fields struct {
 		Summary      string        `json:"summary"`
 		Timetracking *Timetracking `json:"timetracking"`
+		Assignee     *User         `json:"assignee"`
 	} `json:"fields"`
 }
 

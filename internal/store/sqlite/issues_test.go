@@ -3,7 +3,34 @@ package sqlite
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+func TestIssueCacheUpsertRollsBackOnFailure(t *testing.T) {
+	store, _, err := Bootstrap(filepath.Join(t.TempDir(), "worklogs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := t.Context()
+	if _, err := store.db.ExecContext(ctx, `CREATE TRIGGER reject_second_issue_cache BEFORE INSERT ON issue_metadata
+		WHEN NEW.issue_key = 'APP-2' BEGIN SELECT RAISE(ABORT, 'test failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	refreshed := time.Now().UTC()
+	written, err := store.UpsertIssueCache(ctx, []IssueCacheEntry{
+		{IssueKey: "APP-1", Title: "First issue", SourceAdapterFamily: "jira-cloud", SourceAdapterInstance: "product", RefreshedAt: refreshed},
+		{IssueKey: "APP-2", Title: "Second issue", SourceAdapterFamily: "jira-cloud", SourceAdapterInstance: "product", RefreshedAt: refreshed},
+	}, false)
+	if err == nil || len(written) != 0 {
+		t.Fatalf("failed batch reported writes %+v, error %v", written, err)
+	}
+	var cacheCount, catalogCount int
+	err = store.db.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM issue_metadata), (SELECT COUNT(*) FROM issues)`).Scan(&cacheCount, &catalogCount)
+	if err != nil || cacheCount != 0 || catalogCount != 0 {
+		t.Fatalf("failed batch left %d cache entries and %d catalog entries, error %v", cacheCount, catalogCount, err)
+	}
+}
 
 func TestInitializationUpgradesAssignedIssueGuardsWithoutLosingWork(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "worklogs.db")

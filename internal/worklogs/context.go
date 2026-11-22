@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/solitus0/workledger/internal/config"
+	sqlitestore "github.com/solitus0/workledger/internal/store/sqlite"
 )
 
 const (
@@ -184,40 +185,35 @@ func (s *Service) ShowIssueMetadata(ctx context.Context, issueKey string) (Issue
 }
 
 func (s *Service) UpsertIssueMetadataBatch(ctx context.Context, items []IssueMetadata) error {
-	if len(items) == 0 {
-		return nil
-	}
-	tx, err := s.store.DB().BeginTx(ctx, nil)
+	_, err := s.store.UpsertIssueCache(ctx, issueCacheEntries(items), true)
+	return err
+}
+
+// ImportIssueMetadataBatch returns the cache entries created or updated by the batch.
+func (s *Service) ImportIssueMetadataBatch(ctx context.Context, items []IssueMetadata) ([]IssueMetadata, error) {
+	written, err := s.store.UpsertIssueCache(ctx, issueCacheEntries(items), false)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	statement, err := tx.PrepareContext(ctx, `INSERT INTO issue_metadata(issue_key, title, max_estimate_seconds, source_adapter_family, source_adapter_instance, refreshed_at)
-		 VALUES(?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(issue_key) DO UPDATE SET
-		   title = COALESCE(excluded.title, issue_metadata.title),
-		   max_estimate_seconds = excluded.max_estimate_seconds,
-		   source_adapter_family = excluded.source_adapter_family,
-		   source_adapter_instance = excluded.source_adapter_instance,
-		   refreshed_at = excluded.refreshed_at`)
-	if err != nil {
-		_ = tx.Rollback()
-		return err
+	changed := make([]IssueMetadata, 0, len(written))
+	for _, entry := range written {
+		changed = append(changed, IssueMetadata{
+			IssueKey: entry.IssueKey, Title: entry.Title, MaxEstimateSeconds: entry.MaxEstimateSeconds,
+			SourceAdapterFamily: entry.SourceAdapterFamily, SourceAdapterInst: entry.SourceAdapterInstance, RefreshedAt: entry.RefreshedAt,
+		})
 	}
-	defer statement.Close()
+	return changed, nil
+}
+
+func issueCacheEntries(items []IssueMetadata) []sqlitestore.IssueCacheEntry {
+	entries := make([]sqlitestore.IssueCacheEntry, 0, len(items))
 	for _, item := range items {
-		if _, err := statement.ExecContext(ctx,
-			item.IssueKey,
-			nullableString(item.Title),
-			item.MaxEstimateSeconds,
-			item.SourceAdapterFamily,
-			item.SourceAdapterInst,
-			item.RefreshedAt.UTC().Format(time.RFC3339),
-		); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
+		entries = append(entries, sqlitestore.IssueCacheEntry{
+			IssueKey: item.IssueKey, Title: item.Title, MaxEstimateSeconds: item.MaxEstimateSeconds,
+			SourceAdapterFamily: item.SourceAdapterFamily, SourceAdapterInstance: item.SourceAdapterInst, RefreshedAt: item.RefreshedAt,
+		})
 	}
-	return tx.Commit()
+	return entries
 }
 
 func uniqueIssueKeys(issueKeys []string) []string {

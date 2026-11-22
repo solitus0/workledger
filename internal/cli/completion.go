@@ -63,10 +63,11 @@ func (a *app) newShellCompletionCommand(shell string) *cobra.Command {
 }
 
 func (a *app) configureCompletions(root *cobra.Command) {
-	mustRegisterFlagCompletion(root, "output", fixedCompletion(
-		completionCandidate{value: "table", description: "Human-readable table output"},
-		completionCandidate{value: "json", description: "Machine-readable JSON output"},
-	))
+	outputModes := []completionCandidate{
+		{value: "table", description: "Human-readable table output"},
+		{value: "json", description: "Machine-readable JSON output"},
+	}
+	mustRegisterFlagCompletion(root, "output", fixedCompletion(outputModes...))
 
 	visitCommands(root, func(cmd *cobra.Command) {
 		if cmd.LocalNonPersistentFlags().Lookup("epic") != nil {
@@ -119,14 +120,19 @@ func (a *app) configureCompletions(root *cobra.Command) {
 			cmd.ValidArgsFunction = a.completePresetNames
 		case "workledger route explain":
 			cmd.ValidArgsFunction = a.completeIssueKeyArgs
-		case "workledger issues refresh":
+		case "workledger issues refresh", "workledger issues pull":
 			mustRegisterFlagCompletion(cmd, "adapter", fixedCompletion(
 				completionCandidate{value: "jira-cloud", description: "Jira Cloud"},
 				completionCandidate{value: "jira-data-center", description: "Jira Data Center"},
 			))
-			mustRegisterFlagCompletion(cmd, "field", fixedCompletion(
-				completionCandidate{value: "max-estimate", description: "Original estimate in seconds"},
-			))
+			if cmd.LocalNonPersistentFlags().Lookup("field") != nil {
+				mustRegisterFlagCompletion(cmd, "field", fixedCompletion(
+					completionCandidate{value: "max-estimate", description: "Original estimate in seconds"},
+				))
+			}
+			if cmd.LocalNonPersistentFlags().Lookup("output") != nil {
+				mustRegisterFlagCompletion(cmd, "output", fixedCompletion(append(outputModes, completionCandidate{value: "plain", description: "One changed issue key per line"})...))
+			}
 			mustRegisterFlagCompletion(cmd, "instance", a.completeConfiguredInstances)
 		case "workledger totals":
 			mustRegisterFlagCompletion(cmd, "adapter", fixedCompletion(adapterCompletionCandidates()...))
@@ -394,7 +400,7 @@ func supportedAdapterFamilies(cmd *cobra.Command) map[string]struct{} {
 		return values
 	}
 	switch cmd.CommandPath() {
-	case "workledger issues refresh":
+	case "workledger issues refresh", "workledger issues pull":
 		allowed["jira-cloud"] = struct{}{}
 		allowed["jira-data-center"] = struct{}{}
 	default:

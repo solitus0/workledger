@@ -723,3 +723,20 @@ func TestJiraExcludedIssuesForInstanceIncludesReportingTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestJiraExcludedIssuesIncludesReportingTargetOnOwningInstance(t *testing.T) {
+	cfg := EffectiveConfig{File: FileConfig{JiraCloud: &JiraCloudConfig{
+		Instances: map[string]JiraCloudInstance{
+			"reports": {Routing: &JiraInstanceRoutes{Profiles: map[string]JiraRouteProfile{
+				"reporting": {ReportingTargets: map[string]string{"LEGACY": "OPS-7", "WEB": "WEB-2"}},
+			}}},
+			"internal": {Routing: &JiraInstanceRoutes{Profiles: map[string]JiraRouteProfile{
+				"default": {IssuePrefixes: []string{"OPS"}},
+			}}},
+		},
+	}}}
+	excluded, err := JiraExcludedIssuesForInstance(cfg, "jira-cloud", "internal")
+	if err != nil || len(excluded) != 1 || excluded[0] != "OPS-7" {
+		t.Fatalf("want only the owned reporting target, got %v, %v", excluded, err)
+	}
+}

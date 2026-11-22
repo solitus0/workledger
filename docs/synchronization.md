@@ -6,6 +6,8 @@ Workledger keeps canonical worklogs locally. Jira and Clockify supply comparison
 
 The sequence is **reconcile → review → apply**. `plan reconcile` inspects data and saves the proposed changes; it does not apply local or remote worklog changes. `plan show` lets you inspect them. `plan apply` performs them.
 
+To populate the local issue catalog from Jira assignments, use [`workledger issues pull`](usage.md#pull-your-assigned-jira-issues). Follow the worklog import sequence below before pushing a date window.
+
 ## First import
 
 After configuring adapters and successfully checking `workledger status`, pull the complete date window that your first push will cover. To preserve all history, begin at the earliest remote worklog date you need to retain.

@@ -41,6 +41,7 @@ Placement rule:
 - [ ] NFR-016c: Issues list JSON shall expose `filters`, `items`, `total`, and `summary`; each issue shall expose nullable effective `title`, `manual_title`, `cached_title`, and `epic`, effective `max_estimate_seconds`, `manual_max_estimate_seconds`, `cached_max_estimate_seconds`, `estimate_source` as `manual|jira|none`, exact `logged_seconds`, nullable `remaining_seconds`, `overrun_seconds`, nullable cache provenance and refresh time, and nullable local update time. Summary and epic records shall expose `issue_count`, `estimated_issue_count`, `unestimated_issue_count`, `logged_seconds`, `estimated_seconds`, `remaining_seconds`, and `overrun_seconds`; remaining and estimate sums shall include known estimates only. Issue mutation JSON shall expose `dry_run`, normalized patch `items`, and `total`.
 
 - [ ] NFR-016d: SQLite shall create durable nonempty issue identities atomically through assigned active worklog inserts and issue-key updates and cache inserts; deleting a worklog or clearing optional fields shall not remove issue identity. Lifetime budget and group reads shall use service-owned aggregate queries instead of one frontend query per issue.
+- [ ] NFR-016e: Issue pull shall finish Jira pagination and verify assignments before writing each instance’s catalog and cache changes in one SQLite transaction. A failed or canceled instance shall leave its incomplete batch unwritten and shall preserve previously committed batches.
 
 - [ ] NFR-017: The `saved_plans` table shall include `id`, `created_at`, `plan_direction`, `adapter_family`, `config_fingerprint`, `window_from_utc`, `window_to_utc`, immutable planning status in `aggregate_status`, and terminal-success time in `applied_at`.
 - [ ] NFR-018: The `saved_plan_items` table shall include `id`, `plan_id`, `issue_key`, `target_issue`, `route_profile`, `plan_direction`, `target_adapter_family`, `target_adapter_instance`, `window_from_utc`, `window_to_utc`, `plan_status`, `planned_action`, `comparison_status`, `reason_code`, `reason_detail`, `payload_json`, `inspection_summary_json`, `delivery_key`, `content_hash`, `local_row_count`, `local_total_seconds`, `remote_row_count`, and `remote_total_seconds`; item execution state, time, and message shall not be duplicated outside delivery attempts.
@@ -283,9 +284,10 @@ Placement rule:
 - [ ] NFR-227: User-facing command output shall go to stdout.
 - [ ] NFR-228: Logs and diagnostics shall go to stderr, including unrecoverable SQLite diagnostics from `workledger init`.
 - [ ] NFR-229: Table output shall go to stdout.
-- [ ] NFR-230: `--output json` stdout shall remain valid JSON without mixed log lines.
+- [ ] NFR-230: `--output json` shall emit valid JSON whenever it writes a result to stdout. Logs shall not appear in that stream.
 - [ ] NFR-231: Success payloads for `--output json` shall be fixed per command.
 - [ ] NFR-232: Unless a command-specific contract says otherwise, a JSON success payload shall be one object with exactly documented keys.
+- [ ] NFR-232a: `workledger issues pull` shall write errors to stderr, using a single structured `error` object in JSON mode, including when `--output json` follows a malformed command flag. Failed-instance diagnostics shall include a retry command with the adapter and instance. Partial success shall preserve committed results on stdout. Total failure shall report failed and skipped instances on stderr and leave stdout empty.
 - [ ] NFR-233: All timestamps in JSON shall use RFC3339.
 - [ ] NFR-234: The default active-worklog JSON record shape shall include `id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description`.
 - [ ] NFR-235: No deleted-only JSON record shape shall exist.
@@ -369,6 +371,7 @@ Placement rule:
 - [ ] NFR-291: Exit code `4` shall mean auth failure.
 - [ ] NFR-292: Exit code `5` shall mean external or connectivity failure.
 - [ ] NFR-293: Exit code `6` shall mean partial success.
+- [ ] NFR-293a: `workledger issues pull` shall return `2` for invalid flags and `6` for mixed successes and failures. On total failure it shall use the first applicable code in the order `1`, `2`, `4`, `3`, `5`, independent of instance order.
 - [ ] NFR-294: Write-path duplicate conflicts shall use exit code `2`.
 - [ ] NFR-295: Write-path overlap conflicts shall use exit code `2`.
 - [ ] NFR-297: `worklogs update <id>` shall return exit code `3` when the worklog does not exist.

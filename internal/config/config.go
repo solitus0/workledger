@@ -265,13 +265,6 @@ func JiraExcludedIssuesForInstance(cfg EffectiveConfig, family, instanceName str
 		for _, issue := range instance.Pull.ExcludeIssues {
 			add(issue)
 		}
-		if instance.Routing != nil {
-			for _, profile := range instance.Routing.Profiles {
-				for _, targetIssue := range profile.ReportingTargets {
-					add(targetIssue)
-				}
-			}
-		}
 	case "jira-data-center":
 		if cfg.File.JiraData == nil || len(cfg.File.JiraData.Instances) == 0 {
 			return nil, errors.New("jira_data_center config is required")
@@ -283,15 +276,27 @@ func JiraExcludedIssuesForInstance(cfg EffectiveConfig, family, instanceName str
 		for _, issue := range instance.Pull.ExcludeIssues {
 			add(issue)
 		}
-		if instance.Routing != nil {
-			for _, profile := range instance.Routing.Profiles {
-				for _, targetIssue := range profile.ReportingTargets {
-					add(targetIssue)
-				}
-			}
-		}
 	default:
 		return nil, fmt.Errorf("unsupported jira family %q", family)
+	}
+
+	rules := RouteRules(cfg)
+	ownedPrefixes := make(map[string]struct{})
+	for _, rule := range rules {
+		if rule.Mode == "ownership" && rule.AdapterFamily == family && rule.Instance == instanceName {
+			ownedPrefixes[strings.TrimSpace(rule.SourcePrefix)] = struct{}{}
+		}
+	}
+	for _, rule := range rules {
+		if rule.Mode != "reporting" {
+			continue
+		}
+		target := strings.TrimSpace(rule.TargetIssue)
+		prefix, _, _ := strings.Cut(target, "-")
+		_, owned := ownedPrefixes[prefix]
+		if owned || (rule.AdapterFamily == family && rule.Instance == instanceName) {
+			add(target)
+		}
 	}
 
 	items := make([]string, 0, len(excluded))
