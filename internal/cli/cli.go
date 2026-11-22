@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -540,13 +541,27 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 	var to string
 	var weekOffset int
 	var fields string
+	var metadataPath, metadataValue string
 
 	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   "List local worklogs",
-		Example: "  workledger worklogs list --today\n  workledger worklogs list --unassigned\n  workledger worklogs list --epic \"SBA-october-work\"\n  workledger worklogs list --epic \"SBA-october-work\" --current-month\n  workledger worklogs list --from 2026-05-14 --to 2026-05-16\n  workledger worklogs list --mon --week-offset -1",
+		Example: "  workledger worklogs list --today\n  workledger worklogs list --unassigned\n  workledger worklogs list --epic \"SBA-october-work\"\n  workledger worklogs list --epic \"SBA-october-work\" --current-month\n  workledger worklogs list --from 2026-05-14 --to 2026-05-16\n  workledger worklogs list --mon --week-offset -1\n  workledger worklogs list --metadata-path /codex/thread_ids --metadata-value '\"THREAD_ID\"' --output json",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
+			var metadataFilter *worklogs.MetadataFilter
+			pathSet := cmd.Flags().Changed("metadata-path")
+			valueSet := cmd.Flags().Changed("metadata-value")
+			if pathSet != valueSet {
+				return a.worklogMetadataInputError(mode, errors.New("provide --metadata-path and --metadata-value together"))
+			}
+			if pathSet {
+				var err error
+				metadataFilter, err = worklogs.NewMetadataFilter(metadataPath, metadataValue)
+				if err != nil {
+					return a.worklogMetadataInputError(mode, err)
+				}
+			}
 			effective, service, cleanup, err := a.loadService(mode, false, "")
 			if err != nil {
 				return err
@@ -578,6 +593,7 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 				WeekOffset:    weekOffset,
 				WeekOffsetSet: weekOffsetSet,
 				Fields:        fieldList,
+				Metadata:      metadataFilter,
 			}
 			if cmd.Flags().Changed("epic") {
 				raw.Epic = &epic
@@ -625,6 +641,9 @@ func (a *app) newWorklogsListCommand() *cobra.Command {
 		To:           &to,
 		WeekOffset:   &weekOffset,
 	}, filterDateWindowHelp)
+	cmd.Flags().StringVar(&metadataPath, "metadata-path", "", "Select a metadata value with a JSON Pointer (empty selects the root)")
+	cmd.Flags().StringVar(&metadataValue, "metadata-value", "", "Match a JSON scalar or an immediate array member at --metadata-path")
+	a.setWorklogMetadataFlagErrors(cmd)
 	cmd.Flags().StringVar(&fields, "fields", "", "Comma-separated field list")
 	return cmd
 }
@@ -992,7 +1011,7 @@ func (a *app) newWorklogsApplyCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "apply",
 		Short:   "Apply raw batch worklog additions",
-		Example: worklogsApplyExample,
+		Example: worklogsApplyExample + "\n\nEach add may include a metadata field with any JSON value.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
 			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs apply")
@@ -1072,13 +1091,18 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	var description string
 	var dry bool
 	var force bool
+	var metadataFlags worklogMetadataFlags
 
 	cmd := &cobra.Command{
 		Use:     "add",
 		Short:   "Add a local worklog",
-		Example: worklogsAddExample,
+		Example: worklogsAddExample + "\n  workledger worklogs add --fit --today --duration 20m --description 'Review changes' --metadata-file - --dry < metadata.json",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := outputMode(cmd)
+			metadata, err := metadataFlags.read(cmd)
+			if err != nil {
+				return a.worklogMetadataInputError(mode, err)
+			}
 			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs add")
 			if err != nil {
 				return err
@@ -1120,6 +1144,9 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 				Force:         force,
 			}
 
+			if metadata != nil {
+				input.Metadata = *metadata
+			}
 			var result worklogs.AddResult
 			if dry {
 				result, err = service.PreviewAdd(cmd.Context(), effective, input)
@@ -1132,8 +1159,12 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 
 			if fit || fill {
 				if mode == "json" {
+					records := worklogRecordsJSON(result.Records, effective.Location, dry)
+					for i, record := range result.Records {
+						includeWorklogMetadata(records[i], record.Metadata)
+					}
 					payload := map[string]any{
-						"records": worklogRecordsJSON(result.Records, effective.Location, dry),
+						"records": records,
 					}
 					if dry {
 						payload["dry_run"] = true
@@ -1151,10 +1182,10 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 				if dry {
 					return a.writeJSON(map[string]any{
 						"dry_run": true,
-						"record":  worklogPreviewJSON(record, effective.Location),
+						"record":  includeWorklogMetadata(worklogPreviewJSON(record, effective.Location), record.Metadata),
 					})
 				}
-				return a.writeJSON(worklogRecordJSON(record, effective.Location))
+				return a.writeJSON(includeWorklogMetadata(worklogRecordJSON(record, effective.Location), record.Metadata))
 			}
 			if dry {
 				return renderTable(a.stdout, []string{"ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"issue_key", "started_at", "duration_seconds", "description"}, 0))
@@ -1196,6 +1227,8 @@ func (a *app) newWorklogsAddCommand() *cobra.Command {
 	cmd.Flags().StringVar(&description, "description", "", "Description")
 	cmd.Flags().BoolVar(&dry, "dry", false, "Validate without writing")
 	cmd.Flags().BoolVar(&force, "force", false, "Bypass duplicate and overlap validation")
+	metadataFlags.register(cmd, false)
+	a.setWorklogMetadataFlagErrors(cmd)
 	return cmd
 }
 
@@ -1205,22 +1238,27 @@ func (a *app) newWorklogsUpdateCommand() *cobra.Command {
 	var startedUTC string
 	var duration string
 	var description string
-	var force bool
+	var force, dry bool
+	var metadataFlags worklogMetadataFlags
 
 	cmd := &cobra.Command{
 		Use:     "update <id>",
 		Short:   "Update a local worklog",
 		Args:    cobra.ExactArgs(1),
-		Example: worklogsUpdateExample,
+		Example: worklogsUpdateExample + "\n  workledger worklogs update <id> --metadata null --dry\n  workledger worklogs update <id> --clear-metadata --dry",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := outputMode(cmd)
-			effective, service, cleanup, err := a.loadService(mode, true, "worklogs update")
+			metadata, err := metadataFlags.read(cmd)
+			if err != nil {
+				return a.worklogMetadataInputError(mode, err)
+			}
+			effective, service, cleanup, err := a.loadService(mode, !dry, "worklogs update")
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			patch := worklogs.PatchInput{Force: force}
+			patch := worklogs.PatchInput{Force: force, Metadata: metadata}
 			if cmd.Flags().Changed("issue") {
 				patch.IssueKey = &issue
 			}
@@ -1242,13 +1280,34 @@ func (a *app) newWorklogsUpdateCommand() *cobra.Command {
 				return a.handleWorklogError(mode, effective, err)
 			}
 			patch.ExpectedRevision = current.Revision
+			if dry {
+				before, after, err := service.PreviewUpdate(cmd.Context(), effective, args[0], patch)
+				if err != nil {
+					return a.handleWorklogError(mode, effective, err)
+				}
+				if mode == "json" {
+					return a.writeJSON(map[string]any{
+						"dry_run": true,
+						"before":  includeWorklogMetadata(worklogRecordJSON(before, effective.Location), before.Metadata),
+						"after":   includeWorklogMetadata(worklogRecordJSON(after, effective.Location), after.Metadata),
+					})
+				}
+				fields := []string{"id", "issue_key", "started_at", "duration_seconds", "description"}
+				if metadata != nil {
+					fields = append(fields, "metadata")
+				}
+				rows := activeRows([]worklogs.LocalWorklog{before, after}, effective.Location, fields, 0)
+				rows[0] = append([]string{"Before"}, rows[0]...)
+				rows[1] = append([]string{"After"}, rows[1]...)
+				return renderTable(a.stdout, append([]string{"STATE"}, tableHeaders(fields)...), rows)
+			}
 			record, err := service.Update(cmd.Context(), effective, args[0], patch)
 			if err != nil {
 				return a.handleWorklogError(mode, effective, err)
 			}
 
 			if mode == "json" {
-				return a.writeJSON(worklogRecordJSON(record, effective.Location))
+				return a.writeJSON(includeWorklogMetadata(worklogRecordJSON(record, effective.Location), record.Metadata))
 			}
 			return renderTable(a.stdout, []string{"ID", "ISSUE", "WINDOW", "DURATION", "DESCRIPTION"}, activeRows([]worklogs.LocalWorklog{record}, effective.Location, []string{"id", "issue_key", "started_at", "duration_seconds", "description"}, 0))
 		},
@@ -1260,6 +1319,9 @@ func (a *app) newWorklogsUpdateCommand() *cobra.Command {
 	cmd.Flags().StringVar(&duration, "duration", "", "Worklog duration")
 	cmd.Flags().StringVar(&description, "description", "", "Description")
 	cmd.Flags().BoolVar(&force, "force", false, "Bypass duplicate and overlap validation")
+	cmd.Flags().BoolVar(&dry, "dry", false, "Preview the before and after records without writing")
+	metadataFlags.register(cmd, true)
+	a.setWorklogMetadataFlagErrors(cmd)
 	return cmd
 }
 
@@ -3191,6 +3253,11 @@ func (a *app) handleWorklogError(mode string, cfg config.EffectiveConfig, err er
 	case errors.Is(err, worklogs.ErrValidation), errors.Is(err, worklogs.ErrConflict):
 		var validationErr worklogs.ValidationError
 		if errors.As(err, &validationErr) {
+			for _, issue := range validationErr.Issues {
+				if issue.Field == "metadata" || strings.HasSuffix(issue.Field, ".metadata") {
+					return a.worklogMetadataInputError(mode, fmt.Errorf("%s %s", issue.Field, issue.Message))
+				}
+			}
 			details := any(validationErr.Issues)
 			if validationErr.Conflict != nil {
 				details = validationErr.Conflict
@@ -3546,6 +3613,10 @@ func (a *app) renderListJSON(cfg config.EffectiveConfig, raw worklogs.ListFilter
 		record := worklogRecordJSON(item, cfg.Location)
 		if len(effective.Fields) > 0 {
 			record = filterRecord(record, effective.Fields)
+			if slices.Contains(effective.Fields, "metadata") {
+				delete(record, "metadata")
+				includeWorklogMetadata(record, item.Metadata)
+			}
 		}
 		items = append(items, record)
 	}
@@ -3605,6 +3676,10 @@ func (a *app) renderSearchJSON(cfg config.EffectiveConfig, rawQuery string, raw 
 		record := worklogRecordJSON(item, cfg.Location)
 		if len(effective.Fields) > 0 {
 			record = filterRecord(record, effective.Fields)
+			if slices.Contains(effective.Fields, "metadata") {
+				delete(record, "metadata")
+				includeWorklogMetadata(record, item.Metadata)
+			}
 		}
 		items = append(items, record)
 	}
@@ -3713,6 +3788,7 @@ func (a *app) renderContextJSON(raw worklogs.ContextInput, result worklogs.Conte
 			"issues":                   planningIssues,
 			"minimum_duration_seconds": result.Planning.MinimumDurationSeconds,
 			"payload_contract":         result.Planning.PayloadContract,
+			"payload_features":         result.Planning.PayloadFeatures,
 			"slot_order":               result.Planning.SlotOrder,
 		},
 		"summary": map[string]any{
@@ -3884,7 +3960,7 @@ func (a *app) renderApplyJSON(result worklogs.ApplyResult, location *time.Locati
 			"op":     item.Op,
 			"index":  item.Index,
 			"id":     nil,
-			"record": worklogRecordJSON(item.Record, location),
+			"record": includeWorklogMetadata(worklogRecordJSON(item.Record, location), item.Record.Metadata),
 		}
 		if item.ID != nil {
 			entry["id"] = *item.ID
@@ -4203,8 +4279,12 @@ func issueRecordJSON(item worklogs.IssueMetadata) map[string]any {
 
 func activeRows(items []worklogs.LocalWorklog, location *time.Location, fields []string, descriptionMaxWidth int) [][]string {
 	rows := make([][]string, 0, len(items))
+	includeMetadata := slices.Contains(fields, "metadata")
 	for _, item := range items {
 		record := worklogTableRecord(item, location)
+		if includeMetadata {
+			record["metadata"] = metadataText(item.Metadata)
+		}
 		row := make([]string, 0, len(fields))
 		for _, field := range fields {
 			row = append(row, formatActiveRowValue(field, record[field], descriptionMaxWidth))
@@ -4271,6 +4351,8 @@ func tableHeaders(fields []string) []string {
 			headers = append(headers, "DURATION")
 		case "description":
 			headers = append(headers, "DESCRIPTION")
+		case "metadata":
+			headers = append(headers, "METADATA")
 		case "deleted_at":
 			headers = append(headers, "DELETED")
 		}

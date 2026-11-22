@@ -100,10 +100,11 @@ func TestBootstrapPreservesExistingSecondPrecisionRows(t *testing.T) {
 	defer store.Close()
 	var start string
 	var duration int
-	if err := store.DB().QueryRow(`SELECT started_at_utc,duration_seconds FROM worklogs WHERE id='existing'`).Scan(&start, &duration); err != nil {
+	var metadata sql.NullString
+	if err := store.DB().QueryRow(`SELECT started_at_utc,duration_seconds,metadata_json FROM worklogs WHERE id='existing'`).Scan(&start, &duration, &metadata); err != nil {
 		t.Fatal(err)
 	}
-	if start != "2026-05-01T08:00:46Z" || duration != 931 {
-		t.Fatalf("startup converted data: %s/%d", start, duration)
+	if start != "2026-05-01T08:00:46Z" || duration != 931 || metadata.Valid {
+		t.Fatalf("startup converted data: %s/%d, metadata=%v", start, duration, metadata)
 	}
 }

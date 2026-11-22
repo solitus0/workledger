@@ -39,11 +39,12 @@ type RawApplyPayload struct {
 }
 
 type RawApplyAdd struct {
-	IssueKey        string  `json:"issue_key"`
-	StartedAt       *string `json:"started_at,omitempty"`
-	StartedAtUTC    *string `json:"started_at_utc,omitempty"`
-	DurationSeconds *int    `json:"duration_seconds,omitempty"`
-	Description     string  `json:"description"`
+	IssueKey        string          `json:"issue_key"`
+	StartedAt       *string         `json:"started_at,omitempty"`
+	StartedAtUTC    *string         `json:"started_at_utc,omitempty"`
+	DurationSeconds *int            `json:"duration_seconds,omitempty"`
+	Description     string          `json:"description"`
+	Metadata        json.RawMessage `json:"metadata,omitempty"`
 }
 
 type ApplyResultItem struct {
@@ -235,7 +236,7 @@ func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, payload
 		if err := validate(conn); err != nil {
 			return err
 		}
-		statement, err := conn.PrepareContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`)
+		statement, err := conn.PrepareContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, metadata_json) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`)
 		if err != nil {
 			return err
 		}
@@ -259,6 +260,7 @@ func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, payload
 				item.Description,
 				createdAt,
 				createdAt,
+				item.Metadata,
 			); err != nil {
 				return err
 			}
@@ -275,6 +277,9 @@ func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, payload
 func buildApplyCandidate(cfg config.EffectiveConfig, index int, item RawApplyAdd) (LocalWorklog, error) {
 	issues := make([]ValidationIssue, 0)
 	prefix := fmt.Sprintf("adds[%d]", index)
+	if err := validateMetadata(Metadata(item.Metadata), prefix+".metadata"); err != nil {
+		return LocalWorklog{}, err
+	}
 
 	if item.DurationSeconds == nil {
 		issues = append(issues, ValidationIssue{Field: prefix + ".duration_seconds", Message: "is required"})
@@ -306,6 +311,7 @@ func buildApplyCandidate(cfg config.EffectiveConfig, index int, item RawApplyAdd
 		Description: item.Description,
 	})
 	if err == nil {
+		candidate.Metadata = Metadata(item.Metadata)
 		return candidate, nil
 	}
 

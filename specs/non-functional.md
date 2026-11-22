@@ -34,6 +34,7 @@ Placement rule:
 - [ ] NFR-014b: The `trashed_worklogs` table shall use a dedicated archive `id` as its CLI identity.
 - [ ] NFR-014c: The `trashed_worklogs` table shall retain `storage_scope`, nullable `source_worklog_id`, nullable `source_created_at`, nullable `source_updated_at`, nullable `source_revision`, canonical worklog fields, `trashed_at`, reason fields, `plan_direction`, nullable plan lineage, and nullable adapter lineage.
 - [ ] NFR-014d: The SQLite schema shall define indexes on `trashed_worklogs(issue_key, started_at_utc)`, `trashed_worklogs(trashed_at)`, `trashed_worklogs(reason_code)`, and `trashed_worklogs(storage_scope, trashed_at)`.
+- [ ] NFR-014e: Active and trashed worklogs shall store optional metadata as nullable JSON text. SQL NULL shall mean unset and JSON `null` shall remain a stored value. Initialization shall add unset metadata to earlier schemas without modifying existing worklog content. Local edits, moves, trash and restore shall preserve metadata unless explicitly set or cleared. Remote payloads, content comparisons, and duplicate identity shall exclude metadata.
 - [ ] NFR-015: Additive storage shall use `issues`, `issue_metadata`, `saved_plans`, `saved_plan_items`, and `delivery_attempts` tables.
 - [ ] NFR-016: The `issue_metadata` table shall include `issue_key`, nullable cached `title`, `max_estimate_seconds`, `source_adapter_family`, `source_adapter_instance`, and `refreshed_at`.
 - [ ] NFR-016a: `issues` shall store a unique canonical `issue_key`, nullable local `title`, nullable local `epic`, nullable positive whole-second `max_estimate_seconds`, and UTC `updated_at`, separately from the Jira cache. Explicit initialization shall preserve existing local titles and estimates, cache rows, and worklogs while provisioning the durable catalog; ordinary CLI and TUI reads shall not repair storage.
@@ -236,7 +237,8 @@ Placement rule:
 - [ ] NFR-174: Payload `started_at_utc` values shall use explicit UTC RFC3339.
 - [ ] NFR-175: A payload row shall not include both `started_at` and `started_at_utc`.
 - [ ] NFR-176: `--fields` shall fail validation on duplicate field names.
-- [ ] NFR-177: `--fields` shall allow `id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, and `description` for active worklogs.
+- [ ] NFR-177: `--fields` shall allow `id`, `issue_key`, `started_at`, `started_at_utc`, `duration_seconds`, `description`, and `metadata` for active worklogs.
+- [ ] NFR-177a: Metadata filter values shall match by JSON type and by exact spelling for numbers. A missing value shall not match explicit JSON `null`. Metadata-specific CLI input errors shall report exit code 2 on stderr and leave stdout empty.
 - [ ] NFR-179: `--fields` shall fail validation when a requested field is invalid for the selected record class.
 - [ ] NFR-180: `worklogs context --day-start` shall be earlier than `--day-end`.
 - [ ] NFR-181: `worklogs context --lunch` and `--no-lunch` shall be mutually exclusive.
@@ -329,6 +331,7 @@ Placement rule:
 - [ ] NFR-260: `DESCRIPTION` in `worklogs list` shall truncate to 80 characters with `...` when longer.
 - [ ] NFR-261: `worklogs context --output json` shall expose `planning.issue_order`, `planning.issues`, `planning.minimum_duration_seconds`, `planning.payload_contract`, and `planning.slot_order`.
 - [ ] NFR-261a: Context shall expose inward-rounded minute-aligned free slots and a whole-minute `planning.minimum_duration_seconds` satisfying the configured threshold, consistent with automatic placement.
+- [ ] NFR-261b: JSON planning context shall advertise metadata support in `planning.payload_features` while preserving the raw apply payload contract identifier.
 - [ ] NFR-262: `worklogs context` JSON `summary.booked_seconds` shall aggregate selected days after per-day proration of cross-midnight occupancy.
 - [ ] NFR-262a: Context occupancy shall be clipped at consecutive local-calendar midnight boundaries, including 23-hour and 25-hour daylight-saving dates, so daily slices and calendar-month totals neither omit nor double-count boundary time.
 - [ ] NFR-263: `worklogs context` JSON `summary.until_quota_seconds` shall aggregate selected days after per-day proration of cross-midnight occupancy as the sum of per-day deltas against `worklogs.daily_minimum_quota_seconds`.

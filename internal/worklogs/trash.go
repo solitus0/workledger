@@ -21,7 +21,7 @@ const (
 
 var ErrTrashNotFound = errors.New("trash record not found")
 
-const trashSelectColumns = `id, storage_scope, source_worklog_id, source_created_at, source_updated_at, source_revision, issue_key, started_at_utc, duration_seconds, description, trashed_at, reason_code, reason_detail, plan_direction, origin_plan_id, origin_plan_item_id, adapter_family, adapter_instance`
+const trashSelectColumns = `id, storage_scope, source_worklog_id, source_created_at, source_updated_at, source_revision, issue_key, started_at_utc, duration_seconds, description, trashed_at, reason_code, reason_detail, plan_direction, origin_plan_id, origin_plan_item_id, adapter_family, adapter_instance, metadata_json`
 
 type TrashOrigin struct {
 	PlanDirection   string
@@ -42,6 +42,7 @@ type TrashRecord struct {
 	StartedAtUTC    time.Time
 	DurationSeconds int
 	Description     string
+	Metadata        Metadata
 	TrashedAt       time.Time
 	ReasonCode      string
 	ReasonDetail    string
@@ -58,6 +59,7 @@ type TrashArchiveInput struct {
 	StartedAtUTC    time.Time
 	DurationSeconds int
 	Description     string
+	Metadata        Metadata
 	TrashedAt       time.Time
 	ReasonCode      string
 	ReasonDetail    string
@@ -516,7 +518,7 @@ func (s *Service) prepareTrashRestoreTx(ctx context.Context, cfg config.Effectiv
 		if err != nil {
 			return nil, ValidationError{Issues: []ValidationIssue{{Field: "duration", Message: fmt.Sprintf("trash %s: %s", record.ID, err)}}}
 		}
-		candidate := LocalWorklog{ID: *record.SourceWorklogID, IssueKey: record.IssueKey, StartedAtUTC: start, DurationSeconds: seconds, Description: record.Description, CreatedAt: createdAt, UpdatedAt: restoredAt, Revision: revision}
+		candidate := LocalWorklog{ID: *record.SourceWorklogID, IssueKey: record.IssueKey, StartedAtUTC: start, DurationSeconds: seconds, Description: record.Description, Metadata: record.Metadata, CreatedAt: createdAt, UpdatedAt: restoredAt, Revision: revision}
 		candidates = append(candidates, candidate)
 		items = append(items, TrashRestoreItem{TrashID: record.ID, Record: candidate})
 	}
@@ -560,7 +562,7 @@ func existingWorklogIDs(ctx context.Context, queryer sqlQueryer, ids []string) (
 }
 
 func persistTrashRestoreTx(ctx context.Context, tx trashWriteQueryer, items []TrashRestoreItem) error {
-	insertStatement, err := tx.PrepareContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`)
+	insertStatement, err := tx.PrepareContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision, metadata_json) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -572,7 +574,7 @@ func persistTrashRestoreTx(ctx context.Context, tx trashWriteQueryer, items []Tr
 	defer deleteStatement.Close()
 	for _, item := range items {
 		record := item.Record
-		if _, err := insertStatement.ExecContext(ctx, record.ID, record.IssueKey, sqlitestore.RFC3339UTC(record.StartedAtUTC), record.DurationSeconds, record.Description, sqlitestore.RFC3339UTC(record.CreatedAt), sqlitestore.RFC3339UTC(record.UpdatedAt), record.Revision); err != nil {
+		if _, err := insertStatement.ExecContext(ctx, record.ID, record.IssueKey, sqlitestore.RFC3339UTC(record.StartedAtUTC), record.DurationSeconds, record.Description, sqlitestore.RFC3339UTC(record.CreatedAt), sqlitestore.RFC3339UTC(record.UpdatedAt), record.Revision, record.Metadata); err != nil {
 			return err
 		}
 		result, err := deleteStatement.ExecContext(ctx, item.TrashID, TrashScopeLocal)
@@ -602,7 +604,7 @@ func showTrashWithQueryer(ctx context.Context, queryer interface {
 
 func InsertTrashRowsTx(tx *sql.Tx, items []TrashArchiveInput) ([]string, error) {
 	ids := make([]string, 0, len(items))
-	statement, err := tx.Prepare(`INSERT INTO trashed_worklogs(id, storage_scope, source_worklog_id, source_created_at, source_updated_at, source_revision, issue_key, started_at_utc, duration_seconds, description, trashed_at, reason_code, reason_detail, plan_direction, origin_plan_id, origin_plan_item_id, adapter_family, adapter_instance) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	statement, err := tx.Prepare(`INSERT INTO trashed_worklogs(` + trashSelectColumns + `) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return nil, err
 	}
@@ -628,6 +630,7 @@ func InsertTrashRowsTx(tx *sql.Tx, items []TrashArchiveInput) ([]string, error) 
 			nullableString(item.PlanItemID),
 			nullableString(item.AdapterFamily),
 			nullableString(item.AdapterInstance),
+			item.Metadata,
 		)
 		if err != nil {
 			return nil, err
@@ -788,6 +791,7 @@ func scanTrashRecord(scanner interface{ Scan(dest ...any) error }) (TrashRecord,
 		&planItemID,
 		&adapterFamily,
 		&adapterInstance,
+		&item.Metadata,
 	); err != nil {
 		return TrashRecord{}, err
 	}
@@ -897,6 +901,7 @@ func ArchiveLocalTrashTx(tx *sql.Tx, planID, planItemID string, rows []LocalWork
 			StartedAtUTC:    row.StartedAtUTC,
 			DurationSeconds: row.DurationSeconds,
 			Description:     row.Description,
+			Metadata:        row.Metadata,
 			TrashedAt:       trashedAt,
 			ReasonCode:      reasonCode,
 			ReasonDetail:    reasonDetail,

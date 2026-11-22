@@ -143,8 +143,9 @@ func TestHelpShowsAcceptedDateFormatsAndExamples(t *testing.T) {
 			if result.code != 0 {
 				t.Fatalf("expected help exit 0, got code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 			}
+			help := strings.Join(strings.Fields(result.stdout), " ")
 			for _, want := range tc.contains {
-				if !strings.Contains(result.stdout, want) {
+				if !strings.Contains(help, want) {
 					t.Fatalf("expected help to contain %q, got stdout=%s", want, result.stdout)
 				}
 			}
@@ -1280,13 +1281,18 @@ func TestWorklogsAddReturnsLocalStorageNotWritable(t *testing.T) {
 	}
 }
 
-func TestWorklogsAddDryJSONPreviewsAndDoesNotPersist(t *testing.T) {
+func initWorklogCLIFixture(t *testing.T) {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	writeConfigWithUTC(t)
 
 	if result := runCLI(t, "init", "--output", "json"); result.code != 0 {
 		t.Fatalf("init failed: code=%d stdout=%s stderr=%s", result.code, result.stdout, result.stderr)
 	}
+}
+
+func TestWorklogsAddDryJSONPreviewsAndDoesNotPersist(t *testing.T) {
+	initWorklogCLIFixture(t)
 
 	result := runCLI(t, "worklogs", "add", "--issue", "ABC-123", "--started", "2026-05-03T09:00", "--duration", "1h", "--description", "  Investigated \n bug  ", "--dry", "--output", "json")
 	if result.code != 0 {

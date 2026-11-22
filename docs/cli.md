@@ -34,7 +34,8 @@ Local start timestamps use those date forms followed by `THH:MM`, for example `2
       "issue_key": "PROJ-123",
       "started_at": "2026-11-03T09:00",
       "duration_seconds": 3600,
-      "description": "Implement retry handling"
+      "description": "Implement retry handling",
+      "metadata": {"codex": {"thread_ids": ["THREAD_ID"]}}
     }
   ]
 }
@@ -46,6 +47,22 @@ workledger worklogs apply --file payload.json --output json
 ```
 
 Use `--stdin` instead of `--file` to read a payload from stdin. Issue keys may be omitted for unassigned work. Issue metadata uses a separate JSON-array patch format described in [daily workflows](usage.md#issues-epics-and-effort-budgets).
+
+## Local worklog metadata
+
+Each worklog can store any JSON value. Metadata stays local and is preserved through edits, moves, and trash and restore. On upgrade, run `workledger init` to add the metadata columns to an existing database.
+
+Use `--metadata JSON` or `--metadata-file PATH` with `worklogs add` and `worklogs update`. Use `-` as the metadata file path to read JSON from stdin. Prefer a file or stdin for private values. Setting metadata replaces the whole value. `--metadata null` stores JSON null and `--clear-metadata` unsets it. `update --dry` shows the before and after records without saving.
+
+```sh
+workledger worklogs add --started todayT09:00 --duration 20m --description 'Review changes' --metadata-file - --dry < metadata.json
+workledger worklogs update <id> --clear-metadata --dry --output json
+workledger worklogs list --metadata-path /codex/thread_ids --metadata-value '"THREAD_ID"' --fields id,metadata --output json
+```
+
+`--metadata-path` and `--metadata-value` work together on `list`, including with date or issue filters. Use a JSON Pointer for the path and an empty string for the root. The value must be a JSON scalar. It matches the selected value or an immediate member of an array at that path. Values match by type and numbers match by spelling, so `1` and `1.0` are distinct.
+
+JSON add, update, and apply results include metadata when set. Use `--fields metadata` to include it in bulk list and search results. An unset value is omitted from JSON and a stored null appears as `null`. JSON planning context advertises support in `planning.payload_features`. Metadata-specific input errors use exit code `2` and stderr.
 
 ## Output and exit codes
 

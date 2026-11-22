@@ -39,7 +39,7 @@ func lookupWorklogIDs(ctx context.Context, ids []string, queryer sqlQueryer) ([]
 		for i, id := range batch {
 			args[i] = id
 		}
-		rows, err := queryer.QueryContext(ctx, `SELECT id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision FROM worklogs WHERE id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")+`)`, args...)
+		rows, err := queryer.QueryContext(ctx, `SELECT `+activeWorklogColumns+` FROM worklogs WHERE id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")+`)`, args...)
 		if err != nil {
 			return nil, err
 		}

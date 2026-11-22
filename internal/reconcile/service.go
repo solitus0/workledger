@@ -2650,7 +2650,7 @@ func (s *Service) loadPlanFindings(planID string) ([]PlanFinding, error) {
 
 func (s *Service) listLocalScope(issueKey string, windowFrom, windowTo time.Time) ([]worklogs.LocalWorklog, error) {
 	rows, err := s.store.DB().Query(
-		`SELECT id, issue_key, started_at_utc, duration_seconds, description, revision FROM worklogs WHERE issue_key = ? AND started_at_utc >= ? AND started_at_utc <= ? ORDER BY started_at_utc ASC, id ASC`,
+		`SELECT id, issue_key, started_at_utc, duration_seconds, description, revision, metadata_json FROM worklogs WHERE issue_key = ? AND started_at_utc >= ? AND started_at_utc <= ? ORDER BY started_at_utc ASC, id ASC`,
 		issueKey,
 		sqlitestore.RFC3339UTC(windowFrom.UTC()),
 		sqlitestore.RFC3339UTC(windowTo.UTC()),
@@ -2677,7 +2677,7 @@ func (s *Service) listActiveWindow(windowFrom, windowTo time.Time) ([]worklogs.L
 
 func (s *Service) listActiveWindowContext(ctx context.Context, windowFrom, windowTo time.Time) ([]worklogs.LocalWorklog, error) {
 	rows, err := s.store.DB().QueryContext(ctx,
-		`SELECT id, issue_key, started_at_utc, duration_seconds, description, revision FROM worklogs WHERE started_at_utc >= ? AND started_at_utc <= ? ORDER BY issue_key ASC, started_at_utc ASC, id ASC`,
+		`SELECT id, issue_key, started_at_utc, duration_seconds, description, revision, NULL AS metadata_json FROM worklogs WHERE started_at_utc >= ? AND started_at_utc <= ? ORDER BY issue_key ASC, started_at_utc ASC, id ASC`,
 		sqlitestore.RFC3339UTC(windowFrom.UTC()),
 		sqlitestore.RFC3339UTC(windowTo.UTC()),
 	)
@@ -3372,7 +3372,7 @@ func nullIfEmpty(value string) any {
 func scanWorklog(scanner interface{ Scan(dest ...any) error }) (worklogs.LocalWorklog, error) {
 	var item worklogs.LocalWorklog
 	var startedAt string
-	if err := scanner.Scan(&item.ID, &item.IssueKey, &startedAt, &item.DurationSeconds, &item.Description, &item.Revision); err != nil {
+	if err := scanner.Scan(&item.ID, &item.IssueKey, &startedAt, &item.DurationSeconds, &item.Description, &item.Revision, &item.Metadata); err != nil {
 		return worklogs.LocalWorklog{}, err
 	}
 	parsed, err := time.Parse(time.RFC3339, startedAt)

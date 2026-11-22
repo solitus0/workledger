@@ -128,6 +128,7 @@ type ContextResult struct {
 		Issues                 []ContextIssueHint
 		MinimumDurationSeconds int
 		PayloadContract        string
+		PayloadFeatures        []string
 		SlotOrder              string
 	}
 	Summary  ContextSummary
@@ -272,6 +273,7 @@ func (s *Service) Context(ctx context.Context, cfg config.EffectiveConfig, input
 	result.Planning.IssueOrder = append(result.Planning.IssueOrder, filters.Issues...)
 	result.Planning.MinimumDurationSeconds = minuteMinimum(cfg.MinimumDurationSeconds)
 	result.Planning.PayloadContract = "apply_raw_adds_v1"
+	result.Planning.PayloadFeatures = []string{"metadata"}
 	result.Planning.SlotOrder = "date_asc,start_asc"
 	for _, issueKey := range filters.Issues {
 		result.Planning.Issues = append(result.Planning.Issues, ContextIssueHint{

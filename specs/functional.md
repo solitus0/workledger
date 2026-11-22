@@ -157,6 +157,7 @@ Placement rule:
 - [ ] FUNC-117: `workledger worklogs list` shall support the field selector.
 - [ ] FUNC-118: `workledger worklogs list` shall return the full filtered result set without pagination.
 - [ ] FUNC-119: `workledger worklogs list` shall expose active worklog JSON items using the default active-worklog record shape when `--fields` is not set.
+- [ ] FUNC-119a: `worklogs list` shall accept a paired JSON Pointer and JSON scalar filter, alone or with existing selectors. The scalar shall match the value at the pointer or an immediate array member of that value. List and search shall expose metadata only when requested with `--fields metadata`.
 
 - [ ] FUNC-115b: `worklogs list --unassigned` shall select only active empty-key records, intersect optional date selectors, order by UTC start then ID ascending, and reject issue, issue-prefix, and epic filters. JSON shall retain an empty `issue_key`; human output shall show `Unassigned`.
 
@@ -207,6 +208,7 @@ Placement rule:
 - [ ] FUNC-149: `workledger worklogs update <id> --force` shall allow the operator to bypass duplicate or overlap rejection explicitly.
 - [ ] FUNC-150: `workledger worklogs update <id>` shall return not found when the requested active local worklog ID does not exist.
 - [ ] FUNC-151: `workledger worklogs update <id>` shall return the updated canonical worklog on success.
+- [ ] FUNC-151n: `worklogs add` and `worklogs update` shall accept local metadata in inline JSON, from a file, or from explicitly selected stdin. Update shall replace or clear metadata and shall support a read-only before-and-after preview.
 
 ## Worklog Presets
 - [ ] FUNC-151a: `workledger presets` shall provide `add`, `list`, `show`, `update`, `delete`, and `apply` subcommands for operator-local reusable worklog presets.
@@ -246,6 +248,7 @@ Placement rule:
 - [ ] FUNC-167: `workledger worklogs apply` shall treat payload construction as external to the CLI.
 - [ ] FUNC-168: `workledger worklogs apply` shall return a deterministic would-apply summary plus per-operation results for successful dry-runs.
 - [ ] FUNC-169: `workledger worklogs apply` shall return a deterministic applied summary plus per-operation results for successful non-dry runs.
+- [ ] FUNC-169a: Each `worklogs apply` addition may supply any valid JSON value as metadata. JSON add, update, and apply results shall echo set metadata in previews and saved records.
 - [ ] FUNC-170: `workledger worklogs apply` per-operation results shall identify the operation type and resulting local worklog `id`.
 - [ ] FUNC-170a: `workledger` commands that persist local SQLite state shall preflight local storage writability before starting a write transaction.
 

@@ -25,7 +25,7 @@ func (s *Service) PreviewMove(ctx context.Context, cfg config.EffectiveConfig, i
 }
 
 func (s *Service) previewMove(ctx context.Context, cfg config.EffectiveConfig, id string, revision int64, queryer sqlQueryer) (MovePreview, error) {
-	rows, err := queryer.QueryContext(ctx, `SELECT id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision FROM worklogs WHERE id = ?`, id)
+	rows, err := queryer.QueryContext(ctx, `SELECT `+activeWorklogColumns+` FROM worklogs WHERE id = ?`, id)
 	if err != nil {
 		return MovePreview{}, err
 	}

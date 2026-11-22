@@ -240,6 +240,10 @@ func TestApplyPlanPullMergeArchivesRemovedLocalRowsAndPreservesIDs(t *testing.T)
 	defer store.Close()
 	seedWorklogRow(t, store, "row-1", "AAPP-1", "2026-05-01T08:00:00Z", 3600, "Keep me")
 	seedWorklogRow(t, store, "row-2", "AAPP-1", "2026-05-01T10:00:00Z", 1800, "Remove me")
+	const metadata = `{"codex":{"thread_ids":["local-thread"]}}`
+	if _, err := store.DB().Exec(`UPDATE worklogs SET metadata_json = ? WHERE id IN ('row-1', 'row-2')`, metadata); err != nil {
+		t.Fatal(err)
+	}
 
 	service := NewService(store)
 	cfg := testClockifyConfig(true)
@@ -320,10 +324,10 @@ func TestApplyPlanPullMergeArchivesRemovedLocalRowsAndPreservesIDs(t *testing.T)
 	foundPreserved := false
 	foundInserted := false
 	for _, row := range scopeRows {
-		if row.ID == "row-1" && row.Description == "Keep me" {
+		if row.ID == "row-1" && row.Description == "Keep me" && row.Metadata == metadata {
 			foundPreserved = true
 		}
-		if row.ID != "row-1" && row.Description == "Add me" {
+		if row.ID != "row-1" && row.Description == "Add me" && row.Metadata == "" {
 			foundInserted = true
 		}
 		if row.ID == "row-2" {
@@ -339,7 +343,7 @@ func TestApplyPlanPullMergeArchivesRemovedLocalRowsAndPreservesIDs(t *testing.T)
 		t.Fatalf("expected one trash row, got %#v", records)
 	}
 	record := records[0]
-	if record.StorageScope != worklogs.TrashScopeLocal || record.SourceWorklogID == nil || *record.SourceWorklogID != "row-2" || record.ReasonCode != pullTrashReasonCode {
+	if record.StorageScope != worklogs.TrashScopeLocal || record.SourceWorklogID == nil || *record.SourceWorklogID != "row-2" || record.ReasonCode != pullTrashReasonCode || record.Metadata != metadata {
 		t.Fatalf("unexpected pull trash record %#v", record)
 	}
 }

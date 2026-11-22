@@ -166,7 +166,7 @@ func (s *Service) ListActiveByIDPrefix(prefix string, limit int) ([]LocalWorklog
 
 	lower, upper := sqlitestore.PrefixRange(strings.ToLower(strings.TrimSpace(prefix)))
 	rows, err := s.store.DB().Query(
-		`SELECT id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at, revision
+		`SELECT `+activeWorklogColumns+`
 		 FROM worklogs
 		 WHERE id >= ? AND id < ?
 		 ORDER BY updated_at DESC, id

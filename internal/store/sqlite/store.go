@@ -87,7 +87,8 @@ var schemaStatements = []string{
 		description TEXT NOT NULL,
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL,
-		revision INTEGER NOT NULL DEFAULT 1
+		revision INTEGER NOT NULL DEFAULT 1,
+		metadata_json TEXT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS trashed_worklogs (
 		id TEXT PRIMARY KEY,
@@ -107,7 +108,8 @@ var schemaStatements = []string{
 		origin_plan_id TEXT NULL,
 		origin_plan_item_id TEXT NULL,
 		adapter_family TEXT NULL,
-		adapter_instance TEXT NULL
+		adapter_instance TEXT NULL,
+		metadata_json TEXT NULL
 	)`,
 	`CREATE TABLE IF NOT EXISTS issues (
         issue_key TEXT PRIMARY KEY,
@@ -810,6 +812,8 @@ func (s *Store) ensureSchema(ctx context.Context) error {
 	}{
 		{table: "saved_plans", column: "adapter_families_json", ddl: `ALTER TABLE saved_plans ADD COLUMN adapter_families_json TEXT NOT NULL DEFAULT '[]'`},
 		{table: "worklogs", column: "revision", ddl: `ALTER TABLE worklogs ADD COLUMN revision INTEGER NOT NULL DEFAULT 1`},
+		{table: "worklogs", column: "metadata_json", ddl: `ALTER TABLE worklogs ADD COLUMN metadata_json TEXT NULL`},
+		{table: "trashed_worklogs", column: "metadata_json", ddl: `ALTER TABLE trashed_worklogs ADD COLUMN metadata_json TEXT NULL`},
 		{table: "issue_metadata", column: "title", ddl: `ALTER TABLE issue_metadata ADD COLUMN title TEXT NULL`},
 		{table: "issues", column: "epic", ddl: `ALTER TABLE issues ADD COLUMN epic TEXT NULL`},
 		{table: "issues", column: "created_at", ddl: `ALTER TABLE issues ADD COLUMN created_at TEXT NULL`},
@@ -1076,6 +1080,7 @@ var requiredSchema = []tableRequirement{
 			{column: "created_at", typ: "TEXT", notNull: true},
 			{column: "updated_at", typ: "TEXT", notNull: true},
 			{column: "revision", typ: "INTEGER", notNull: true},
+			{column: "metadata_json", typ: "TEXT", notNull: false},
 		},
 	},
 	{
@@ -1099,6 +1104,7 @@ var requiredSchema = []tableRequirement{
 			{column: "origin_plan_item_id", typ: "TEXT", notNull: false},
 			{column: "adapter_family", typ: "TEXT", notNull: false},
 			{column: "adapter_instance", typ: "TEXT", notNull: false},
+			{column: "metadata_json", typ: "TEXT", notNull: false},
 		},
 	},
 	{
