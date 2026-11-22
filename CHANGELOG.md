@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-11-04
+
 ### Added
 - TUI draft-discard protection, shared stale-record reload, full draft and error details through F2, Activity details, and visible line positions in scrollable dialogs.
 - `worklogs list --unassigned` lists keyless worklogs across all dates, oldest first, with optional date narrowing. It cannot be combined with issue, issue-prefix, or epic filters.
