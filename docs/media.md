@@ -64,11 +64,11 @@ These examples use the same isolated capture flow. They cover minimum-size place
 | Worklogs with Activity | [Capture](assets/screenshots/worklogs-activity-minimum-dark.png) | [Capture](assets/screenshots/worklogs-activity-minimum-light.png) |
 | Failed diagnostics | [Capture](assets/screenshots/status-failure-dark.png) | [Capture](assets/screenshots/status-failure-light.png) |
 
-## Unreleased TUI comparisons
+## v0.1.13 TUI comparisons
 
-These dark-theme captures compare `v0.1.12` with the unreleased renderer at 110 × 34. Both use the same fictional Atlas fixture and send the same inputs. The clipboard capture uses an in-memory clipboard writer.
+These dark-theme captures compare `v0.1.12` with `v0.1.13` at 110 × 34. Both use the same fictional Atlas fixture and send the same inputs. The clipboard capture uses an in-memory clipboard writer.
 
-| Workflow | v0.1.12 | Unreleased |
+| Workflow | v0.1.12 | v0.1.13 |
 | --- | --- | --- |
 | Ctrl+K in Edit | [Before](assets/screenshots/release-review/edit-issue-picker-before.png) | [After](assets/screenshots/release-review/edit-issue-picker-after.png) |
 | Copy marked issue keys and ignore a right-click | [Before](assets/screenshots/release-review/copy-issues-before.png) | [After](assets/screenshots/release-review/copy-issues-after.png) |

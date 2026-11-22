@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-11-22
+
 ### Added
 - `worklogs add`, `worklogs update`, and `worklogs apply` accept arbitrary JSON metadata that stays local and survives moves, trash, and restore. Add and update accept inline JSON, a file, or stdin. `worklogs update --dry` previews the before and after values, and `--clear-metadata` unsets metadata.
 - `worklogs list` can match a JSON scalar or array member using `--metadata-path` and `--metadata-value`. Use `--fields metadata` to show metadata in list and search results.
