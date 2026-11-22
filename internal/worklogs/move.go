@@ -2,6 +2,7 @@ package worklogs
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"slices"
 	"time"
@@ -106,42 +107,37 @@ func (s *Service) Move(ctx context.Context, cfg config.EffectiveConfig, id strin
 	if revision <= 0 {
 		return LocalWorklog{}, ErrConflict
 	}
-	conn, err := s.store.DB().Conn(ctx)
+	var source LocalWorklog
+	err := s.store.WithImmediateTransaction(ctx, func(conn *sql.Conn) error {
+		preview, err := s.previewMove(ctx, cfg, id, revision, conn)
+		if err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(preview.Positions, func(position time.Time) bool { return position.Equal(destination) }) {
+			return ErrPlacementChanged
+		}
+		source = preview.Source
+		if source.StartedAtUTC.Equal(destination) {
+			return nil
+		}
+		source.StartedAtUTC = destination.UTC()
+		source.UpdatedAt = s.now().UTC()
+		result, err := conn.ExecContext(ctx, `UPDATE worklogs SET started_at_utc = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ?`, sqlitestore.RFC3339UTC(source.StartedAtUTC), sqlitestore.RFC3339UTC(source.UpdatedAt), id, revision)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count != 1 {
+			return ErrConflict
+		}
+		source.Revision++
+		return nil
+	})
 	if err != nil {
 		return LocalWorklog{}, err
 	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
-		return LocalWorklog{}, err
-	}
-	defer conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
-	preview, err := s.previewMove(ctx, cfg, id, revision, conn)
-	if err != nil {
-		return LocalWorklog{}, err
-	}
-	if !slices.ContainsFunc(preview.Positions, func(position time.Time) bool { return position.Equal(destination) }) {
-		return LocalWorklog{}, ErrPlacementChanged
-	}
-	source := preview.Source
-	if source.StartedAtUTC.Equal(destination) {
-		return source, nil
-	}
-	source.StartedAtUTC = destination.UTC()
-	source.UpdatedAt = s.now().UTC()
-	result, err := conn.ExecContext(ctx, `UPDATE worklogs SET started_at_utc = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ?`, sqlitestore.RFC3339UTC(source.StartedAtUTC), sqlitestore.RFC3339UTC(source.UpdatedAt), id, revision)
-	if err != nil {
-		return LocalWorklog{}, err
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return LocalWorklog{}, err
-	}
-	if count != 1 {
-		return LocalWorklog{}, ErrConflict
-	}
-	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
-		return LocalWorklog{}, err
-	}
-	source.Revision++
 	return source, nil
 }

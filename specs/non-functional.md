@@ -397,7 +397,7 @@ Placement rule:
 - [ ] NFR-312: `worklogs delete <id>` atomic scope shall insert one local trash row and remove one active worklog.
 - [ ] NFR-313: Filtered batch delete atomic scope shall insert one local trash row per matched active worklog and remove all matched active worklogs.
 - [ ] NFR-315: `worklogs apply` shall validate the entire payload before any write.
-- [ ] NFR-316: `worklogs apply` shall execute all writes atomically when validation succeeds and `--dry` is not set.
+- [ ] NFR-316: Non-dry `worklogs apply` shall validate duplicate and overlap conflicts and execute all writes in the same immediate SQLite transaction.
 - [ ] NFR-317: `worklogs shift` shall validate the full resulting active-worklog set atomically before writing.
 - [ ] NFR-318: Direct local delete paths shall archive and remove active rows atomically; archival or revision failure shall roll back the complete operation.
 - [ ] NFR-318a: Local trash restoration shall validate its complete candidate set, insert active rows, and consume archive rows in one transaction; a dry-run shall perform no writes.

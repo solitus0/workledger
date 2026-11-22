@@ -10,6 +10,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 ### Added
 - `workledger issues pull` imports issues assigned to the authenticated user across configured Jira Cloud and Data Center instances, including issues without worklogs. It reports changed catalog entries and per-instance failures.
 
+### Fixed
+- `worklogs apply` checks conflicts inside the write transaction so concurrent submissions of the same payload cannot both book the same time with conflict checks enabled.
+
 ## [0.1.12] - 2026-11-04
 
 ### Added

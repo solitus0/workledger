@@ -2,6 +2,7 @@ package worklogs
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -209,12 +210,12 @@ func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, payload
 	}
 
 	windowStart, windowEnd := worklogEnvelope(candidates)
-	existing, err := s.listActiveOverlappingWithQueryer(ctx, windowStart, windowEnd, s.store.DB())
-	if err != nil {
-		return ApplyResult{}, err
-	}
-	if err := validateApplySet(existing, candidates, cfg.Location, force); err != nil {
-		return ApplyResult{}, err
+	validate := func(queryer sqlQueryer) error {
+		existing, err := s.listActiveOverlappingWithQueryer(ctx, windowStart, windowEnd, queryer)
+		if err != nil {
+			return err
+		}
+		return validateApplySet(existing, candidates, cfg.Location, force)
 	}
 
 	result := ApplyResult{
@@ -224,44 +225,47 @@ func (s *Service) Apply(ctx context.Context, cfg config.EffectiveConfig, payload
 		Records: candidates,
 	}
 	if dryRun {
+		if err := validate(s.store.DB()); err != nil {
+			return ApplyResult{}, err
+		}
 		return result, nil
 	}
 
-	tx, err := s.store.DB().BeginTx(ctx, nil)
-	if err != nil {
-		return ApplyResult{}, err
-	}
-	statement, err := tx.PrepareContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		_ = tx.Rollback()
-		return ApplyResult{}, err
-	}
-	defer statement.Close()
-
-	now := s.now().UTC()
-	createdAt := sqlitestore.RFC3339UTC(now)
-	for index, item := range candidates {
-		id := uuid.NewString()
-		item.ID = id
-		item.Revision = 1
-		result.Items[index].ID = &id
-		result.Items[index].Record = item
-		result.Records[index] = item
-
-		if _, err := statement.ExecContext(ctx,
-			item.ID,
-			item.IssueKey,
-			sqlitestore.RFC3339UTC(item.StartedAtUTC),
-			item.DurationSeconds,
-			item.Description,
-			createdAt,
-			createdAt,
-		); err != nil {
-			_ = tx.Rollback()
-			return ApplyResult{}, err
+	err := s.store.WithImmediateTransaction(ctx, func(conn *sql.Conn) error {
+		if err := validate(conn); err != nil {
+			return err
 		}
-	}
-	if err := tx.Commit(); err != nil {
+		statement, err := conn.PrepareContext(ctx, `INSERT INTO worklogs(id, issue_key, started_at_utc, duration_seconds, description, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return err
+		}
+		defer statement.Close()
+
+		now := s.now().UTC()
+		createdAt := sqlitestore.RFC3339UTC(now)
+		for index, item := range candidates {
+			id := uuid.NewString()
+			item.ID = id
+			item.Revision = 1
+			result.Items[index].ID = &id
+			result.Items[index].Record = item
+			result.Records[index] = item
+
+			if _, err := statement.ExecContext(ctx,
+				item.ID,
+				item.IssueKey,
+				sqlitestore.RFC3339UTC(item.StartedAtUTC),
+				item.DurationSeconds,
+				item.Description,
+				createdAt,
+				createdAt,
+			); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return ApplyResult{}, err
 	}
 

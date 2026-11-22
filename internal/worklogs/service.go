@@ -334,29 +334,15 @@ func (s *Service) PreviewAdd(ctx context.Context, cfg config.EffectiveConfig, in
 }
 
 func (s *Service) Add(ctx context.Context, cfg config.EffectiveConfig, input AddInput) (AddResult, error) {
-	conn, err := s.store.DB().Conn(ctx)
+	var result AddResult
+	err := s.store.WithImmediateTransaction(ctx, func(conn *sql.Conn) error {
+		var err error
+		result, err = s.AddInImmediateTransaction(ctx, cfg, input, conn)
+		return err
+	})
 	if err != nil {
 		return AddResult{}, err
 	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
-		return AddResult{}, err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_, _ = conn.ExecContext(context.WithoutCancel(ctx), `ROLLBACK`)
-		}
-	}()
-
-	result, err := s.AddInImmediateTransaction(ctx, cfg, input, conn)
-	if err != nil {
-		return AddResult{}, err
-	}
-	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
-		return AddResult{}, err
-	}
-	committed = true
 	return result, nil
 }
 
