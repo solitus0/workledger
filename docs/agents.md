@@ -30,22 +30,40 @@ It explains Jira ownership prefixes, configures optional adapters, checks readin
 ## Log a coding session
 
 ```sh
-npx skills add solitus0/workledger --skill session-worklog-creator -g
+npx skills add solitus0/workledger --skill worklogs-creator -g
 ```
 
-After doing work in a session, invoke the skill in the same agent chat:
+After doing work in a session, ask the skill to log it in the same chat.
 
 ```text
-$session-worklog-creator 1h
+$worklogs-creator Log 1h from this chat.
 ```
 
-**You decide how much time to log.** Duration is the only mandatory user input; the agent never infers it. The skill derives a descriptive entry from actual session evidence, previews it, and applies locally after a clean dry run. You can also ask in plain language, for example: “Log 45m for this session.”
+Supply the duration and ask explicitly to log, book, or apply when you want a local write. The creator derives descriptions from evidence in the current chat, pasted notes, or a scavenger handoff. A preview shows the proposed records for review. “Apply that preview” saves those exact records after revalidation.
 
-Placement is automatic: by default, the skill uses `--fill --today` to distribute the supplied duration across available slots in your configured workday, respecting existing bookings and reserved lunch. One activity may produce multiple worklog fragments, with the same total duration. A supplied date, exact start time, issue key or split overrides the corresponding default; none is required for the ordinary flow.
+For ordinary logging, the creator fills free slots today by default, around existing bookings and reserved lunch. One activity may produce several worklog fragments with the same combined duration. You can supply a placement window, exact start, issue key, or split.
 
-An explicit issue selection wins. Otherwise, an unambiguous session or branch key takes precedence, followed by a clear local metadata-title match. Unresolved work is saved unassigned without requiring a key. Estimates and remaining budget never determine attribution or duration. The skill does not invent work for an empty session or infer elapsed time.
+You can assign Jira keys explicitly for any number of worklogs. If placement produces exactly one record, the creator can infer an unambiguous key from a relevant branch or a leading Jira key in a commit subject. Other records without an explicit assignment are saved unassigned.
 
-See the [skill contract](../.ruler/skills/session-worklog-creator/SKILL.md) for its scope and failure handling.
+See the [Worklogs Creator skill](../.ruler/skills/worklogs-creator/SKILL.md) for the full workflow.
+
+## Backfill from Codex chats
+
+```sh
+npx skills add solitus0/workledger --skill worklogs-scavenger -g
+```
+
+Ask the scavenger to collect evidence for a period, then review its editable Markdown handoff. Select work by item ID and give the creator a total or per-item durations. When you supply one total, the creator uses the evidence in the effort notes to propose a split.
+
+```text
+$worklogs-scavenger Collect work from my Codex chats last week.
+$worklogs-creator Preview 3h across items 2a and 2b.
+Apply that preview.
+```
+
+You can paste the list into another chat. The creator uses the collection period by default and places historical work on weekdays within free slots and the remaining daily quota. Explicit dates can include weekends. See the [Worklogs Scavenger skill](../.ruler/skills/worklogs-scavenger/SKILL.md).
+
+When the handoff includes Codex thread IDs, the creator saves them as [local worklog metadata](cli.md#local-worklog-metadata) and surfaces existing worklogs from those threads as possible repeat bookings. A thread can contain several distinct work items.
 
 ## Local access and remote changes
 

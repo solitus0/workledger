@@ -1,0 +1,4 @@
+interface:
+  display_name: "Worklogs Creator"
+  short_description: "Allocate, preview, and book local worklogs"
+  default_prompt: "Use $worklogs-creator to preview logging 1h from the work in this chat."

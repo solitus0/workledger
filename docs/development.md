@@ -62,7 +62,7 @@ Do not run dependency updates merely to change documentation. Use the versions a
 
 Start at [functional](../specs/functional.md) and [non-functional](../specs/non-functional.md) requirements when changing behavior. Keep affected help, examples, docs, and tests aligned in the same change.
 
-Repository guidance is authored in [.ruler/AGENTS.md](../.ruler/AGENTS.md). Ruler generates `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md`. Agent skill sources live in `.ruler/skills`; keep onboarding and session-worklog skills aligned with their contracts.
+Repository guidance is authored in [.ruler/AGENTS.md](../.ruler/AGENTS.md). Ruler generates `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md`. Agent skill sources live in `.ruler/skills`. Keep their workflow guidance aligned with the relevant contracts.
 
 Edit `.ruler/AGENTS.md`, then regenerate the consumer guidance from the repository root using the installed Ruler CLI:
 

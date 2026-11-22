@@ -11,10 +11,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - `worklogs add`, `worklogs update`, and `worklogs apply` accept arbitrary JSON metadata that stays local and survives moves, trash, and restore. Add and update accept inline JSON, a file, or stdin. `worklogs update --dry` previews the before and after values, and `--clear-metadata` unsets metadata.
 - `worklogs list` can match a JSON scalar or array member using `--metadata-path` and `--metadata-value`. Use `--fields metadata` to show metadata in list and search results.
 - `workledger issues pull` imports issues assigned to the authenticated user across configured Jira Cloud and Data Center instances, including issues without worklogs. It reports changed catalog entries and per-instance failures.
+- `worklogs-scavenger` collects historical Codex work into an editable handoff with item IDs, source links, and evidence of relative effort.
 - Press `y` in TUI Issues or epic member lists to copy marked issue keys in natural order, including hidden marks.
 
 ### Changed
 - **Upgrade required.** Run `workledger init` to add metadata storage to an existing database while preserving its worklogs.
+- `worklogs-creator` replaces `session-worklog-creator` and accepts current-chat work, pasted notes, and scavenger handoffs. It requires explicit booking authorization and infers Jira keys from relevant Git evidence only when placement produces one record. Known Codex thread IDs are stored as metadata and used to surface possible repeat bookings.
 - Ctrl+K opens the TUI issue picker from the Issue field in Edit. Choosing an issue fills the draft for explicit save.
 
 ### Fixed

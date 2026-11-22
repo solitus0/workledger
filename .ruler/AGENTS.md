@@ -24,9 +24,11 @@ Verify local links, anchors, commands, and flags after documentation changes. Ad
 
 ## Skill alignment
 
-CLI work around local worklog creation from the current session must use `.ruler/skills/session-worklog-creator/SKILL.md`. CLI work around setup or status diagnostics must use `.ruler/skills/workledger-onboarding/SKILL.md`.
+Use `.ruler/skills/worklogs-creator/SKILL.md` for local worklog creation and `.ruler/skills/worklogs-scavenger/SKILL.md` for collecting historical evidence from Codex chats. Use `.ruler/skills/workledger-onboarding/SKILL.md` for setup or status diagnostics.
 
 Keep these skills and the relevant specs aligned in the same task when either contract changes. Duration remains explicit for session worklogs; estimates never determine logged duration. Import the complete intended remote window before the first push.
+
+Bump `metadata.version` in a skill’s `SKILL.md` in the same change whenever its behavior or contract changes.
 
 ## Changes and credentials
 

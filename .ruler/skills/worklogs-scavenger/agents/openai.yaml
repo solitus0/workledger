@@ -1,0 +1,4 @@
+interface:
+  display_name: "Worklogs Scavenger"
+  short_description: "Collect work evidence from Codex chats"
+  default_prompt: "Use $worklogs-scavenger to collect topics and draft work items from my Codex chats last week."

@@ -60,15 +60,15 @@ See [other installation options and shell completion](docs/installation.md), or 
 
 ## Use it from an agent
 
-After working with an agent, invoke the [session-worklog-creator skill](docs/agents.md#log-a-coding-session) in that same chat:
+After working with an agent, use the [worklogs-creator skill](docs/agents.md#log-a-coding-session) in the same chat.
 
 ```text
-$session-worklog-creator 1h
+$worklogs-creator Log 1h from this chat.
 ```
 
-**You choose the duration; the agent handles the rest.** Duration is the only required input. The agent writes a description from the work performed in the session and infers an issue key when the context clearly identifies one; otherwise it saves the work unassigned. Workledger places the time into available slots in your configured workday, today by default, around existing worklogs and lunch.
+You choose the duration. The agent writes a description from the work performed and plans local placement around existing worklogs and lunch, today by default. An explicit booking request saves the records after a successful dry run.
 
-The skill previews the entry and saves it locally after a successful dry run. It never derives logged duration from session length or issue estimates. See [Agent workflows](docs/agents.md) for skill installation and placement details.
+The creator also accepts notes or an editable list from [Worklogs Scavenger](docs/agents.md#backfill-from-codex-chats).
 
 Agents can also use the CLI directly to read planning context as JSON and preview an entry before writing:
 
