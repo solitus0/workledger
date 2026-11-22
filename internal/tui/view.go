@@ -441,7 +441,7 @@ func (m model) renderFooter(width int) string {
 		if m.formCompletionHint() == "" {
 			secondary = append(secondary, actionHint{"Tab", "Fields"})
 		}
-		if m.form.focus == issueField && !m.form.editing {
+		if m.canOpenFormIssuePicker() {
 			secondary = append(secondary, actionHint{"Ctrl+K", "Issues"})
 		}
 	case m.worklogFilter != nil && m.worklogFilter.editing && m.activeTab == worklogsTab && m.isWorklogList():

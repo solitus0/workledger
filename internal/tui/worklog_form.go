@@ -25,7 +25,7 @@ func (m model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+s":
 			return m.beginFormSubmit()
 		case "ctrl+k":
-			if !m.form.editing && m.form.focus == issueField {
+			if m.canOpenFormIssuePicker() {
 				return m, m.openIssuePicker()
 			}
 		case "tab":

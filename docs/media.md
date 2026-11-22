@@ -64,6 +64,16 @@ These examples use the same isolated capture flow. They cover minimum-size place
 | Worklogs with Activity | [Capture](assets/screenshots/worklogs-activity-minimum-dark.png) | [Capture](assets/screenshots/worklogs-activity-minimum-light.png) |
 | Failed diagnostics | [Capture](assets/screenshots/status-failure-dark.png) | [Capture](assets/screenshots/status-failure-light.png) |
 
+## Unreleased TUI comparisons
+
+These dark-theme captures compare `v0.1.12` with the unreleased renderer at 110 × 34. Both use the same fictional Atlas fixture and send the same inputs.
+
+| Workflow | v0.1.12 | Unreleased |
+| --- | --- | --- |
+| Ctrl+K in Edit | [Before](assets/screenshots/release-review/edit-issue-picker-before.png) | [After](assets/screenshots/release-review/edit-issue-picker-after.png) |
+
+Set `WORKLEDGER_CAPTURE_REVIEW=1` and point `WORKLEDGER_CAPTURE_DIR` at a temporary directory to generate the comparison frames with the capture test below.
+
 ## Terminal design
 
 The TUI uses the finalized violet `#6D4BC3` and lavender `#B9A2F4` for focus, with separate semantic colors for booked time, proposed changes, warnings and errors. The plain Workledger terminal wordmark keeps the interface usable without image support or a special icon font.

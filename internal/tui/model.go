@@ -888,11 +888,8 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 			} else if m.form != nil {
 				m.reloadAfterForm = true
 				cmds = append(cmds, m.descriptionSuggestionsCmd())
-				if !m.form.editing {
-					cmds = append(cmds, m.scheduleIssueSuggestions(false))
-					if m.issuePicker != nil {
-						cmds = append(cmds, m.loadIssuePickerPage(m.issuePicker.page, false))
-					}
+				if m.issuePicker != nil {
+					cmds = append(cmds, m.loadIssuePickerPage(m.issuePicker.page, false))
 				}
 				if m.form.editing {
 					cmds = append(cmds, m.formMetadataCmd())
@@ -900,7 +897,7 @@ func (m model) Update(msg tea.Msg) (next tea.Model, cmd tea.Cmd) {
 					m.setNotice(noticeWarning, "worklogs changed externally; reload before saving")
 				} else {
 					m.setNotice(noticeInfo, "availability changed; recalculating placement")
-					cmds = append(cmds, m.startWorklogLoad(), m.schedulePreview())
+					cmds = append(cmds, m.scheduleIssueSuggestions(false), m.startWorklogLoad(), m.schedulePreview())
 				}
 			} else {
 				cmds = append(cmds, m.refreshCmd(refreshWorkspace))

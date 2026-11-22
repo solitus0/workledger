@@ -628,12 +628,21 @@ func TestExternalChangeMarksOpenEditorStale(t *testing.T) {
 	m.width, m.height = 120, 32
 	m.worklogs = testRows()
 	m.openEditForm(m.worklogs[0])
-	next, _ := m.Update(pollResultMsg{changed: true})
+	next, pendingPicker := m.Update(ctrlKey('k'))
+	m = next.(model)
+	next, _ = m.Update(pollResultMsg{changed: true})
 	m = next.(model)
 	if !m.form.stale || !strings.Contains(m.notice, "changed externally") {
 		t.Fatalf("editor not marked stale: %#v", m.form)
 	}
+	next, _ = m.Update(pendingPicker())
+	m = next.(model)
+	if !m.issuePicker.loading {
+		t.Fatal("stale picker results applied after an external change")
+	}
 
+	next, _ = m.Update(specialKey(tea.KeyEsc))
+	m = next.(model)
 	next, _ = m.Update(ctrlKey('s'))
 	m = next.(model)
 	if m.overlay != reloadOverlay {

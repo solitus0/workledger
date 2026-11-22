@@ -173,11 +173,11 @@ func (m model) dialogActions() (string, []commandAction) {
 		return "Move worklog", actions
 	case m.form != nil:
 		fields()
+		if m.canOpenFormIssuePicker() {
+			add("ctrl+k", "Ctrl+K", "Open issue history picker")
+		}
 		if !m.form.editing {
 			add("ctrl+p", "Ctrl+P", "Cycle placement")
-			if m.form.focus == issueField {
-				add("ctrl+k", "Ctrl+K", "Open issue history picker")
-			}
 			if m.form.placement != manualPlacement {
 				add("ctrl+o", "Ctrl+O", "Toggle late-start eligibility")
 				add("ctrl+l", "Ctrl+L", "Toggle lunch availability")

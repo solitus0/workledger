@@ -107,6 +107,34 @@ func TestDocumentationCapture(t *testing.T) {
 	if err := os.MkdirAll(output, 0755); err != nil {
 		t.Fatal(err)
 	}
+	if os.Getenv("WORKLEDGER_CAPTURE_REVIEW") != "" {
+		update := func(m *model, input tea.Msg) {
+			var deliver func(tea.Msg)
+			deliver = func(msg tea.Msg) {
+				switch msg := msg.(type) {
+				case nil:
+					return
+				case tea.BatchMsg:
+					for _, cmd := range msg {
+						deliver(cmd())
+					}
+				default:
+					next, cmd := m.Update(msg)
+					*m = next.(model)
+					if cmd != nil {
+						deliver(cmd())
+					}
+				}
+			}
+			deliver(input)
+		}
+		capture("edit-issue-picker", 110, 34, func(m *model) {
+			m.openEditForm(m.worklogs[4])
+			m.focusForm(issueField)
+			update(m, ctrlKey('k'))
+		})
+		return
+	}
 	capture("worklogs", 110, 34, func(*model) {})
 	capture("worklogs-wide", 140, 36, func(*model) {})
 	capture("worklogs-minimum", 100, 28, func(*model) {})

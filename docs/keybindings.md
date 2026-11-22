@@ -59,9 +59,12 @@ Marked IDs survive dates, filters, and refresh. `Esc` finishes a range, then cle
 | `F2` | All proposed intervals, entered values, description, and full validation details |
 | `Ctrl+P` | Cycle placement mode in Add |
 | `Ctrl+O` / `Ctrl+L` | Toggle late-start eligibility / lunch in automatic Add |
-| `Ctrl+K` | Open the issue picker from the Issue field |
+| `Ctrl+K` | Open the issue picker from the Issue field in Add or Edit |
+| `/` | Start searching from the issue picker |
 | `Ctrl+T` | Cycle issue-key, description, or title search in the picker |
 | `Esc` | Cancel |
+
+In the issue picker, Enter fills the Issue field and returns to the draft. Save separately with `Ctrl+S`. Esc clears an active search before closing the picker.
 
 Move uses up/down to preview valid positions, `r` to refresh, `Ctrl+S` to save a changed valid destination, and `Esc` to cancel. Preview and save recheck current placement and revision rules.
 

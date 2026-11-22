@@ -17,6 +17,10 @@ const (
 	issuePickerSearchWait = 120 * time.Millisecond
 )
 
+func (m model) canOpenFormIssuePicker() bool {
+	return m.form != nil && !m.form.saving && m.form.focus == issueField
+}
+
 func (m *model) openIssuePicker() tea.Cmd {
 	input := textinput.New()
 	input.Prompt = ""

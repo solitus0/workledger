@@ -122,6 +122,63 @@ func TestIssuePickerModesPagingDetailsAndDraft(t *testing.T) {
 	}
 }
 
+func TestEditWorklogSelectsIssueBeforeSaving(t *testing.T) {
+	ws, deps := testWorkspace(t)
+	state := worklogState(ws)
+	state.usedIssues = []worklogs.UsedIssue{
+		{IssueKey: "APP-1", Title: "Ledger export"},
+		{IssueKey: "APP-2", Title: "Retry behavior"},
+	}
+	state.metadata = map[string]worklogs.IssueMetadata{
+		"APP-2": {IssueKey: "APP-2", Title: "Retry behavior"},
+	}
+	m := newModel(t.Context(), deps, ws, nil)
+	m.width, m.height = minimumWidth, minimumHeight
+	row := testRows()[0]
+	row.IssueKey = ""
+	m.openEditForm(row)
+	m.form.inputs[descriptionInput].SetValue("Updated description")
+	start, duration := m.form.inputs[startInput].Value(), m.form.inputs[durationInput].Value()
+	if !strings.Contains(m.renderFooter(minimumWidth), "Ctrl+K") {
+		t.Fatal("edit issue field does not advertise the picker")
+	}
+	send := func(msg tea.Msg) tea.Cmd {
+		next, cmd := m.Update(msg)
+		m = next.(model)
+		return cmd
+	}
+	if cmd := send(ctrlKey('k')); m.issuePicker == nil || m.issuePicker.searching || cmd == nil {
+		t.Fatal("edit issue picker did not open in browse mode")
+	}
+	send(ctrlKey('t'))
+	send(ctrlKey('t'))
+	cmd := send(tea.PasteMsg{Content: "retry"})
+	cmd = send(cmd())
+	send(cmd())
+	if len(m.issuePicker.items) != 1 || m.issuePicker.items[0].IssueKey != "APP-2" {
+		t.Fatalf("title search results = %#v", m.issuePicker.items)
+	}
+	cmd = send(specialKey(tea.KeyEnter))
+	if m.issuePicker != nil || m.form.focus != issueField || m.form.inputs[issueInput].Value() != "APP-2" ||
+		m.form.inputs[startInput].Value() != start || m.form.inputs[durationInput].Value() != duration ||
+		m.form.inputs[descriptionInput].Value() != "Updated description" || m.form.saving || len(state.updates) != 0 {
+		t.Fatal("choosing an issue did not return to the unsaved edit draft")
+	}
+	send(cmd())
+	if !strings.Contains(m.renderIssueContext(), "Retry behavior") {
+		t.Fatal("edit did not load the newly selected issue metadata")
+	}
+	cmd = send(ctrlKey('s'))
+	send(cmd())
+	if len(state.updates) != 1 {
+		t.Fatalf("updates = %d, want 1", len(state.updates))
+	}
+	update := state.updates[0]
+	if update.id != row.ID || update.input.ExpectedRevision != row.Revision || *update.input.IssueKey != "APP-2" {
+		t.Fatalf("save did not update the original worklog with the chosen issue: %#v", update)
+	}
+}
+
 func TestIssuePickerIgnoresStaleResultsAndFailures(t *testing.T) {
 	ws, deps := testWorkspace(t)
 	state := worklogState(ws)
